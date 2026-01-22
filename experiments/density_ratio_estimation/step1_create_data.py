@@ -23,6 +23,8 @@ DATA_DIR = 'experiments/density_ratio_estimation/data'
 os.makedirs(DATA_DIR, exist_ok=True)
 for kl_distance in tqdm(KL_DISTANCES):
     gaussian_pairs = create_two_gaussians_kl_range(dim=DATA_DIM, k=kl_distance, beta_min=0.3, beta_max=0.7, npairs=100)
+    if kl_distance == 128:
+        breakpoint()
     datasets = []
     for gaussian_pair in gaussian_pairs:
         mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']

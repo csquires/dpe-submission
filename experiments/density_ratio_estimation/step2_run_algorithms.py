@@ -25,12 +25,12 @@ os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
 alg_runner = DREAlgorithmRunner()
 
 
-for kl_distance in tqdm(KL_DISTANCES):
+for kl_distance in KL_DISTANCES:
     datasets = pickle.load(open(f'{DATA_DIR}/d={DATA_DIM},k={kl_distance},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.pkl', 'rb'))
 
     print(f'Running BDRE for kl_distance={kl_distance}')
     bdre_results_all = []
-    for dataset in datasets:
+    for dataset in tqdm(datasets):
         samples_p0 = dataset['samples_p0']
         samples_p1 = dataset['samples_p1']
         all_test_samples = [dataset['samples_pstar1'], dataset['samples_pstar2'], dataset['samples_pstar3']]
@@ -39,7 +39,7 @@ for kl_distance in tqdm(KL_DISTANCES):
     
     print(f'Running TDRE for kl_distance={kl_distance}')
     tdre_results_all = []
-    for dataset in datasets:
+    for dataset in tqdm(datasets):
         samples_p0 = dataset['samples_p0']
         samples_p1 = dataset['samples_p1']
         all_test_samples = [dataset['samples_pstar1'], dataset['samples_pstar2'], dataset['samples_pstar3']]

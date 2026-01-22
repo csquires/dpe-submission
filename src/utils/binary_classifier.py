@@ -37,7 +37,16 @@ class DefaultBinaryClassifier(BinaryClassifier):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
+    def _reset_parameters(self) -> None:
+        """Reset model parameters to random initialization."""
+        for module in self.model:
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
     def fit(self, xs: torch.Tensor, ys: torch.Tensor) -> None:
+        self._reset_parameters()
         self.train()
         loss = nn.BCEWithLogitsLoss()
         optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate)
@@ -47,6 +56,8 @@ class DefaultBinaryClassifier(BinaryClassifier):
             l = loss(y_pred, ys)
             l.backward()
             optimizer.step()
+        if y_pred.isnan().any():
+            breakpoint()
 
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
         self.eval()
