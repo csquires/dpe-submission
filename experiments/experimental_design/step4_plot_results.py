@@ -14,6 +14,7 @@ results = {
 # setup
 plt.clf()
 sns.set_style('whitegrid')
+plt.style.use('our_style.mplstyle')
 # plotting
 for estimator, errors in results.items():
     plt.plot(nrounds, errors, label=estimator)
@@ -24,4 +25,4 @@ plt.legend()
 plt.tight_layout()
 # saving
 os.makedirs('experiments/experimental_design/figures', exist_ok=True)
-plt.savefig('experiments/experimental_design/figures/nrounds_vs_estimator_error.png')
+plt.savefig('experiments/experimental_design/figures/nrounds_vs_estimator_error.pdf')

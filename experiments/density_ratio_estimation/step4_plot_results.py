@@ -38,6 +38,7 @@ test_sets = ['p0_test', 'p1_test', 'laplace0_test', 'laplace1_test']
 # setup
 plt.clf()
 sns.set_style('whitegrid')
+plt.style.use('our_style.mplstyle')
 fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=4)
 # plotting
 for i, test_set in enumerate(test_sets):
@@ -56,4 +57,4 @@ plt.legend(['BDRE', 'TDRE', 'MDRE', 'TSM'], bbox_to_anchor=(1.05, 1), loc='upper
 plt.tight_layout()
 # saving
 os.makedirs('experiments/density_ratio_estimation/figures', exist_ok=True)
-plt.savefig('experiments/density_ratio_estimation/figures/varying_kl_01.png')
+plt.savefig('experiments/density_ratio_estimation/figures/varying_kl_01.pdf')
