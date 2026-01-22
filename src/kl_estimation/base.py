@@ -1,9 +1,12 @@
 import abc
 
-import numpy as np
+import torch
 
 
-class BaseKLEstimator(abc.ABC):
+class KLEstimator(abc.ABC):
+    def __init__(self, input_dim: int):
+        self.input_dim = input_dim
+
     @abc.abstractmethod
-    def estimate_kl(self, samples_p0: np.ndarray, samples_p1: np.ndarray) -> float:
+    def estimate_kl(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> float:
         pass

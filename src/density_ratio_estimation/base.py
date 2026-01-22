@@ -1,19 +1,22 @@
 import abc
 
-import numpy as np
+import torch
 
 
-class BaseDensityRatioEstimator(abc.ABC):
+class DensityRatioEstimator(abc.ABC):
+    def __init__(self, input_dim: int):
+        self.input_dim = input_dim
+
     @abc.abstractmethod
     def fit(
         self, 
-        samples_p0: np.ndarray, 
-        samples_p1: np.ndarray
+        samples_p0: torch.Tensor, 
+        samples_p1: torch.Tensor
     ) -> float:
         pass
 
     def predict(
         self,
-        xs: np.ndarray,
-    ) -> np.ndarray:
+        xs: torch.Tensor,
+    ) -> torch.Tensor:
         pass

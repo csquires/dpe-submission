@@ -3,7 +3,10 @@ import abc
 import numpy as np
 
 
-class BaseELDREstimator(abc.ABC):
+class ELDREstimator(abc.ABC):
+    def __init__(self, input_dim: int):
+        self.input_dim = input_dim
+
     @abc.abstractmethod
     def estimate_eldr(
         self, 
