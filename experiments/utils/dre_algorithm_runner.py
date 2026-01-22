@@ -1,15 +1,20 @@
+from tqdm import tqdm
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 
 
 class DREAlgorithmRunner:
-    def __init__(self, algorithms: list[DensityRatioEstimator]):
-        self.algorithms = algorithms
-
-    def run(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> torch.Tensor:
-        results = []
-        for algorithm in self.algorithms:
-            result = algorithm.fit(samples_p0, samples_p1)
+    def run(
+        self, 
+        samples_p0: torch.Tensor, 
+        samples_p1: torch.Tensor,
+        all_test_samples: list[torch.Tensor],
+        algorithm: DensityRatioEstimator
+    ) -> torch.Tensor:
+        results = dict()
+        algorithm.fit(samples_p0, samples_p1)
+        for test_samples in all_test_samples:
+            result = algorithm.predict(test_samples)
             results.append(result)
         return results
