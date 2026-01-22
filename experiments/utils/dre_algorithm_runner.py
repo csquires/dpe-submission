@@ -15,6 +15,6 @@ class DREAlgorithmRunner:
         results = []
         algorithm.fit(samples_p0, samples_p1)
         for test_samples in all_test_samples:
-            result = algorithm.predict(test_samples)
+            result = algorithm.predict_ldr(test_samples)
             results.append(result)
         return results

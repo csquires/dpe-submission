@@ -1,35 +1,64 @@
+from abc import ABC, abstractmethod
+
 import torch
 import torch.nn as nn
 
 
-class BinaryClassifier(nn.Module):
-    def __init__(self, model: nn.Module):
-        super().__init__()
-
+class BinaryClassifier(nn.Module, ABC):
+    @abstractmethod
     def fit(self, xs: torch.Tensor, ys: torch.Tensor) -> None:
         raise NotImplementedError
 
+    @abstractmethod
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
 
-class DefaultClassifier(BinaryClassifier):
-    def __init__(self, input_dim: int):
+class DefaultBinaryClassifier(BinaryClassifier):
+    def __init__(
+        self, 
+        input_dim: int, 
+        # model hyperparameters
+        latent_dim: int = 10,
+        num_layers: int = 2,
+        # training hyperparameters
+        num_epochs: int = 100,
+        learning_rate: float = 0.01,
+    ):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, 10)
-        self.fc2 = nn.Linear(10, 1)
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, latent_dim),
+            nn.ReLU(),
+            nn.Linear(latent_dim, 1),
+        )
+        self.learning_rate = learning_rate
+        self.num_epochs = num_epochs
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = torch.relu(self.fc1(x))
-        return self.fc2(x)
+        return self.model(x)
 
     def fit(self, xs: torch.Tensor, ys: torch.Tensor) -> None:
-        ## TODO: implement trainin loop
-        pass
+        self.train()
+        loss = nn.BCEWithLogitsLoss()
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate)
+        for epoch in range(self.num_epochs):
+            optimizer.zero_grad()
+            y_pred = self.forward(xs)
+            l = loss(y_pred, ys)
+            l.backward()
+            optimizer.step()
 
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
-        return self.forward(xs)
+        self.eval()
+        with torch.no_grad():
+            return self.forward(xs)
 
 
-def build_default_classifier(input_dim: int) -> nn.Module:
-    return BinaryClassifier(DefaultClassifier(input_dim))
+def build_default_binary_classifier(
+    input_dim: int, 
+    latent_dim: int = 10,
+    num_layers: int = 2,    
+    num_epochs: int = 100,
+    learning_rate: float = 0.01,
+) -> BinaryClassifier:
+    return DefaultBinaryClassifier(input_dim, latent_dim, num_layers, num_epochs, learning_rate)
