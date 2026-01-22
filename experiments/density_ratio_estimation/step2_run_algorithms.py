@@ -1,6 +1,7 @@
 import os
 import pickle
 
+import yaml
 from tqdm import tqdm
 
 from src.density_ratio_estimation.bdre import BDRE
@@ -9,17 +10,22 @@ from src.density_ratio_estimation.tdre import TDRE
 from experiments.utils.dre_algorithm_runner import DREAlgorithmRunner
 
 
-DATA_DIM = 3
-DATA_DIR = 'experiments/density_ratio_estimation/data'
-RAW_RESULTS_DIR = 'experiments/density_ratio_estimation/raw_results'
+config = yaml.load(open('experiments/density_ratio_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+DATA_DIR = config['data_dir']
+RAW_RESULTS_DIR = config['raw_results_dir']
+
+DATA_DIM = config['data_dim']
+KL_DISTANCES = config['kl_distances']
+NSAMPLES_TRAIN = config['nsamples_train']
+NSAMPLES_TEST = config['nsamples_test']
+SEED = config['seed']
+
+
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
-kl_distances = pickle.load(open(f'{DATA_DIR}/kl_distances.pkl', 'rb'))
-NSAMPLES_TRAIN = 1000
-NSAMPLES_TEST = 1000
 alg_runner = DREAlgorithmRunner()
 
 
-for kl_distance in tqdm(kl_distances):
+for kl_distance in tqdm(KL_DISTANCES):
     datasets = pickle.load(open(f'{DATA_DIR}/d={DATA_DIM},k={kl_distance},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.pkl', 'rb'))
 
     bdre_results_all = []

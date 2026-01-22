@@ -1,6 +1,7 @@
 import os
 import pickle
 
+import yaml
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -9,11 +10,12 @@ from torch.distributions import MultivariateNormal
 from experiments.utils.two_gaussians_kl import create_two_gaussians_kl_range
 
 
-DATA_DIM = 3
-KL_DISTANCES = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
-NSAMPLES_TRAIN = 1000
-NSAMPLES_TEST = 1000
-SEED = 1729
+config = yaml.load(open('experiments/density_ratio_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+DATA_DIM = config['data_dim']
+KL_DISTANCES = config['kl_distances']
+NSAMPLES_TRAIN = config['nsamples_train']
+NSAMPLES_TEST = config['nsamples_test']
+SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
@@ -43,9 +45,9 @@ for kl_distance in tqdm(KL_DISTANCES):
         samples_pstar3 = pstar3.sample((NSAMPLES_TEST,))
         # store all samples in a dictionary
         datasets.append(dict(
+            mu0=mu0, Sigma0=Sigma0, mu1=mu1, Sigma1=Sigma1,
             samples_p0=samples_p0, samples_p1=samples_p1,
             samples_pstar1=samples_pstar1, samples_pstar2=samples_pstar2, samples_pstar3=samples_pstar3
         ))
 
     pickle.dump(datasets, open(f'{DATA_DIR}/d={DATA_DIM},k={kl_distance},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.pkl', 'wb'))
-pickle.dump(KL_DISTANCES, open(f'{DATA_DIR}/kl_distances.pkl', 'wb'))
