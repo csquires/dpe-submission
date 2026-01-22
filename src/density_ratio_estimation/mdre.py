@@ -2,7 +2,7 @@ from typing import Callable
 
 import torch
 
-from density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.utils.binary_classifier import BinaryClassifier, build_default_classifier
 
 

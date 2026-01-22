@@ -1,30 +1,22 @@
 import numpy as np
+import torch
+from torch import logdet, trace
+
 from scipy.special import lambertw
-from numpy import trace, log
-from numpy.linalg import det
 
 
 def compute_gaussian_kl_divergence(
-    mu0: np.ndarray,
-    Sigma0: np.ndarray,
-    mu1: np.ndarray,
-    Sigma1: np.ndarray
-) -> float:
+    mu0: torch.Tensor,
+    Sigma0: torch.Tensor,
+    mu1: torch.Tensor,
+    Sigma1: torch.Tensor
+) -> torch.Tensor:
     dim = mu0.shape[0]
-    mean_term = 0.5 * ((mu1 - mu0).T @ np.linalg.inv(Sigma1) @ (mu1 - mu0))
-    cov_term = 0.5 * (trace(Sigma0 @ np.linalg.inv(Sigma1))  - dim + log(det(Sigma1)) - log(det(Sigma0)))
+    mean_term = 0.5 * ((mu1 - mu0).T @ torch.linalg.inv(Sigma1) @ (mu1 - mu0))
+    cov_term = 0.5 * (trace(Sigma0 @ torch.linalg.inv(Sigma1))  - dim + logdet(Sigma1) - logdet(Sigma0))
 
     return mean_term + cov_term
 
-
-def compute_delta_beta_kl_divergence(
-    delta: float,
-    alpha: float,
-    dim: int
-):
-    k1 = delta / (2 * alpha)
-    k2 = dim / 2 * (alpha**-1 + np.log(alpha) - 1)
-    return k1, k2
 
 def create_two_gaussians_kl(
     dim: int,
@@ -40,10 +32,10 @@ def create_two_gaussians_kl(
     # solve for delta in terms of alpha and k1
     delta = 2 * alpha * k1
 
-    mu0 = np.zeros(dim)
-    Sigma0 = np.eye(dim)
-    mu1 = np.sqrt(delta) * (np.ones(dim) / np.sqrt(dim))
-    Sigma1 = alpha * np.eye(dim)
+    mu0 = torch.zeros(dim)
+    Sigma0 = torch.eye(dim)
+    mu1 = torch.Tensor(np.sqrt(delta) * (np.ones(dim) / np.sqrt(dim)))
+    Sigma1 = torch.Tensor(alpha * np.eye(dim))
 
     return dict(mu0=mu0, Sigma0=Sigma0, mu1=mu1, Sigma1=Sigma1)
 
