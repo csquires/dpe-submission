@@ -9,6 +9,7 @@ from torch.distributions import MultivariateNormal
 from experiments.utils.two_gaussians_kl import create_two_gaussians_kl_range
 
 
+DATA_DIM = 3
 KL_DISTANCES = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
 NSAMPLES_TRAIN = 1000
 NSAMPLES_TEST = 1000
@@ -19,7 +20,7 @@ torch.manual_seed(SEED)
 DATA_DIR = 'experiments/density_ratio_estimation/data'
 os.makedirs(DATA_DIR, exist_ok=True)
 for kl_distance in tqdm(KL_DISTANCES):
-    gaussian_pairs = create_two_gaussians_kl_range(dim=3, k=kl_distance, beta_min=0.3, beta_max=0.7, npairs=100)
+    gaussian_pairs = create_two_gaussians_kl_range(dim=DATA_DIM, k=kl_distance, beta_min=0.3, beta_max=0.7, npairs=100)
     datasets = []
     for gaussian_pair in gaussian_pairs:
         mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']
@@ -46,5 +47,5 @@ for kl_distance in tqdm(KL_DISTANCES):
             samples_pstar1=samples_pstar1, samples_pstar2=samples_pstar2, samples_pstar3=samples_pstar3
         ))
 
-    pickle.dump(datasets, open(f'{DATA_DIR}/k={kl_distance},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.pkl', 'wb'))
+    pickle.dump(datasets, open(f'{DATA_DIR}/d={DATA_DIM},k={kl_distance},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.pkl', 'wb'))
 pickle.dump(KL_DISTANCES, open(f'{DATA_DIR}/kl_distances.pkl', 'wb'))

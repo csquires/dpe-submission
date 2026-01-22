@@ -12,7 +12,7 @@ class DREAlgorithmRunner:
         all_test_samples: list[torch.Tensor],
         algorithm: DensityRatioEstimator
     ) -> torch.Tensor:
-        results = dict()
+        results = []
         algorithm.fit(samples_p0, samples_p1)
         for test_samples in all_test_samples:
             result = algorithm.predict(test_samples)
