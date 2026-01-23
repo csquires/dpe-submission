@@ -26,7 +26,6 @@ class BDRE(DensityRatioEstimator):
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
     from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
-    from src.models.binary_classification.gaussian_binary_classifier import build_gaussian_binary_classifier
     
     DIM = 2
     NSAMPLES_TRAIN = 10000
