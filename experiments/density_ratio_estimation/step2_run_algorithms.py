@@ -8,6 +8,7 @@ import yaml
 
 from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.tdre import TDRE
+from src.models.binary_classification.gaussian_binary_classifier import build_gaussian_binary_classifier
 
 
 
@@ -25,10 +26,10 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-bdre = BDRE(DATA_DIM)
-tdre = TDRE(DATA_DIM)
+# bdre = BDRE(DATA_DIM)
+tdre = TDRE(DATA_DIM, classifier_builder=build_gaussian_binary_classifier)
 num_algs = 1
-algorithms = [bdre]
+algorithms = [tdre]
 
 with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'r') as f:
     nrows = f['kl_distance_arr'].shape[0]
