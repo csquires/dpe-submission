@@ -38,7 +38,7 @@ class DefaultBinaryClassifier(BinaryClassifier):
         xs: torch.Tensor,  # [n, dim]
         ys: torch.Tensor,  # [n, 1], with values in {0, 1}
         learning_rate: float = 0.05,
-        num_epochs: int = 1000,
+        num_epochs: int = 100,
     ) -> None:
         self._reset_parameters()
         self.train()

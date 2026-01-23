@@ -23,16 +23,22 @@ NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
 
 
 with h5py.File(f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'r') as f:
-    nrows = f['est_ldrs_arr'].shape[0]
-    num_algs = f['est_ldrs_arr'].shape[1]
-    est_ldrs_arr = f['est_ldrs_arr'][:]  # (nrows, num_algs, NTEST_SETS, NSAMPLES_TEST)
+    nrows = f['est_ldrs_arr_BDRE'].shape[0]
+    est_ldrs_arr_bdre = f['est_ldrs_arr_BDRE'][:]  # (nrows, NTEST_SETS, NSAMPLES_TEST)
+    # est_ldrs_arr_tdre = f['est_ldrs_arr_TDRE'][:]  # (nrows, NTEST_SETS, NSAMPLES_TEST)
 
 with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'r') as f:
     true_ldrs_arr = f['true_ldrs_arr'][:]  # (nrows, NTEST_SETS, NSAMPLES_TEST)
 
-absolute_errors = np.abs(est_ldrs_arr - true_ldrs_arr[:, np.newaxis, :, :])  # (nrows, num_algs, NTEST_SETS, NSAMPLES_TEST)
-maes = reduce(absolute_errors, 'n a t d -> n a t', 'mean')  # (nrows, num_algs, NTEST_SETS)
-maes_by_kl = maes.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, num_algs, NTEST_SETS)
+absolute_errors_bdre = np.abs(est_ldrs_arr_bdre - true_ldrs_arr[: :, :])  # (nrows, NTEST_SETS, NSAMPLES_TEST)
+maes_bdre = reduce(absolute_errors_bdre, 'n t d -> n t', 'mean')  # (nrows, NTEST_SETS)
+maes_by_kl_bdre = maes_bdre.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+
+# absolute_errors_tdre = np.abs(est_ldrs_arr_tdre - true_ldrs_arr[:, np.newaxis, :, :])  # (nrows, NTEST_SETS, NSAMPLES_TEST)
+# maes_tdre = reduce(absolute_errors_tdre, 'n a t d -> n a t', 'mean')  # (nrows, NTEST_SETS)
+# maes_by_kl_tdre = maes_tdre.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
 
 os.makedirs(PROCESSED_RESULTS_DIR, exist_ok=True)
-np.save(f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.npy', maes_by_kl)
+with h5py.File(f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'w') as f:
+    f.create_dataset('maes_by_kl_bdre', data=maes_by_kl_bdre)
+    # f.create_dataset('maes_by_kl_tdre', data=maes_by_kl_tdre)

@@ -1,10 +1,10 @@
 import os
-import pickle
 
-import yaml
+import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import yaml
 
 
 config = yaml.load(open('experiments/density_ratio_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -17,11 +17,12 @@ KL_DISTANCES = config['kl_distances']
 NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 
-filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.npy'
-maes_by_kl = np.load(filename)  # (n_kl, n_instances, n_algs, n_test_sets)
-avg_mae_by_kl = np.mean(maes_by_kl, axis=1)  # (n_kl, n_algs, n_test_sets)
-y_min = avg_mae_by_kl.min()
-y_max = avg_mae_by_kl.max()
+filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
+with h5py.File(filename, 'r') as f:
+    maes_by_kl_bdre = f['maes_by_kl_bdre'][:]  # (n_kl, n_instances, n_test_sets)
+avg_mae_by_kl_bdre = np.mean(maes_by_kl_bdre, axis=1)  # (n_kl, n_test_sets)
+y_min = avg_mae_by_kl_bdre.min()
+y_max = avg_mae_by_kl_bdre.max()
 
 # setup
 plt.clf()
@@ -30,7 +31,7 @@ plt.style.use('our_style.mplstyle')
 fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=3)
 # plotting
 for i in range(3):
-    bdre_results = avg_mae_by_kl[:, 0, i]
+    bdre_results = avg_mae_by_kl_bdre[:, i]
     axes[i].plot(KL_DISTANCES, bdre_results, label='BDRE')
     # axes[i].plot(KL_DISTANCES, results[test_set]['tdre'], label='TDRE')
     # axes[i].plot(KL_DISTANCES, results[test_set]['mdre'], label='MDRE')
