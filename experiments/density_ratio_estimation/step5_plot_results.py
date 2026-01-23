@@ -12,11 +12,10 @@ DATA_DIM = config['data_dim']
 KL_DISTANCES = config['kl_distances']
 NUM_INSTANCES = config['num_instances']
 
-results = pickle.load(open(f'{PROCESSED_RESULTS_DIR}/results_d={DATA_DIM}.pkl', 'rb'))
-test_sets = ['pstar1', 'pstar2', 'pstar3']
-algorithms = ['bdre']
-y_min = min([results[test_set][algorithm].min() for test_set in test_sets for algorithm in algorithms])
-y_max = max([results[test_set][algorithm].max() for test_set in test_sets for algorithm in algorithms])
+results_df = pickle.load(open(f'{PROCESSED_RESULTS_DIR}/results_d={DATA_DIM}.pkl', 'rb'))
+mean_results_df = results_df.groupby(["kl_distance", "test_set_idx", "algorithm"]).mean()
+y_min = mean_results_df["mae"].min()
+y_max = mean_results_df["mae"].max()
 
 # setup
 plt.clf()
@@ -24,8 +23,9 @@ sns.set_style('whitegrid')
 plt.style.use('our_style.mplstyle')
 fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=3)
 # plotting
-for i, test_set in enumerate(test_sets):
-    axes[i].plot(KL_DISTANCES, results[test_set]['bdre'], label='BDRE')
+for i in range(3):
+    bdre_results = mean_results_df.loc[KL_DISTANCES, i, 'bdre']
+    axes[i].plot(KL_DISTANCES, bdre_results, label='BDRE')
     # axes[i].plot(KL_DISTANCES, results[test_set]['tdre'], label='TDRE')
     # axes[i].plot(KL_DISTANCES, results[test_set]['mdre'], label='MDRE')
     # axes[i].plot(KL_DISTANCES, results[test_set]['tsm'], label='TSM')
