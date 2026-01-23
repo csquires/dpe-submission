@@ -16,15 +16,14 @@ KL_DISTANCES = config['kl_distances']
 NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 SEED = config['seed']
+NUM_INSTANCES = config['num_instances']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
 DATA_DIR = 'experiments/density_ratio_estimation/data'
 os.makedirs(DATA_DIR, exist_ok=True)
 for kl_distance in tqdm(KL_DISTANCES):
-    gaussian_pairs = create_two_gaussians_kl_range(dim=DATA_DIM, k=kl_distance, beta_min=0.3, beta_max=0.7, npairs=100)
-    if kl_distance == 128:
-        breakpoint()
+    gaussian_pairs = create_two_gaussians_kl_range(dim=DATA_DIM, k=kl_distance, beta_min=0.3, beta_max=0.7, npairs=NUM_INSTANCES)
     datasets = []
     for gaussian_pair in gaussian_pairs:
         mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']

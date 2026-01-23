@@ -1,3 +1,4 @@
 venv/
 experiments/density_ratio_estimation/data/
 experiments/density_ratio_estimation/raw_results/
+experiments/density_ratio_estimation/processed_results/

@@ -18,9 +18,10 @@
 
 ### Preliminary Experiments: Density Ratio Estimation
 1. Run `experiments/density_ratio_estimation/step1_create_data.py`
-2. Run `experiments/density_ratio_estimation/step2_run_algorithms.py`
-3. Run `experiments/density_ratio_estimation/step3_process_results.py`
-4. Run `experiments/density_ratio_estimation/step4_plot_results.py`
+2. Run `experiments/density_ratio_estimation/step2_run_compute_true_ldrs.py`
+2. Run `experiments/density_ratio_estimation/step3_run_algorithms.py`
+3. Run `experiments/density_ratio_estimation/step4_process_results.py`
+4. Run `experiments/density_ratio_estimation/step5_plot_results.py`
 
 ### Main Experiments: Experimental Design
 1. Run `experiments/experimental_design/step1_create_data.py`
