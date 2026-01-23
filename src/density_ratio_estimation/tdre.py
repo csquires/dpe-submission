@@ -14,13 +14,17 @@ class TDRE(DensityRatioEstimator):
         input_dim: int, 
         classifier_builder: Callable[[], BinaryClassifier] = build_default_binary_classifier,
         waypoint_builder: WaypointBuilder = DefaultWaypointBuilder(),
-        num_waypoints: int = 10
+        num_waypoints: int = 10,
+        device: str = "cuda"
     ):
         # note: the i-th classifier discrimates between waypoint i (in the numerator) and waypoint i+1 (in the denominator)
         self.classifiers = [classifier_builder(input_dim) for _ in range(num_waypoints - 1)]
         self.waypoint_builder = waypoint_builder
         self.num_waypoints = num_waypoints
-
+        self.device = device
+        for classifier in self.classifiers:
+            classifier.to(self.device)
+    
     def fit(
         self, 
         samples_p0: torch.Tensor,  # [b0, dim]
@@ -30,8 +34,8 @@ class TDRE(DensityRatioEstimator):
         b = waypoint_samples.shape[1]
         for i in range(self.num_waypoints - 1):
             xs = torch.cat([waypoint_samples[i], waypoint_samples[i+1]], dim=0)
-            p_num_labels = torch.ones((b, 1), dtype=torch.float)
-            p_den_labels = torch.zeros((b, 1), dtype=torch.float)
+            p_num_labels = torch.ones((b, 1), dtype=torch.float).to(self.device)
+            p_den_labels = torch.zeros((b, 1), dtype=torch.float).to(self.device)
             ys = torch.cat([p_num_labels, p_den_labels], dim=0)
             self.classifiers[i].fit(xs, ys)
 

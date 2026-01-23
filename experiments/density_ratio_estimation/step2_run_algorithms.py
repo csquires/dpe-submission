@@ -27,10 +27,10 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-bdre = BDRE(DATA_DIM, device=DEVICE)
-# tdre = TDRE(DATA_DIM, classifier_builder=build_gaussian_binary_classifier)
+# bdre = BDRE(DATA_DIM, device=DEVICE)
+tdre = TDRE(DATA_DIM, classifier_builder=build_gaussian_binary_classifier, device=DEVICE)
 num_algs = 1
-algorithms = [bdre]
+algorithms = [tdre]
 
 with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'r') as f:
     nrows = f['kl_distance_arr'].shape[0]

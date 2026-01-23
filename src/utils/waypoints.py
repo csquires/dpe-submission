@@ -31,7 +31,7 @@ class DefaultWaypointBuilder(WaypointBuilder):
         b0, dim = samples_p0.shape
         b1, dim = samples_p1.shape
         b = max(b0, b1)
-        waypoint_samples = torch.zeros((num_waypoints, b, dim))
+        waypoint_samples = torch.zeros((num_waypoints, b, dim), device=samples_p0.device)
         waypoint_samples[0] = samples_p0[torch.randint(0, b0, (b,))]  # [b, dim], bootstrap draws from p0
         waypoint_samples[-1] = samples_p1[torch.randint(0, b0, (b,))]  # [b, dim], bootstrap draws from p1
         for i in range(1, num_waypoints-1):
