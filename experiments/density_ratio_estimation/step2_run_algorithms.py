@@ -13,6 +13,7 @@ from src.models.binary_classification.gaussian_binary_classifier import build_ga
 
 
 config = yaml.load(open('experiments/density_ratio_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+DEVICE = config['device']
 # directories
 DATA_DIR = config['data_dir']
 RAW_RESULTS_DIR = config['raw_results_dir']
@@ -26,10 +27,10 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-# bdre = BDRE(DATA_DIM)
-tdre = TDRE(DATA_DIM, classifier_builder=build_gaussian_binary_classifier)
+bdre = BDRE(DATA_DIM, device=DEVICE)
+# tdre = TDRE(DATA_DIM, classifier_builder=build_gaussian_binary_classifier)
 num_algs = 1
-algorithms = [tdre]
+algorithms = [bdre]
 
 with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'r') as f:
     nrows = f['kl_distance_arr'].shape[0]
@@ -37,14 +38,14 @@ with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={
 
     for alg_idx, alg in enumerate(algorithms):
         for idx in trange(nrows):
-            samples_p0 = torch.from_numpy(f['samples_p0_arr'][idx])  # (NSAMPLES_TRAIN, DATA_DIM)
-            samples_p1 = torch.from_numpy(f['samples_p1_arr'][idx])  # (NSAMPLES_TRAIN, DATA_DIM)
+            samples_p0 = torch.from_numpy(f['samples_p0_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
+            samples_p1 = torch.from_numpy(f['samples_p1_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
             alg.fit(samples_p0, samples_p1)
 
-            samples_pstar = torch.from_numpy(f['samples_pstar_arr'][idx])  # (NTEST_SETS, NSAMPLES_TEST, DATA_DIM)
+            samples_pstar = torch.from_numpy(f['samples_pstar_arr'][idx]).to(DEVICE)  # (NTEST_SETS, NSAMPLES_TEST, DATA_DIM)
             for test_set_idx in range(NTEST_SETS):
                 est_ldrs = alg.predict_ldr(samples_pstar[test_set_idx])  # (NSAMPLES_TEST,)
-                est_ldrs_arr[idx, alg_idx, test_set_idx] = est_ldrs.numpy()
+                est_ldrs_arr[idx, alg_idx, test_set_idx] = est_ldrs.cpu().numpy()
 
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)

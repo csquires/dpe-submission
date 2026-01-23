@@ -8,4 +8,5 @@ num_instances_per_kl: 10
 nsamples_train: 1000
 ntest_sets: 3
 nsamples_test: 1000
+device: "cuda"
 seed: 1729

@@ -9,13 +9,20 @@ from src.models.binary_classification.default_binary_classifier import build_def
 
 
 class BDRE(DensityRatioEstimator):
-    def __init__(self, input_dim: int, classifier_builder: Callable[[], BinaryClassifier] = build_default_binary_classifier):
+    def __init__(
+        self, 
+        input_dim: int, 
+        classifier_builder: Callable[[], BinaryClassifier] = build_default_binary_classifier,
+        device: str = "cuda"
+    ):
         self.classifier = classifier_builder(input_dim)
+        self.device = device
+        self.classifier.to(self.device)
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         xs = torch.cat([samples_p0, samples_p1], dim=0)
-        p0_labels = torch.ones((samples_p0.shape[0], 1), dtype=torch.float)
-        p1_labels = torch.zeros((samples_p1.shape[0], 1), dtype=torch.float)
+        p0_labels = torch.ones((samples_p0.shape[0], 1), dtype=torch.float).to(self.device)
+        p1_labels = torch.zeros((samples_p1.shape[0], 1), dtype=torch.float).to(self.device)
         ys = torch.cat([p0_labels, p1_labels], dim=0)
         self.classifier.fit(xs, ys)
 
