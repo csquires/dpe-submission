@@ -1,13 +1,14 @@
 import torch
 import torch.nn as nn
 
-from src.models.binary_classification.binary_classifier import BinaryClassifier
+from src.models.multiclass_classification.multiclass_classifier import MulticlassClassifier
 
 
-class DefaultBinaryClassifier(BinaryClassifier):
+class DefaultMulticlassClassifier(MulticlassClassifier):
     def __init__(
         self, 
-        input_dim: int, 
+        input_dim: int,
+        num_classes: int,
         # model hyperparameters
         latent_dim: int = 10,
         num_layers: int = 3,
@@ -19,7 +20,7 @@ class DefaultBinaryClassifier(BinaryClassifier):
         for _ in range(num_layers - 1):
             layers.append(nn.Linear(latent_dim, latent_dim))
             layers.append(nn.ReLU())
-        layers.append(nn.Linear(latent_dim, 1))
+        layers.append(nn.Linear(latent_dim, num_classes))
         self.model = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -36,13 +37,13 @@ class DefaultBinaryClassifier(BinaryClassifier):
     def fit(
         self, 
         xs: torch.Tensor,  # [n, dim]
-        ys: torch.Tensor,  # [n, 1], with values in {0, 1}
+        ys: torch.Tensor,  # [n], with values in {0, ..., num_classes-1}
         learning_rate: float = 0.05,
         num_epochs: int = 1000,
     ) -> None:
         self._reset_parameters()
         self.train()
-        loss = nn.BCEWithLogitsLoss()
+        loss = nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
         for epoch in range(num_epochs):
             optimizer.zero_grad()
@@ -60,7 +61,8 @@ class DefaultBinaryClassifier(BinaryClassifier):
             return logits.squeeze(1)
 
 
-def build_default_binary_classifier(
+def build_default_multiclass_classifier(
     input_dim: int, 
-) -> BinaryClassifier:
-    return DefaultBinaryClassifier(input_dim)
+    num_classes: int,
+) -> MulticlassClassifier:
+    return DefaultMulticlassClassifier(input_dim, num_classes)

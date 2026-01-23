@@ -7,7 +7,8 @@ pip3 install numpy
 pip3 install scipy
 pip3 install torch
 pip3 install matplotlib
-pip3 install seaborn
-pip3 install ipython
-pip3 install tqdm
-pip3 install pyyaml
+pip3 install einops     # for cleaner tensor operations
+pip3 install seaborn    # for prettier plots
+pip3 install ipython    # for interactive shell (especially for debugging)
+pip3 install tqdm       # for progress bars
+pip3 install pyyaml     # for configuration management
