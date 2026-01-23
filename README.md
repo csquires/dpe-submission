@@ -2,9 +2,13 @@
 
 ## Organization
 - `src/` contains source code, including baseline algorithms
-    - `density_ratio_estimation/` contains method for density ratio estimation
-    - `eldr_estimation/` contains method for ELDR estimation
-    - `kl_estimation/` contains method for KL estimation
+    - `density_ratio_estimation/` contains methods for density ratio estimation
+    - `eldr_estimation/` contains methods for ELDR estimation
+    - `kl_estimation/` contains methods for KL estimation
+    - `models/` contains models used throughout various approaches
+        - `binary_classification/` contains models for binary classification
+        - `multiclass_classification/` contains models for multi-class classification
+        - `regression/` contains models for regression
     - `utils/` contains utilities used throughout various approaches
 - `experiments/` contains code used for reproducing the experiments in the paper
     - `eldr_estimation/` contains code to reproduce the experiments on ELDR estimation (Section X.X)
