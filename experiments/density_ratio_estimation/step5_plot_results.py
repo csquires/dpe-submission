@@ -28,7 +28,8 @@ for i in range(3):
     axes[i].plot(KL_DISTANCES, bdre_results, label='BDRE')
     # axes[i].plot(KL_DISTANCES, results[test_set]['tdre'], label='TDRE')
     # axes[i].plot(KL_DISTANCES, results[test_set]['mdre'], label='MDRE')
-    # axes[i].plot(KL_DISTANCES, results[test_set]['tsm'], label='TSM')
+    # tsm_results = mean_results_df.loc[KL_DISTANCES, i, 'tsm']
+    # axes[i].plot(KL_DISTANCES, tsm_results, label='TSM')
     axes[i].set_ylim(y_min, y_max)
     axes[i].set_xscale('log')
     axes[i].set_yscale('log')

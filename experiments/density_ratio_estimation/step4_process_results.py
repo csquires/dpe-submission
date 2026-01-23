@@ -21,29 +21,23 @@ NUM_INSTANCES = config['num_instances']
 
 raw_results = pickle.load(open(f'{RAW_RESULTS_DIR}/results.pkl', 'rb'))
 
+results = []
+for kl_distance in KL_DISTANCES:
+    true_ldrs = pickle.load(open(f'{RAW_RESULTS_DIR}/true_ldrs_d={DATA_DIM},k={kl_distance}.pkl', 'rb'))
+    subset = raw_results[raw_results["kl_distance"] == kl_distance]
+    for _, row in subset.iterrows():
+        instance_idx = int(row["instance_idx"])
+        test_set_idx = int(row["test_set_idx"])
+        est_ldrs = row["est_ldrs"]
+        true_ldrs_pstar = true_ldrs[instance_idx][test_set_idx]
+        bdre_mae = torch.mean(torch.abs(est_ldrs - true_ldrs_pstar)).item()
+        results.append({
+            "kl_distance": kl_distance,
+            "test_set_idx": test_set_idx,
+            "algorithm": row["algorithm"],
+            "mae": bdre_mae
+        })
 
-# results = []
-# # fill results dictionary
-# for kl_idx, kl_distance in enumerate(KL_DISTANCES):
-#     bdre_results = pickle.load(open(f'{RAW_RESULTS_DIR}/bdre_results_d={DATA_DIM},k={kl_distance}.pkl', 'rb'))
-#     tdre_results = pickle.load(open(f'{RAW_RESULTS_DIR}/tdre_results_d={DATA_DIM},k={kl_distance}.pkl', 'rb'))
-#     true_ldrs = pickle.load(open(f'{RAW_RESULTS_DIR}/true_ldrs_d={DATA_DIM},k={kl_distance}.pkl', 'rb'))
-    
-#     tdre_maes = np.zeros((NUM_INSTANCES, 3))
-#     for instance_idx in range(NUM_INSTANCES):
-#         for pstar_idx in range(3):
-#             true_ldrs_pstar = true_ldrs[instance_idx][pstar_idx]
-
-#             # BDRE
-#             bdre_ldrs_pstar = bdre_results[instance_idx][pstar_idx]
-#             bdre_mae = torch.mean(torch.abs(bdre_ldrs_pstar - true_ldrs_pstar)).item()
-#             results.append({
-#                 "kl_distance": kl_distance,
-#                 "test_set_idx": pstar_idx,
-#                 "algorithm": "bdre",
-#                 "mae": bdre_mae
-#             })
-
-# results_df = pd.DataFrame.from_dict(results)
-# os.makedirs(PROCESSED_RESULTS_DIR, exist_ok=True)
-# pickle.dump(results_df, open(f'{PROCESSED_RESULTS_DIR}/results_d={DATA_DIM}.pkl', 'wb'))
+results_df = pd.DataFrame.from_dict(results)
+os.makedirs(PROCESSED_RESULTS_DIR, exist_ok=True)
+pickle.dump(results_df, open(f'{PROCESSED_RESULTS_DIR}/results_d={DATA_DIM}.pkl', 'wb'))
