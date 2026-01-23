@@ -2,4 +2,7 @@ venv/
 experiments/density_ratio_estimation/data/
 experiments/density_ratio_estimation/raw_results/
 experiments/density_ratio_estimation/processed_results/
+experiments/density_ratio_estimation_h5/data/
+experiments/density_ratio_estimation_h5/raw_results/
+experiments/density_ratio_estimation_h5/processed_results/
 **/*.DS_Store

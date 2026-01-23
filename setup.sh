@@ -12,3 +12,4 @@ pip3 install seaborn    # for prettier plots
 pip3 install ipython    # for interactive shell (especially for debugging)
 pip3 install tqdm       # for progress bars
 pip3 install pyyaml     # for configuration management
+pip3 install h5py       # for storing datasets in HDF5 format
