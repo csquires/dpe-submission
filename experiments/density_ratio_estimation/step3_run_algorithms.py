@@ -3,11 +3,11 @@ import pickle
 
 import yaml
 from tqdm import tqdm
+import pandas as pd
 
 from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.tdre import TDRE
 
-from experiments.utils.dre_algorithm_runner import DREAlgorithmRunner
 
 
 config = yaml.load(open('experiments/density_ratio_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -22,29 +22,44 @@ SEED = config['seed']
 
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
-alg_runner = DREAlgorithmRunner()
+bdre = BDRE(DATA_DIM)
+tdre = TDRE(DATA_DIM)
 
-
+results = []
 for kl_distance in KL_DISTANCES:
     datasets = pickle.load(open(f'{DATA_DIR}/d={DATA_DIM},k={kl_distance},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.pkl', 'rb'))
 
     print(f'Running BDRE for kl_distance={kl_distance}')
-    bdre_results_all = []
-    for dataset in tqdm(datasets):
+    for instance_idx, dataset in enumerate(tqdm(datasets)):
         samples_p0 = dataset['samples_p0']
         samples_p1 = dataset['samples_p1']
         all_test_samples = [dataset['samples_pstar1'], dataset['samples_pstar2'], dataset['samples_pstar3']]
-        bdre_results = alg_runner.run(samples_p0, samples_p1, all_test_samples, BDRE(DATA_DIM))
-        bdre_results_all.append(bdre_results)
+        for test_set_idx in range(3):
+            bdre.fit(samples_p0, samples_p1)
+            est_ldrs = bdre.predict_ldr(all_test_samples[test_set_idx])
+            results.append({
+                "kl_distance": kl_distance,
+                "test_set_idx": test_set_idx,
+                "instance_idx": instance_idx,
+                "algorithm": "bdre",
+                "est_ldrs": est_ldrs
+            })
     
     print(f'Running TDRE for kl_distance={kl_distance}')
-    tdre_results_all = []
-    for dataset in tqdm(datasets):
+    for instance_idx, dataset in enumerate(tqdm(datasets)):
         samples_p0 = dataset['samples_p0']
         samples_p1 = dataset['samples_p1']
         all_test_samples = [dataset['samples_pstar1'], dataset['samples_pstar2'], dataset['samples_pstar3']]
-        tdre_results = alg_runner.run(samples_p0, samples_p1, all_test_samples, TDRE(DATA_DIM))
-        tdre_results_all.append(tdre_results)
-
-    pickle.dump(bdre_results_all, open(f'{RAW_RESULTS_DIR}/bdre_results_d={DATA_DIM},k={kl_distance}.pkl', 'wb'))
-    pickle.dump(tdre_results_all, open(f'{RAW_RESULTS_DIR}/tdre_results_d={DATA_DIM},k={kl_distance}.pkl', 'wb'))
+        for test_set_idx in range(3):
+            tdre.fit(samples_p0, samples_p1)
+            est_ldrs = tdre.predict_ldr(all_test_samples[test_set_idx])
+            results.append({
+                "kl_distance": kl_distance,
+                "test_set_idx": test_set_idx,
+                "instance_idx": instance_idx,
+                "algorithm": "tdre",
+                "est_ldrs": est_ldrs
+            })
+    
+results_df = pd.DataFrame(results)
+pickle.dump(results_df, open(f'{RAW_RESULTS_DIR}/results.pkl', 'wb'))

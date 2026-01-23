@@ -3,7 +3,8 @@ from typing import Callable
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
-from src.utils.binary_classifier import BinaryClassifier, build_default_binary_classifier
+from src.models.binary_classification.binary_classifier import BinaryClassifier
+from src.models.binary_classification.default_binary_classifier import build_default_binary_classifier
 
 
 class MDRE(DensityRatioEstimator):
