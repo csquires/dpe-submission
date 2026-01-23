@@ -20,22 +20,24 @@ class DefaultWaypointBuilder(WaypointBuilder):
 
     def build_waypoints(
         self, 
-        samples_p0: torch.Tensor,  # [b, dim]
-        samples_p1: torch.Tensor,  # [b, dim]
+        samples_p0: torch.Tensor,  # [b0, dim]
+        samples_p1: torch.Tensor,  # [b1, dim]
         num_waypoints: int
     ) -> torch.Tensor:
         alphas = self._generate_alphas(num_waypoints)  # [w]
         sqrt_alphas = torch.sqrt(alphas)
         sqrt_1_minus_alphas = torch.sqrt(1 - alphas)  # w
 
-        b, dim = samples_p0.shape
+        b0, dim = samples_p0.shape
+        b1, dim = samples_p1.shape
+        b = max(b0, b1)
         waypoint_samples = torch.zeros((num_waypoints, b, dim))
-        waypoint_samples[0] = samples_p0
-        waypoint_samples[-1] = samples_p1
+        waypoint_samples[0] = samples_p0[torch.randint(0, b0, (b,))]  # [b, dim], bootstrap draws from p0
+        waypoint_samples[-1] = samples_p1[torch.randint(0, b0, (b,))]  # [b, dim], bootstrap draws from p1
         for i in range(1, num_waypoints-1):
-            permuted_samples_p0 = samples_p0[torch.randperm(b)]
-            permuted_samples_p1 = samples_p1[torch.randperm(b)]
-            waypoint_samples[i] = sqrt_alphas[i] * permuted_samples_p0 + sqrt_1_minus_alphas[i] * permuted_samples_p1
+            bootstrapped_samples_p0 = samples_p0[torch.randint(0, b0, (b,))]
+            bootstrapped_samples_p1 = samples_p1[torch.randint(0, b1, (b,))]
+            waypoint_samples[i] = sqrt_alphas[i] * bootstrapped_samples_p0 + sqrt_1_minus_alphas[i] * bootstrapped_samples_p1
         return waypoint_samples  # [w, b, dim]
 
 
@@ -54,7 +56,7 @@ if __name__ == '__main__':
     mu1, Sigma1 = gaussian_pair['mu1'], gaussian_pair['Sigma1']
     p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
     p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
-    samples_p0 = p0.sample((NSAMPLES_TRAIN,))
+    samples_p0 = p0.sample((NSAMPLES_TRAIN//2,))
     samples_p1 = p1.sample((NSAMPLES_TRAIN,))
 
     # === BUILD WAYPOINTS ===

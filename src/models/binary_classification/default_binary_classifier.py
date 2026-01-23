@@ -49,7 +49,6 @@ class DefaultBinaryClassifier(BinaryClassifier):
             y_pred = self.forward(xs)
             l = loss(y_pred, ys)
             l.backward()
-            print(f"Loss: {l.item()}")
             optimizer.step()
         if y_pred.isnan().any():
             breakpoint()
