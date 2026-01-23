@@ -11,19 +11,19 @@ from src.density_ratio_estimation.tdre import TDRE
 
 
 
-config = yaml.load(open('experiments/density_ratio_estimation_h5/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/density_ratio_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+# directories
 DATA_DIR = config['data_dir']
 RAW_RESULTS_DIR = config['raw_results_dir']
-
+# dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
 NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
-
+# random seed
 SEED = config['seed']
+np.random.seed(SEED)
 torch.manual_seed(SEED)
-
 
 bdre = BDRE(DATA_DIM)
 tdre = TDRE(DATA_DIM)

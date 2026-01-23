@@ -1,9 +1,11 @@
 data_dir: "experiments/density_ratio_estimation/data"
 raw_results_dir: "experiments/density_ratio_estimation/raw_results"
 processed_results_dir: "experiments/density_ratio_estimation/processed_results"
+figures_dir: "experiments/density_ratio_estimation/figures"
 data_dim: 3
-kl_distances: [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
-num_instances: 100
+kl_distances: [0.5, 2, 8, 32, 128]
+num_instances_per_kl: 10
 nsamples_train: 1000
+ntest_sets: 3
 nsamples_test: 1000
 seed: 1729
