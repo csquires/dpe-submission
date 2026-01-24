@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import torch
 
 
-class WaypointBuilder(ABC):
+class WaypointBuilder1D(ABC):
     @abstractmethod
     def build_waypoints(
         self, 
@@ -14,7 +14,7 @@ class WaypointBuilder(ABC):
         pass
 
 
-class DefaultWaypointBuilder(WaypointBuilder):
+class DefaultWaypointBuilder1D(WaypointBuilder1D):
     def _generate_alphas(self, num_waypoints: int) -> torch.Tensor:
         return torch.linspace(1, 0, num_waypoints-1)
 
@@ -25,8 +25,8 @@ class DefaultWaypointBuilder(WaypointBuilder):
         num_waypoints: int
     ) -> torch.Tensor:
         alphas = self._generate_alphas(num_waypoints)  # [w]
-        sqrt_alphas = torch.sqrt(alphas)
-        sqrt_1_minus_alphas = torch.sqrt(1 - alphas)  # w
+        p0_weights = alphas # [w]
+        p1_weights = torch.sqrt(1 - alphas ** 2)  # [w]
 
         b0, dim = samples_p0.shape
         b1, dim = samples_p1.shape
@@ -37,7 +37,7 @@ class DefaultWaypointBuilder(WaypointBuilder):
         for i in range(1, num_waypoints-1):
             bootstrapped_samples_p0 = samples_p0[torch.randint(0, b0, (b,))]
             bootstrapped_samples_p1 = samples_p1[torch.randint(0, b1, (b,))]
-            waypoint_samples[i] = sqrt_alphas[i] * bootstrapped_samples_p0 + sqrt_1_minus_alphas[i] * bootstrapped_samples_p1
+            waypoint_samples[i] = p0_weights[i] * bootstrapped_samples_p0 + p1_weights[i] * bootstrapped_samples_p1
         return waypoint_samples  # [w, b, dim]
 
 
