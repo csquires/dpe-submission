@@ -1,6 +1,6 @@
 import abc
 
-import numpy as np
+import torch
 
 
 class ELDREstimator(abc.ABC):
@@ -10,8 +10,8 @@ class ELDREstimator(abc.ABC):
     @abc.abstractmethod
     def estimate_eldr(
         self, 
-        samples_pstar: np.ndarray, 
-        samples_p0: np.ndarray, 
-        samples_p1: np.ndarray
+        samples_pstar: torch.Tensor, 
+        samples_p0: torch.Tensor, 
+        samples_p1: torch.Tensor
     ) -> float:
         pass
