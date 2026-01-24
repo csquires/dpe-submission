@@ -17,7 +17,12 @@ class WaypointBuilder2D(ABC):
 
 class DefaultWaypointBuilder2D(WaypointBuilder2D):
     def _generate_alphas(self, num_waypoints: int) -> torch.Tensor:
-        return torch.linspace(1, 0, num_waypoints-1)
+        alphas = torch.linspace(0, 1, num_waypoints)
+        alpha_primes_rising = torch.linspace(1, 0, num_waypoints // 2)
+        alpha_primes_falling = torch.linspace(0, 1, num_waypoints // 2)
+        alpha_primes = torch.cat([alpha_primes_rising, alpha_primes_falling])
+        breakpoint()
+        return alphas, alpha_primes
 
     def build_waypoints(
         self, 
@@ -26,22 +31,25 @@ class DefaultWaypointBuilder2D(WaypointBuilder2D):
         samples_p1: torch.Tensor,  # [b1, dim]
         num_waypoints: int
     ) -> torch.Tensor:
-        alphas = self._generate_alphas(num_waypoints)  # [w]
-        p0_weights = alphas # [w]
-        p1_weights = torch.sqrt(1 - alphas ** 2)  # [w]
+        if num_waypoints % 2 == 0:
+            raise ValueError("num_waypoints must be odd")
+        alphas, alpha_primes = self._generate_alphas(num_waypoints)  # [w]
+        pstar_weights = alpha_primes  # [w]
+        p0_weights = torch.sqrt(1 - alphas ** 2) * torch.sqrt(1 - alpha_primes ** 2) # [w]
+        p1_weights = alphas * torch.sqrt(1 - alpha_primes ** 2)  # [w]
 
         bstar, dim = samples_pstar.shape
         b0, dim = samples_p0.shape
         b1, dim = samples_p1.shape
         b = max(bstar, b0, b1)
+
+        # === set boundary conditions ===
         waypoint_samples = torch.zeros((num_waypoints, b, dim), device=samples_p0.device)
-        waypoint_samples[0] = samples_pstar[torch.randint(0, bstar, (b,))]  # [b, dim], bootstrap draws from pstar
-        waypoint_samples[0] = samples_p0[torch.randint(0, b0, (b,))]  # [b, dim], bootstrap draws from p0
-        waypoint_samples[-1] = samples_p1[torch.randint(0, b0, (b,))]  # [b, dim], bootstrap draws from p1
-        for i in range(1, num_waypoints-1):
-            bootstrapped_samples_p0 = samples_p0[torch.randint(0, b0, (b,))]
-            bootstrapped_samples_p1 = samples_p1[torch.randint(0, b1, (b,))]
-            waypoint_samples[i] = p0_weights[i] * bootstrapped_samples_p0 + p1_weights[i] * bootstrapped_samples_p1
+        for i in range(num_waypoints):
+            new_samples_pstar = samples_pstar[torch.randint(0, bstar, (b,))]
+            new_samples_p0 = samples_p0[torch.randint(0, b0, (b,))]
+            new_samples_p1 = samples_p1[torch.randint(0, b1, (b,))]
+            waypoint_samples[i] = pstar_weights[i] * new_samples_pstar + p0_weights[i] * new_samples_p0 + p1_weights[i] * new_samples_p1
         return waypoint_samples  # [w, b, dim]
 
 
