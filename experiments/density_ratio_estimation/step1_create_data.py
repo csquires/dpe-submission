@@ -1,6 +1,6 @@
 import os
 
-import h5py
+import h5py  # HDF5
 import yaml
 from tqdm import tqdm
 import numpy as np
@@ -28,13 +28,16 @@ torch.manual_seed(SEED)
 # dataset storage
 nrows = len(KL_DISTANCES) * NUM_INSTANCES_PER_KL
 kl_distance_arr = np.zeros(nrows, dtype=np.float32)
+# true parameters (metadata)
 mu0_arr = np.zeros((nrows, DATA_DIM), dtype=np.float32)
 mu1_arr = np.zeros((nrows, DATA_DIM), dtype=np.float32)
 Sigma0_arr = np.zeros((nrows, DATA_DIM, DATA_DIM), dtype=np.float32)
 Sigma1_arr = np.zeros((nrows, DATA_DIM, DATA_DIM), dtype=np.float32)
+# data itself
 samples_p0_arr = np.zeros((nrows, NSAMPLES_TRAIN, DATA_DIM), dtype=np.float32)
 samples_p1_arr = np.zeros((nrows, NSAMPLES_TRAIN, DATA_DIM), dtype=np.float32)
 samples_pstar_arr = np.zeros((nrows, NTEST_SETS, NSAMPLES_TEST, DATA_DIM), dtype=np.float32)
+# true density ratios
 true_ldrs_arr = np.zeros((nrows, NTEST_SETS, NSAMPLES_TEST), dtype=np.float32)
 
 idx = 0
