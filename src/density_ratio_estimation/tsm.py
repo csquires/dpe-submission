@@ -46,13 +46,13 @@ class TSM(DensityRatioEstimator):
 
     def _time_score_loss(
         self,
-        p_samples: torch.Tensor,
-        q_samples: torch.Tensor,
+        p0_samples: torch.Tensor,
+        p1_samples: torch.Tensor,
         x_t: torch.Tensor,
         t: torch.Tensor,
     ) -> torch.Tensor:
-        t0 = torch.zeros((len(p_samples), 1), device=p_samples.device) + self.eps
-        t1 = torch.ones((len(q_samples), 1), device=q_samples.device)
+        t0 = torch.zeros((len(p1_samples), 1), device=p1_samples.device) + self.eps
+        t1 = torch.ones((len(p0_samples), 1), device=p0_samples.device)
 
         if self.reweight:
             lambda_t = (1 - t ** 2).squeeze()
@@ -63,8 +63,8 @@ class TSM(DensityRatioEstimator):
             lambda_t = lambda_t0 = lambda_t1 = 1.0
             lambda_dt = 0.0
 
-        term1 = (2 * self.model(p_samples, t0)).squeeze() * lambda_t0
-        term2 = (2 * self.model(q_samples, t1)).squeeze() * lambda_t1
+        term1 = (2 * self.model(p1_samples, t0)).squeeze() * lambda_t0
+        term2 = (2 * self.model(p0_samples, t1)).squeeze() * lambda_t1
 
         t = t.clone().detach().requires_grad_(True)
         x_t_score = self.model(x_t, t)
@@ -80,22 +80,22 @@ class TSM(DensityRatioEstimator):
         self._init_model()
         self.model.train()
 
-        samples_q = samples_p0.float()
-        samples_p = samples_p1.float()
-        n_q = samples_q.shape[0]
-        n_p = samples_p.shape[0]
+        samples_p0 = samples_p0.float()
+        samples_p1 = samples_p1.float()
+        n_p0 = samples_p0.shape[0]
+        n_p1 = samples_p1.shape[0]
 
         for _ in range(self.n_epochs):
-            q_idx = torch.randint(0, n_q, (self.batch_size,))
-            p_idx = torch.randint(0, n_p, (self.batch_size,))
-            q_samples = samples_q[q_idx].to(self.device)
-            p_samples = samples_p[p_idx].to(self.device)
+            p0_idx = torch.randint(0, n_p0, (self.batch_size,))
+            p1_idx = torch.randint(0, n_p1, (self.batch_size,))
+            p0_samples = samples_p0[p0_idx].to(self.device)
+            p1_samples = samples_p1[p1_idx].to(self.device)
 
             t = torch.rand(self.batch_size, 1, device=self.device) * (1 - self.eps)
-            x_t = t * q_samples + torch.sqrt(1 - t ** 2) * p_samples
+            x_t = t * p0_samples + torch.sqrt(1 - t ** 2) * p1_samples
 
             self.optimizer.zero_grad()
-            loss = self._time_score_loss(p_samples, q_samples, x_t, t)
+            loss = self._time_score_loss(p0_samples, p1_samples, x_t, t)
             loss.backward()
             self.optimizer.step()
 
