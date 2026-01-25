@@ -7,10 +7,10 @@ import torch.autograd as autograd
 from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
-from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
+from src.models.time_score_matching.time_score_net_2d import TimeScoreNetwork2D
 
 
-class TSM(DensityRatioEstimator):
+class TriangularTSM(DensityRatioEstimator):
     def __init__(
         self,
         input_dim: int,
@@ -41,18 +41,21 @@ class TSM(DensityRatioEstimator):
         self.optimizer = None
 
     def init_model(self) -> None:
-        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim).to(self.device)
+        self.model = TimeScoreNetwork2D(self.input_dim, self.hidden_dim).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
     def time_score_loss(
         self,
+        score_fn,
         p0_samples: torch.Tensor,
         p1_samples: torch.Tensor,
         x_t: torch.Tensor,
         t: torch.Tensor,
+        t_prime: torch.Tensor,
     ) -> torch.Tensor:
         t0 = torch.zeros((len(p1_samples), 1), device=p1_samples.device) + self.eps
         t1 = torch.ones((len(p0_samples), 1), device=p0_samples.device)
+        t_prime_zeros = torch.zeros_like(t0)
 
         if self.reweight:
             lambda_t = (1 - t ** 2).squeeze()
@@ -63,11 +66,11 @@ class TSM(DensityRatioEstimator):
             lambda_t = lambda_t0 = lambda_t1 = 1.0
             lambda_dt = 0.0
 
-        term1 = (2 * self.model(p1_samples, t0)).squeeze() * lambda_t0
-        term2 = (2 * self.model(p0_samples, t1)).squeeze() * lambda_t1
+        term1 = (2 * score_fn(p1_samples, t0, t_prime_zeros)).squeeze() * lambda_t0
+        term2 = (2 * score_fn(p0_samples, t1, t_prime_zeros)).squeeze() * lambda_t1
 
         t = t.clone().detach().requires_grad_(True)
-        x_t_score = self.model(x_t, t)
+        x_t_score = score_fn(x_t, t, t_prime.detach())
         x_t_score_dt = autograd.grad(x_t_score.sum(), t, create_graph=True)[0]
         term3 = (2 * x_t_score_dt).squeeze() * lambda_t
         term4 = x_t_score.squeeze() * lambda_dt if isinstance(lambda_dt, torch.Tensor) else x_t_score.squeeze() * lambda_dt
@@ -76,26 +79,42 @@ class TSM(DensityRatioEstimator):
         loss = term1 - term2 + term3 + term4 + term5
         return loss.mean()
 
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor, samples_pstar: torch.Tensor) -> None:
         self.init_model()
         self.model.train()
 
         samples_p0 = samples_p0.float()
         samples_p1 = samples_p1.float()
+        samples_pstar = samples_pstar.float()
         n_p0 = samples_p0.shape[0]
         n_p1 = samples_p1.shape[0]
+        n_pstar = samples_pstar.shape[0]
 
         for _ in range(self.n_epochs):
             p0_idx = torch.randint(0, n_p0, (self.batch_size,))
             p1_idx = torch.randint(0, n_p1, (self.batch_size,))
+            pstar_idx = torch.randint(0, n_pstar, (self.batch_size,))
             p0_samples = samples_p0[p0_idx].to(self.device)
             p1_samples = samples_p1[p1_idx].to(self.device)
+            pstar_samples = samples_pstar[pstar_idx].to(self.device)
 
             t = torch.rand(self.batch_size, 1, device=self.device) * (1 - self.eps)
+            t_prime = (torch.rand(self.batch_size, 1, device=self.device) ** 2) * (1 - self.eps)
             x_t = t * p0_samples + torch.sqrt(1 - t ** 2) * p1_samples
+            alpha_tprime = torch.sqrt(1 - t_prime ** 2)
+            x_t_tprime = alpha_tprime * x_t + t_prime * pstar_samples
+
+            score_fn = lambda x, t_in, t_prime_in: self.model(x, t_in, t_prime_in)
+            loss = self.time_score_loss(
+                score_fn,
+                p0_samples,
+                p1_samples,
+                x_t_tprime,
+                t,
+                t_prime,
+            )
 
             self.optimizer.zero_grad()
-            loss = self.time_score_loss(p0_samples, p1_samples, x_t, t)
             loss.backward()
             self.optimizer.step()
 
@@ -109,7 +128,8 @@ class TSM(DensityRatioEstimator):
         with torch.no_grad():
             def ode_func(t, y, samples_tensor):
                 t_tensor = torch.ones(samples_tensor.size(0), 1, device=self.device) * t
-                score = self.model(samples_tensor, t_tensor)
+                t_prime_zeros = torch.zeros_like(t_tensor)
+                score = self.model(samples_tensor, t_tensor, t_prime_zeros)
                 return score.squeeze().cpu().numpy()
 
             ode_fn = lambda t, y: ode_func(t, y, samples)
@@ -143,11 +163,12 @@ if __name__ == '__main__':
     p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
     samples_p0 = p0.sample((NSAMPLES_TRAIN,))
     samples_p1 = p1.sample((NSAMPLES_TRAIN,))
+    samples_pstar = p0.sample((NSAMPLES_TRAIN,))
     samples_pstar1 = p0.sample((NSAMPLES_TEST,))
 
     # === DENSITY RATIO ESTIMATION ===
-    tsm = TSM(DIM)
-    tsm.fit(samples_p0, samples_p1)
+    tsm = TriangularTSM(DIM)
+    tsm.fit(samples_p0, samples_p1, samples_pstar)
 
     # === EVALUATION ===
     est_ldrs = tsm.predict_ldr(samples_pstar1)
