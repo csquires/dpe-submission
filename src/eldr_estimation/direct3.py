@@ -471,7 +471,7 @@ class DirectELDREstimator3(ELDREstimator):
                 sanity_check_targets = torch.stack(sanity_check_targets)
                 print(f'Sanity Check: ELDR {-sanity_check_targets.mean()}')
 
-                gamma_eval = self.g(t_eval)
+                weight_eval = 1.0 / (self.g(t_eval) + self.eps)**2
 
         best_loss = float('inf')
         patience_counter = 0
@@ -518,7 +518,7 @@ class DirectELDREstimator3(ELDREstimator):
 
                 # Compute weights: 1 / (g(t) + eps)
                 g_t = self.g(t)
-                weights = 1.0 / (g_t + self.eps)
+                weights = 1.0 / (g_t + self.eps)**2
 
                 loss = (mse_per_sample * weights).mean()
 
@@ -556,7 +556,7 @@ class DirectELDREstimator3(ELDREstimator):
                         unweighted_error = None
                         if sanity_check_targets is not None:
                             sq_errors = (full_integrand - sanity_check_targets) ** 2
-                            weighted_error = (gamma_eval * sq_errors).mean().item()
+                            weighted_error = (weight_eval * sq_errors).mean().item()
                             unweighted_error = sq_errors.mean().item()
 
                         avg_nn = -full_integrand.mean().item()
@@ -698,14 +698,14 @@ if __name__ == '__main__':
         time_embed_size=64,
         # Interpolant parameters
         k=8.0,
-        eps=0.03,
+        eps=0.1,
         # Training parameters
-        learning_rate=1e-5,
+        learning_rate=1e-2,
         weight_decay=1e-4,
-        num_epochs=20000,
-        batch_size=NSAMPLES//16,
+        num_epochs=200000,
+        batch_size=NSAMPLES,
         # Convergence
-        patience=8000,
+        patience=32000,
         verbose=True,
         integration_steps=NSAMPLES*2,
         convergence_threshold=1e-8
