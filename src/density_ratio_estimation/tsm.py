@@ -7,7 +7,7 @@ import torch.autograd as autograd
 from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
-from src.models.time_score_matching.time_score_network import TimeScoreNetwork
+from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 
 
 class TSM(DensityRatioEstimator):
@@ -40,11 +40,11 @@ class TSM(DensityRatioEstimator):
         self.model = None
         self.optimizer = None
 
-    def _init_model(self) -> None:
-        self.model = TimeScoreNetwork(self.input_dim, self.hidden_dim).to(self.device)
+    def init_model(self) -> None:
+        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
-    def _time_score_loss(
+    def time_score_loss(
         self,
         p0_samples: torch.Tensor,
         p1_samples: torch.Tensor,
@@ -77,7 +77,7 @@ class TSM(DensityRatioEstimator):
         return loss.mean()
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
-        self._init_model()
+        self.init_model()
         self.model.train()
 
         samples_p0 = samples_p0.float()
@@ -95,7 +95,7 @@ class TSM(DensityRatioEstimator):
             x_t = t * p0_samples + torch.sqrt(1 - t ** 2) * p1_samples
 
             self.optimizer.zero_grad()
-            loss = self._time_score_loss(p0_samples, p1_samples, x_t, t)
+            loss = self.time_score_loss(p0_samples, p1_samples, x_t, t)
             loss.backward()
             self.optimizer.step()
 
