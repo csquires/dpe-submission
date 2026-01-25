@@ -62,9 +62,9 @@ class FourierTimeEmbedding(nn.Module):
         return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
 
 
-class ScoreNetwork(nn.Module):
+class NoiserNetwork(nn.Module):
     """
-    Neural network that maps time t to the expected noiser S_*(t).
+    Neural network that maps time t to the expected noiser eta_*(t).
 
     Uses Gaussian Fourier feature embeddings for time representation.
     """
@@ -116,7 +116,7 @@ class ScoreNetwork(nn.Module):
             t: Time values of shape [batch] or [batch, 1]
 
         Returns:
-            Score estimates of shape [batch]
+            Noiser estimates of shape [batch]
         """
         # Ensure t has shape [batch, 1]
         if t.dim() == 1:
@@ -210,7 +210,7 @@ class DirectELDREstimator(ELDREstimator):
         self._f_max = (1 - np.exp(-self.l / 2)) ** 2
 
         # Create noiser network
-        self.noiser_network = ScoreNetwork(
+        self.noiser_network = NoiserNetwork(
             hidden_dim=hidden_dim,
             num_layers=num_layers,
             dropout_p=dropout_p,
@@ -373,12 +373,15 @@ class DirectELDREstimator(ELDREstimator):
 
         v(t) = Var_{x0, x1}[E_x[r^T*mu' + ||r||^2]]
 
+        where r = (x - mu(t)) / gamma(t)
+
         For fixed (x0, x1), the averaged estimand (over x ~ p_*) is:
-            Y(x0, x1) = m^T*d + ||m||^2 + E
+            Y(x0, x1) = m^T*d / gamma + ||m||^2 / gamma^2 + E / gamma^2
         where:
             m = mean_x - alpha*x0 - beta*x1
             d = x1 - x0
             E = sum of Var(x) across dims
+            gamma = gamma(t)
 
         Args:
             t: Time value (scalar tensor)
@@ -390,16 +393,17 @@ class DirectELDREstimator(ELDREstimator):
         """
         alpha = 1 - t  # scalar
         beta = t
+        gamma_t = self.gamma(t)  # scalar
 
         # m = mean_x - alpha*x0 - beta*x1 for all (x0, x1) pairs
         # Shape: [n_samples, dim]
         m = self._mean_x - alpha * samples_p0 - beta * samples_p1
         d = samples_p1 - samples_p0
 
-        # Y = m^T*d + ||m||^2 + E
+        # Y = m^T*d / gamma + ||m||^2 / gamma^2 + E / gamma^2
         m_dot_d = (m * d).sum(dim=-1)  # [n_samples]
         m_norm_sq = (m ** 2).sum(dim=-1)  # [n_samples]
-        Y = m_dot_d + m_norm_sq + self._E
+        Y = m_dot_d / gamma_t + m_norm_sq / (gamma_t ** 2) + self._E / (gamma_t ** 2)
 
         # Return variance (add small epsilon for numerical stability)
         return Y.var() + 1e-8
@@ -447,16 +451,18 @@ class DirectELDREstimator(ELDREstimator):
         """
         Compute raw estimand: r^T*mu' + ||r||^2
 
-        where r = x - mu(t) and mu' = x1 - x0
+        where r = (x - mu(t)) / gamma(t) and mu' = x1 - x0
 
         Returns:
             Scalar estimand values of shape [batch]
         """
+        t_exp = t.unsqueeze(-1)  # [batch, 1]
+        gamma_t = self.gamma(t_exp)  # [batch, 1]
         mu_t = self.mu(t, x0, x1)            # [batch, dim]
         mu_prime = self.dmudt(x0, x1)        # [batch, dim]
 
-        # r = x - mu(t)
-        r = x - mu_t  # [batch, dim]
+        # r = (x - mu(t)) / gamma(t)
+        r = (x - mu_t) / gamma_t  # [batch, dim]
         r_norm_sq = (r ** 2).sum(dim=-1)  # [batch], ||r||^2
 
         # r^T * mu'(t)
@@ -614,8 +620,9 @@ class DirectELDREstimator(ELDREstimator):
                 sanity_check_targets = torch.stack(sanity_check_targets)  # [n_t]
                 print(f'Sanity Check: ELDR {-sanity_check_targets.mean()}')
 
-                # Uniform weighting for error computation
-                lambda_weights = 1.0
+                # Weight the ground truth error by gamma(t)
+                t_eval_exp = t_eval.unsqueeze(-1)  # [n_t, 1]
+                gamma_eval = self.gamma(t_eval_exp).squeeze(-1)  # [n_t]
 
         best_loss = float('inf')
         patience_counter = 0
@@ -674,11 +681,13 @@ class DirectELDREstimator(ELDREstimator):
                 # MSE loss per sample (now comparing to scaled targets)
                 mse_per_sample = (predictions - scaled_targets.detach()) ** 2
 
-                # Compute importance sampling weight: 1 / (f(t) * g(t))
+                # Compute weights: gamma(t) / f(t)
+                # - gamma(t) weights the loss as requested
+                # - 1/f(t) is the importance sampling correction
                 t_exp = t.unsqueeze(-1)  # [batch, 1]
-                g_t = self.g(t_exp).squeeze(-1)  # [batch]
+                gamma_t = self.gamma(t_exp).squeeze(-1)  # [batch]
                 f_t = self._f_torch(t)  # [batch]
-                weights = 1.0 / (f_t)
+                weights = gamma_t / f_t
 
                 # Weighted loss
                 loss = (mse_per_sample * weights).mean()
@@ -709,22 +718,29 @@ class DirectELDREstimator(ELDREstimator):
                     with torch.no_grad():
                         # Compute NN(t) for all t
                         nn_predictions = self.noiser_network(t_eval)  # [n_t]
-                        # Multiply by v(t) to get the unscaled integrand
-                        # TODO: check if possible to precompute this
+
+                        # Compute integrand: v(t) * NN(t) / gamma(t) - dim * g'/g
                         v_eval = self._interpolate_v(t_eval)  # [n_t]
-                        unscaled_integrand = v_eval * nn_predictions
+                        t_eval_exp_log = t_eval.unsqueeze(-1)  # [n_t, 1]
+                        gamma_log = self.gamma(t_eval_exp_log).squeeze(-1)  # [n_t]
+                        gamma_prime_log = self.dgammadt(t_eval_exp_log).squeeze(-1)  # [n_t]
+
+                        # Full integrand: -dim * g'/g + v(t) * NN(t) / gamma(t)
+                        centering_term = -dim * gamma_prime_log / gamma_log
+                        noiser_term = v_eval * nn_predictions / gamma_log
+                        full_integrand = centering_term + noiser_term
 
                         # Sanity check errors (only if targets available)
                         weighted_error = None
                         unweighted_error = None
                         if sanity_check_targets is not None:
-                            # Compare unscaled integrand to sanity check targets
-                            sq_errors = (unscaled_integrand - sanity_check_targets) ** 2
-                            weighted_error = (lambda_weights * sq_errors).mean().item()
+                            # Compare full integrand to sanity check targets
+                            sq_errors = (full_integrand - sanity_check_targets) ** 2
+                            weighted_error = (gamma_eval * sq_errors).mean().item()
                             unweighted_error = sq_errors.mean().item()
 
-                        # Mean of unscaled integrand (approximate ELDR via mean)
-                        avg_nn = -unscaled_integrand.mean().item()
+                        # Mean of full integrand (approximate ELDR via mean)
+                        avg_nn = -full_integrand.mean().item()
 
                     if self.verbose:
                         log_msg = f"[Iter {global_iter}] loss={loss_val:.6f}"
@@ -741,14 +757,22 @@ class DirectELDREstimator(ELDREstimator):
                         print(f"Converged at iteration {global_iter}")
                     return
 
-    def _integrate_score(self) -> float:
+    def _integrate_noiser(self, dim: int) -> float:
         """
-        Integrate v(t) * NN(t) from t=eps to t=1-eps.
+        Integrate the full noiser from t=eps to t=1-eps.
 
-        The network predicts scaled values (target / v(t)), so we multiply by v(t)
-        to recover the original scale before integration.
+        The full integrand is:
+            -dim * g'/g + v(t) * NN(t) / gamma(t)
+
+        where:
+        - The first term is the centering term
+        - The second term rescales the network prediction (which predicts target/v(t))
+          by v(t) and divides by gamma(t)
 
         Uses Simpson's rule for numerical integration.
+
+        Args:
+            dim: Dimensionality of the data
 
         Returns:
             Integral value (scalar)
@@ -766,8 +790,16 @@ class DirectELDREstimator(ELDREstimator):
         with torch.no_grad():
             nn_predictions = self.noiser_network(t_vals)  # [n_points]
             v_vals = self._interpolate_v(t_vals)  # [n_points]
-            # Multiply by v(t) to remove scaling
-            integrand = (v_vals * nn_predictions).cpu().numpy()
+
+            # Compute gamma(t) and gamma'(t)
+            t_vals_exp = t_vals.unsqueeze(-1)  # [n_points, 1]
+            gamma_vals = self.gamma(t_vals_exp).squeeze(-1)  # [n_points]
+            gamma_prime_vals = self.dgammadt(t_vals_exp).squeeze(-1)  # [n_points]
+
+            # Full integrand: -dim * g'/g + v(t) * NN(t) / gamma(t)
+            centering_term = -dim * gamma_prime_vals / gamma_vals
+            noiser_term = v_vals * nn_predictions / gamma_vals
+            integrand = (centering_term + noiser_term).cpu().numpy()
 
         t_np = t_vals.cpu().numpy()
 
@@ -822,7 +854,8 @@ class DirectELDREstimator(ELDREstimator):
 
         # Integrate to get the estimate
         # The integral from 0->1 gives E[log p_1(x) - log p_0(x)] = -ELDR
-        integral = self._integrate_score()
+        dim = samples_base.shape[-1]
+        integral = self._integrate_noiser(dim)
 
         return -integral
 
@@ -859,15 +892,15 @@ if __name__ == '__main__':
         time_embed_size=64,
         # Interpolant parameters
         k=8.0,        # gamma(0.5) ≈ 0.98
-        l=2.0,        # importance sampling
-        eps=0.01,      # boundary epsilon
+        l=10.0,        # importance sampling
+        eps=0.03,      # boundary epsilon
         # Training parameters
         learning_rate=1e-5,
         weight_decay=1e-4,
-        num_epochs=2000,     # Reduced from 2000
+        num_epochs=20000,     # Reduced from 2000
         batch_size=NSAMPLES//16,     # Reduced to allow 4 iters/epoch
         # Convergence
-        patience=500,       # In total iterations
+        patience=8000,       # In total iterations
         verbose=True,
         integration_steps=NSAMPLES*2,
         convergence_threshold=1e-8
