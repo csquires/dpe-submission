@@ -1,30 +1,24 @@
-from typing import Callable
-
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.models.binary_classification.binary_classifier import BinaryClassifier
-from src.models.binary_classification.default_binary_classifier import build_default_binary_classifier
 from src.waypoints.waypoints1d import WaypointBuilder1D, DefaultWaypointBuilder1D
 
 
 class TDRE(DensityRatioEstimator):
     def __init__(
         self, 
-        input_dim: int, 
-        classifier_builder: Callable[[], BinaryClassifier] = build_default_binary_classifier,
+        classifiers: list[BinaryClassifier],
         waypoint_builder: WaypointBuilder1D = DefaultWaypointBuilder1D(),
         num_waypoints: int = 10,
         device: str = "cuda"
     ):
         # note: the i-th classifier discrimates between waypoint i (in the numerator) and waypoint i+1 (in the denominator)
-        self.classifiers = [classifier_builder(input_dim) for _ in range(num_waypoints - 1)]
+        self.device = device
+        self.classifiers = [classifier.to(self.device) for classifier in classifiers]
         self.waypoint_builder = waypoint_builder
         self.num_waypoints = num_waypoints
-        self.device = device
-        for classifier in self.classifiers:
-            classifier.to(self.device)
-    
+        
     def fit(
         self, 
         samples_p0: torch.Tensor,  # [b0, dim]
@@ -52,7 +46,8 @@ class TDRE(DensityRatioEstimator):
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
     from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
-    
+    from src.models.binary_classification import make_pairwise_binary_classifiers
+
     DIM = 2
     NSAMPLES_TRAIN = 10000
     NSAMPLES_TEST = 10
@@ -70,7 +65,9 @@ if __name__ == '__main__':
     samples_pstar1 = p0.sample((NSAMPLES_TEST,)).to(DEVICE)
 
     # === DENSITY RATIO ESTIMATION ===
-    tdre = TDRE(DIM, device=DEVICE)
+    num_waypoints = 10
+    classifiers = make_pairwise_binary_classifiers(name="default", num_classes=num_waypoints, input_dim=DIM)
+    tdre = TDRE(classifiers, device=DEVICE)
     tdre.fit(samples_p0, samples_p1)
 
     # === EVALUATION ===

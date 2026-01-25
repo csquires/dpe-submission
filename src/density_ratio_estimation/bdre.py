@@ -1,22 +1,17 @@
-from typing import Callable
-
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.models.binary_classification.binary_classifier import BinaryClassifier
-from src.models.binary_classification.default_binary_classifier import build_default_binary_classifier
 
 
 class BDRE(DensityRatioEstimator):
     def __init__(
-        self, 
-        input_dim: int, 
-        classifier_builder: Callable[[], BinaryClassifier] = build_default_binary_classifier,
+        self,
+        classifier: BinaryClassifier,
         device: str = "cuda"
     ):
-        self.classifier = classifier_builder(input_dim)
         self.device = device
-        self.classifier.to(self.device)
+        self.classifier = classifier.to(self.device)
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         xs = torch.cat([samples_p0, samples_p1], dim=0)
@@ -29,9 +24,12 @@ class BDRE(DensityRatioEstimator):
         return self.classifier.predict_logits(xs)
 
 
+
+
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
     from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
+    from src.models.binary_classification import make_binary_classifier
     
     DIM = 2
     NSAMPLES_TRAIN = 10000
@@ -50,7 +48,8 @@ if __name__ == '__main__':
     samples_pstar1 = p0.sample((NSAMPLES_TEST,)).to(DEVICE)
 
     # === DENSITY RATIO ESTIMATION ===
-    bdre = BDRE(DIM, device=DEVICE)
+    classifier = make_binary_classifier(name="default", input_dim=DIM)
+    bdre = BDRE(classifier, device=DEVICE)
     bdre.fit(samples_p0, samples_p1)
 
     # === EVALUATION ===

@@ -11,6 +11,9 @@ class DefaultBinaryClassifier(BinaryClassifier):
         # model hyperparameters
         latent_dim: int = 10,
         num_layers: int = 3,
+        # training hyperparameters
+        learning_rate: float = 0.05,
+        num_epochs: int = 100,
     ):
         super().__init__()
         layers = []
@@ -21,6 +24,8 @@ class DefaultBinaryClassifier(BinaryClassifier):
             layers.append(nn.ReLU())
         layers.append(nn.Linear(latent_dim, 1))
         self.model = nn.Sequential(*layers)
+        self.learning_rate = learning_rate
+        self.num_epochs = num_epochs
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -37,14 +42,12 @@ class DefaultBinaryClassifier(BinaryClassifier):
         self, 
         xs: torch.Tensor,  # [n, dim]
         ys: torch.Tensor,  # [n, 1], with values in {0, 1}
-        learning_rate: float = 0.05,
-        num_epochs: int = 100,
     ) -> None:
         self._reset_parameters()
         self.train()
         loss = nn.BCEWithLogitsLoss()
-        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
-        for epoch in range(num_epochs):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        for epoch in range(self.num_epochs):
             optimizer.zero_grad()
             y_pred = self.forward(xs)
             l = loss(y_pred, ys)
@@ -60,7 +63,5 @@ class DefaultBinaryClassifier(BinaryClassifier):
             return logits.squeeze(1)
 
 
-def build_default_binary_classifier(
-    input_dim: int, 
-) -> BinaryClassifier:
-    return DefaultBinaryClassifier(input_dim)
+def make_default_binary_classifier(**kwargs) -> BinaryClassifier:
+    return DefaultBinaryClassifier(**kwargs)

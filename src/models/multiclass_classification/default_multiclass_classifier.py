@@ -12,6 +12,9 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         # model hyperparameters
         latent_dim: int = 10,
         num_layers: int = 3,
+        # training hyperparameters
+        learning_rate: float = 0.05,
+        num_epochs: int = 1000,
     ):
         super().__init__()
         layers = []
@@ -22,6 +25,9 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
             layers.append(nn.ReLU())
         layers.append(nn.Linear(latent_dim, num_classes))
         self.model = nn.Sequential(*layers)
+        self.num_classes = num_classes
+        self.learning_rate = learning_rate
+        self.num_epochs = num_epochs
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -38,14 +44,12 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         self, 
         xs: torch.Tensor,  # [n, dim]
         ys: torch.Tensor,  # [n], with values in {0, ..., num_classes-1}
-        learning_rate: float = 0.05,
-        num_epochs: int = 1000,
     ) -> None:
         self._reset_parameters()
         self.train()
         loss = nn.CrossEntropyLoss()
-        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
-        for epoch in range(num_epochs):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        for epoch in range(self.num_epochs):
             optimizer.zero_grad()
             y_pred = self.forward(xs)
             l = loss(y_pred, ys)
@@ -61,8 +65,5 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
             return logits.squeeze(1)
 
 
-def build_default_multiclass_classifier(
-    input_dim: int, 
-    num_classes: int,
-) -> MulticlassClassifier:
-    return DefaultMulticlassClassifier(input_dim, num_classes)
+def make_default_multiclass_classifier(**kwargs) -> MulticlassClassifier:
+    return DefaultMulticlassClassifier(**kwargs)

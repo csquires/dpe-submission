@@ -51,7 +51,5 @@ class GaussianBinaryClassifier(BinaryClassifier):
             return logits.squeeze(1)
 
 
-def build_gaussian_binary_classifier(
-    input_dim: int, 
-) -> BinaryClassifier:
-    return GaussianBinaryClassifier(input_dim)
+def make_gaussian_binary_classifier(**kwargs) -> BinaryClassifier:
+    return GaussianBinaryClassifier(**kwargs)

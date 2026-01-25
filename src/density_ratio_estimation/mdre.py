@@ -1,27 +1,22 @@
-from typing import Callable
-
 import torch
 from einops import rearrange
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.models.multiclass_classification.multiclass_classifier import MulticlassClassifier
-from src.models.multiclass_classification.default_multiclass_classifier import build_default_multiclass_classifier
 from src.waypoints.waypoints1d import WaypointBuilder1D, DefaultWaypointBuilder1D
 
 
 class MDRE(DensityRatioEstimator):
     def __init__(
         self, 
-        input_dim: int, 
-        classifier_builder: Callable[[], MulticlassClassifier] = build_default_multiclass_classifier,
+        classifier: MulticlassClassifier,
         waypoint_builder: WaypointBuilder1D = DefaultWaypointBuilder1D(),
-        num_waypoints: int = 10,
         device: str = "cuda"
     ):
         self.device = device
-        self.classifier = classifier_builder(input_dim, num_waypoints).to(self.device)
+        self.classifier = classifier.to(self.device)
         self.waypoint_builder = waypoint_builder
-        self.num_waypoints = num_waypoints
+        self.num_waypoints = self.classifier.num_classes
 
     def fit(
         self, 
@@ -47,6 +42,7 @@ class MDRE(DensityRatioEstimator):
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
     from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
+    from src.models.multiclass_classification import make_multiclass_classifier
     
     DIM = 2
     NSAMPLES_TRAIN = 10000
@@ -65,7 +61,9 @@ if __name__ == '__main__':
     samples_pstar1 = p0.sample((NSAMPLES_TEST,)).to(DEVICE)
 
     # === DENSITY RATIO ESTIMATION ===
-    mdre = MDRE(DIM, device=DEVICE)
+    num_waypoints = 10
+    classifier = make_multiclass_classifier(name="default", input_dim=DIM, num_classes=num_waypoints)
+    mdre = MDRE(classifier, device=DEVICE)
     mdre.fit(samples_p0, samples_p1)
 
     # === EVALUATION ===
