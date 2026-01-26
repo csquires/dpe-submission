@@ -30,7 +30,7 @@ y_max = max(all_maxs) if all_maxs else 1.0
 # setup
 plt.clf()
 sns.set_style('whitegrid')
-plt.style.use('our_style.mplstyle')
+plt.style.use('full-width.mplstyle')
 fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=3)
 # colors
 colors = {
