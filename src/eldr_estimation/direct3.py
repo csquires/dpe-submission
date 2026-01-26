@@ -263,22 +263,23 @@ class DirectELDREstimator3(ELDREstimator):
         x1: torch.Tensor,     # [batch, dim]
     ) -> torch.Tensor:
         """
-        Compute raw estimand: d^T * mu_t' * gamma + ||d||^2
+        Compute raw estimand: d^T * mu_t' * gamma + ||d||^2 * gamma'
 
         where d = x - mu(t) and mu' = x1 - x0
 
         Returns:
             Scalar estimand values of shape [batch]
         """
-        mu_t = self.mu(t, x0, x1)            # [batch, dim]
-        mu_prime = self.dmudt(x0, x1)        # [batch, dim]
-        gamma_t = self.g(t)                   # [batch]
+        mu_t        = self.mu(t, x0, x1)            # [batch, dim]
+        mu_prime    = self.dmudt(x0, x1)        # [batch, dim]
+        gamma_t     = self.g(t)                   # [batch]
+        gamma_prime = self.dgdt(t)
 
         d = x - mu_t  # [batch, dim]
         d_dot_mu_prime = (d * mu_prime).sum(dim=-1)  # [batch]
         d_norm_sq = (d ** 2).sum(dim=-1)  # [batch]
 
-        return d_dot_mu_prime * gamma_t + d_norm_sq  # [batch]
+        return d_dot_mu_prime * gamma_t + d_norm_sq * gamma_prime # [batch]
 
     def _compute_v(
         self,
@@ -398,6 +399,56 @@ class DirectELDREstimator3(ELDREstimator):
 
         return term1 + term2 + term3
 
+    def _compute_decentered_marginal_score(
+        self,
+        t: float,
+        x: torch.Tensor,      # [batch, dim]
+        mu0: torch.Tensor,    # [dim]
+        Sigma0: torch.Tensor, # [dim, dim]
+        mu1: torch.Tensor,    # [dim]
+        Sigma1: torch.Tensor, # [dim, dim]
+    ) -> torch.Tensor:
+        """
+        Compute decentered marginal score (without the -dim*γ'/γ centering term).
+
+        This is the marginal score but using Σ'_t_no_gamma = 2αα'Σ₀ + 2ββ'Σ₁
+        instead of the full Σ'_t = 2αα'Σ₀ + 2ββ'Σ₁ + 2γγ'I.
+
+        This avoids computing γ'/γ which is numerically unstable near t=0 and t=1.
+
+        Returns:
+            Decentered score values of shape [batch]
+        """
+        dim = x.shape[-1]
+
+        alpha = 1 - t
+        beta = t
+        alpha_prime = -1.0
+        beta_prime = 1.0
+
+        exp_kt = np.exp(-self.k * t)
+        exp_k1t = np.exp(-self.k * (1 - t))
+        gamma = (1 - exp_kt) * (1 - exp_k1t)
+
+        mu_t = alpha * mu0 + beta * mu1
+        mu_prime_t = alpha_prime * mu0 + beta_prime * mu1
+
+        I_d = torch.eye(dim, dtype=Sigma0.dtype, device=Sigma0.device)
+        Sigma_t = alpha**2 * Sigma0 + beta**2 * Sigma1 + gamma**2 * I_d
+        # Exclude the 2*gamma*gamma'*I term
+        Sigma_prime_t_no_gamma = 2*alpha*alpha_prime * Sigma0 + 2*beta*beta_prime * Sigma1
+
+        Sigma_t_inv = torch.linalg.inv(Sigma_t)
+
+        r = x - mu_t
+
+        term1 = -0.5 * torch.trace(Sigma_t_inv @ Sigma_prime_t_no_gamma)
+        term2 = r @ Sigma_t_inv @ mu_prime_t
+        M = Sigma_t_inv @ Sigma_prime_t_no_gamma @ Sigma_t_inv
+        term3 = 0.5 * torch.einsum('bi,ij,bj->b', r, M, r)
+
+        return term1 + term2 + term3
+
     def _fit_noiser_network(
         self,
         samples_base: torch.Tensor,
@@ -417,7 +468,6 @@ class DirectELDREstimator3(ELDREstimator):
         - t is sampled uniformly from [eps, 1-eps]
         - x0, x1 are sampled from p0, p1 respectively
         - The target is the AVERAGE noiser over all x from base distribution p_*
-        - weight = 1 / (g(t) + eps)
         """
         self.noiser_network._reset_parameters()
         self.noiser_network.train()
@@ -455,6 +505,7 @@ class DirectELDREstimator3(ELDREstimator):
         t_eval = torch.linspace(self.eps, 1 - self.eps, self.integration_steps, device=self.device)
 
         sanity_check_targets = None
+        decentered_targets = None
         if mu0 is not None and Sigma0 is not None and mu1 is not None and Sigma1 is not None:
             mu0 = mu0.to(self.device)
             Sigma0 = Sigma0.to(self.device)
@@ -463,12 +514,21 @@ class DirectELDREstimator3(ELDREstimator):
 
             with torch.no_grad():
                 sanity_check_targets = []
+                decentered_targets = []
                 for i, t_val in enumerate(t_eval):
-                    noisers = self._compute_marginal_score(
+                    scores = self._compute_marginal_score(
                         t_val.item(), samples_base, mu0, Sigma0, mu1, Sigma1
                     )
-                    sanity_check_targets.append(noisers.mean())
+                    sanity_check_targets.append(scores.mean())
+
+                    # Compute decentered targets (without γ'/γ term) for stable comparison
+                    decentered_scores = self._compute_decentered_marginal_score(
+                        t_val.item(), samples_base, mu0, Sigma0, mu1, Sigma1
+                    )
+                    decentered_targets.append(decentered_scores.mean())
+
                 sanity_check_targets = torch.stack(sanity_check_targets)
+                decentered_targets = torch.stack(decentered_targets)
                 print(f'Sanity Check: ELDR {-sanity_check_targets.mean()}')
 
                 weight_eval = 1.0 / (self.g(t_eval) + self.eps)**2
@@ -518,13 +578,13 @@ class DirectELDREstimator3(ELDREstimator):
 
                 # Compute weights: 1 / (g(t) + eps)
                 g_t = self.g(t)
-                weights = 1.0 / (g_t + self.eps)**2
+                weights = v_t**2 / (g_t + self.eps)**6
 
                 loss = (mse_per_sample * weights).mean()
 
                 optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=10.0)
+                # torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=10.0)
                 optimizer.step()
 
                 loss_val = loss.item()
@@ -550,7 +610,8 @@ class DirectELDREstimator3(ELDREstimator):
                         # Full integrand: -dim * g'/g + v(t) * NN(t) / gamma^3
                         centering_term = -dim * gamma_prime_log / gamma_log
                         noiser_term = v_eval * nn_predictions / (gamma_log ** 3)
-                        full_integrand = centering_term + noiser_term
+                        # full_integrand = centering_term + noiser_term
+                        full_integrand = noiser_term  # centering_term commented out for now
 
                         weighted_error = None
                         unweighted_error = None
@@ -559,12 +620,21 @@ class DirectELDREstimator3(ELDREstimator):
                             weighted_error = (weight_eval * sq_errors).mean().item()
                             unweighted_error = sq_errors.mean().item()
 
+                        decentered_err = None
+                        if decentered_targets is not None:
+                            # Compare noiser_term directly to decentered targets
+                            # (computed without γ'/γ for numerical stability)
+                            decentered_sq_errors = (noiser_term - decentered_targets) ** 2
+                            decentered_err = decentered_sq_errors.mean().item()
+
                         avg_nn = -full_integrand.mean().item()
 
                     if self.verbose:
                         log_msg = f"[Iter {global_iter}] loss={loss_val:.6f}"
                         if weighted_error is not None:
                             log_msg += f", weighted_err={weighted_error:.6f}, unweighted_err={unweighted_error:.6f}"
+                        if decentered_err is not None:
+                            log_msg += f", decen_err={decentered_err:.6f}"
                         log_msg += f", eldr_est={avg_nn:.6f}"
                         if is_best:
                             log_msg += " *best*"
@@ -613,7 +683,8 @@ class DirectELDREstimator3(ELDREstimator):
             # Full integrand: -dim * g'/g + v(t) * NN(t) / gamma^3
             centering_term = -dim * gamma_prime_vals / gamma_vals
             noiser_term = v_vals * nn_predictions / (gamma_vals ** 3)
-            integrand = (centering_term + noiser_term).cpu().numpy()
+            # integrand = (centering_term + noiser_term).cpu().numpy()
+            integrand = noiser_term.cpu().numpy()  # centering_term commented out for now
 
         t_np = t_vals.cpu().numpy()
 
@@ -693,14 +764,14 @@ if __name__ == '__main__':
     estimator = DirectELDREstimator3(
         input_dim=DIM,
         # Network architecture
-        hidden_dim=64,
+        hidden_dim=512,
         num_layers=3,
-        time_embed_size=64,
+        time_embed_size=256,
         # Interpolant parameters
         k=8.0,
         eps=0.1,
         # Training parameters
-        learning_rate=1e-2,
+        learning_rate=3e-2,
         weight_decay=1e-4,
         num_epochs=200000,
         batch_size=NSAMPLES,
