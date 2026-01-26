@@ -11,6 +11,9 @@ def get_fractional_posterior(
     alpha: float,  # fractional posterior parameter
     sigma: float = 1.0,  # likelihood variance
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    if alpha == 0:
+        return mu_pi, Sigma_pi
+    
     predictive_variance  = (obs_xi.T @ Sigma_pi @ obs_xi) + (sigma ** 2 / alpha)
     # mu_q
     mu_update = Sigma_pi @ obs_xi @ (obs_y - obs_xi.T @ mu_pi) / predictive_variance

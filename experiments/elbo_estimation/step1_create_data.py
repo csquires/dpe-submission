@@ -8,9 +8,10 @@ import torch
 from torch.distributions import MultivariateNormal
 
 from experiments.utils.prescribed_eigs import create_prior_eig_range, create_design_eig
+from experiments.utils.fractional_posterior import get_fractional_posterior
 
 
-config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/elbo_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 # dataset parameters
@@ -27,7 +28,7 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-nrows = NUM_PRIORS * len(DESIGN_EIG_PERCENTAGES) * NUM_DESIGNS_PER_SETTING
+nrows = NUM_PRIORS * len(DESIGN_EIG_PERCENTAGES) * NUM_DESIGNS_PER_SETTING * len(ALPHAS)
 design_eig_percentage_arr = np.zeros((nrows, 1), dtype=np.float32)
 alpha_arr = np.zeros((nrows, 1), dtype=np.float32)
 # priors
@@ -48,6 +49,12 @@ theta_star_samples_arr = np.zeros((nrows, NSAMPLES, DATA_DIM), dtype=np.float32)
 y_star_samples_arr = np.zeros((nrows, NSAMPLES, 1), dtype=np.float32)
 
 
+def sample_uniform_over_sphere(dim: int) -> torch.Tensor:
+    theta_star_unnormalized = MultivariateNormal(torch.zeros(dim), covariance_matrix=torch.eye(dim)).sample((1,))
+    theta_star = theta_star_unnormalized / torch.norm(theta_star_unnormalized)
+    return theta_star.squeeze()
+
+
 idx = 0
 for _ in trange(NUM_PRIORS):
     mu_pi, Sigma_pi = create_prior_eig_range(dim=DATA_DIM, eig_min=EIG_MIN, eig_max=EIG_MAX)
@@ -57,11 +64,11 @@ for _ in trange(NUM_PRIORS):
 
         for _ in range(NUM_DESIGNS_PER_SETTING):
             obs_xi = create_design_eig(mu_pi, Sigma_pi, desired_eig, sigma=1.0)
-            theta_star = None  # TODO: randomly select theta_star from uniform distribution over the unit sphere
+            theta_star = sample_uniform_over_sphere(DATA_DIM)
             obs_y = MultivariateNormal(obs_xi.T @ theta_star, covariance_matrix=torch.eye(1)).sample((1,))
 
             for alpha in ALPHAS:
-                mu_q, Sigma_q = None, None  # TODO: add function to compute the fractional posterior
+                mu_q, Sigma_q = get_fractional_posterior(mu_pi, Sigma_pi, obs_xi, obs_y, alpha)
 
                 # sample (theta0, y0) from prior-induced joint distribution
                 theta0_samples = MultivariateNormal(mu_pi, covariance_matrix=Sigma_pi).sample((NSAMPLES,))
@@ -98,9 +105,22 @@ for _ in trange(NUM_PRIORS):
 os.makedirs(DATA_DIR, exist_ok=True)
 dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
 with h5py.File(dataset_filename, 'w') as f:
+    # metadata
+    f.create_dataset('design_eig_percentage_arr', data=design_eig_percentage_arr)
+    f.create_dataset('alpha_arr', data=alpha_arr)
+    # prior parameters
     f.create_dataset('prior_mean_arr', data=prior_mean_arr)
     f.create_dataset('prior_covariance_arr', data=prior_covariance_arr)
-    f.create_dataset('design_eig_percentage_arr', data=design_eig_percentage_arr)
+    # variational posteriors
+    f.create_dataset('mu_q_arr', data=mu_q_arr)
+    f.create_dataset('Sigma_q_arr', data=Sigma_q_arr)
+    # observed pair
     f.create_dataset('design_arr', data=design_arr)
-    f.create_dataset('theta_samples_arr', data=theta_samples_arr)
-    f.create_dataset('y_samples_arr', data=y_samples_arr)
+    f.create_dataset('obs_y_arr', data=obs_y_arr)
+    # data
+    f.create_dataset('theta0_samples_arr', data=theta0_samples_arr)
+    f.create_dataset('y0_samples_arr', data=y0_samples_arr)
+    f.create_dataset('theta1_samples_arr', data=theta1_samples_arr)
+    f.create_dataset('y1_samples_arr', data=y1_samples_arr)
+    f.create_dataset('theta_star_samples_arr', data=theta_star_samples_arr)
+    f.create_dataset('y_star_samples_arr', data=y_star_samples_arr)
