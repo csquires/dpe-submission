@@ -537,13 +537,26 @@ class DirectELDREstimator3(ELDREstimator):
 
                 sanity_check_targets = torch.stack(sanity_check_targets)
                 decentered_targets = torch.stack(decentered_targets)
-                print(f'Sanity Check: ELDR {-sanity_check_targets.mean()}')
+                true_eldr = -sanity_check_targets.mean().item()
+                print(f'Sanity Check: ELDR {true_eldr}')
 
                 weight_eval = 1.0 / (self.g(t_eval) + self.eps)**2
 
         best_loss = float('inf')
         patience_counter = 0
         global_iter = 0
+
+        # Initialize best tracking dict
+        best_stats = {
+            'weighted_err': float('inf'),
+            'weighted_rel_err': float('inf'),
+            'unweighted_err': float('inf'),
+            'unweighted_rel_err': float('inf'),
+            'decentered_err': float('inf'),
+            'decentered_rel_err': float('inf'),
+            'eldr_err': float('inf'),
+            'eldr_rel_err': float('inf'),
+        }
 
         num_iters = max(1, min(n_p0, n_p1) // self.batch_size)
 
@@ -623,27 +636,75 @@ class DirectELDREstimator3(ELDREstimator):
 
                         weighted_error = None
                         unweighted_error = None
+                        weighted_rel_err = None
+                        unweighted_rel_err = None
+                        eldr_err = None
+                        eldr_rel_err = None
                         if sanity_check_targets is not None:
                             sq_errors = (full_integrand - sanity_check_targets) ** 2
                             weighted_error = (weight_eval * sq_errors).mean().item()
                             unweighted_error = sq_errors.mean().item()
 
+                            # Compute relative errors
+                            target_abs_mean = abs(sanity_check_targets).mean().item() + 1e-8
+                            weighted_rel_err = weighted_error / target_abs_mean
+                            unweighted_rel_err = unweighted_error / target_abs_mean
+
+                            # Update best tracking
+                            if weighted_error < best_stats['weighted_err']:
+                                best_stats['weighted_err'] = weighted_error
+                            if weighted_rel_err < best_stats['weighted_rel_err']:
+                                best_stats['weighted_rel_err'] = weighted_rel_err
+                            if unweighted_error < best_stats['unweighted_err']:
+                                best_stats['unweighted_err'] = unweighted_error
+                            if unweighted_rel_err < best_stats['unweighted_rel_err']:
+                                best_stats['unweighted_rel_err'] = unweighted_rel_err
+
                         decentered_err = None
+                        decentered_rel_err = None
                         if decentered_targets is not None:
                             # Compare noiser_term directly to decentered targets
                             # (computed without γ'/γ for numerical stability)
                             decentered_sq_errors = (noiser_term - decentered_targets) ** 2
                             decentered_err = decentered_sq_errors.mean().item()
 
+                            # Compute relative error
+                            decentered_abs_mean = abs(decentered_targets).mean().item() + 1e-8
+                            decentered_rel_err = decentered_err / decentered_abs_mean
+
+                            # Update best tracking
+                            if decentered_err < best_stats['decentered_err']:
+                                best_stats['decentered_err'] = decentered_err
+                            if decentered_rel_err < best_stats['decentered_rel_err']:
+                                best_stats['decentered_rel_err'] = decentered_rel_err
+
                         avg_nn = -full_integrand.mean().item()
+
+                        # Compute ELDR error if true_eldr is available
+                        if sanity_check_targets is not None:
+                            eldr_err = abs(avg_nn - true_eldr)
+                            eldr_rel_err = eldr_err / (abs(true_eldr) + 1e-8)
+
+                            # Update best tracking
+                            if eldr_err < best_stats['eldr_err']:
+                                best_stats['eldr_err'] = eldr_err
+                            if eldr_rel_err < best_stats['eldr_rel_err']:
+                                best_stats['eldr_rel_err'] = eldr_rel_err
 
                     if self.verbose:
                         log_msg = f"[Iter {global_iter}] loss={loss_val:.6f}"
                         if weighted_error is not None:
-                            log_msg += f", weighted_err={weighted_error:.6f}, unweighted_err={unweighted_error:.6f}"
+                            log_msg += f", wt_err={weighted_error:.4f}(best:{best_stats['weighted_err']:.4f})"
+                            log_msg += f", wt_rel={weighted_rel_err:.4f}(best:{best_stats['weighted_rel_err']:.4f})"
+                            log_msg += f", unwt_err={unweighted_error:.4f}(best:{best_stats['unweighted_err']:.4f})"
+                            log_msg += f", unwt_rel={unweighted_rel_err:.4f}(best:{best_stats['unweighted_rel_err']:.4f})"
                         if decentered_err is not None:
-                            log_msg += f", decen_err={decentered_err:.6f}"
-                        log_msg += f", eldr_est={avg_nn:.6f}"
+                            log_msg += f", dec_err={decentered_err:.4f}(best:{best_stats['decentered_err']:.4f})"
+                            log_msg += f", dec_rel={decentered_rel_err:.4f}(best:{best_stats['decentered_rel_err']:.4f})"
+                        if eldr_err is not None:
+                            log_msg += f", eldr_err={eldr_err:.4f}(best:{best_stats['eldr_err']:.4f})"
+                            log_msg += f", eldr_rel={eldr_rel_err:.4f}(best:{best_stats['eldr_rel_err']:.4f})"
+                        log_msg += f", eldr_est={avg_nn:.4f}"
                         if is_best:
                             log_msg += " *best*"
                         print(log_msg)
