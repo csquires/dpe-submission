@@ -243,9 +243,8 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         outputs = self.model(t, x)
         b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
 
-        # Divergences via Hutchinson estimator
-        epsilon = torch.randn_like(x)
-        div_b = compute_divergence(b_pred, x, epsilon)
+        # Exact divergence (trace of Jacobian)
+        div_b = compute_divergence(b_pred, x)
 
         # Scalar terms
         b_dot_eta= (b_pred * eta_pred).sum(dim=-1, keepdim=True)

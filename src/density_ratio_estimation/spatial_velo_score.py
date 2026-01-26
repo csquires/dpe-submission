@@ -115,25 +115,31 @@ class FullSharingNetwork(nn.Module):
         return self.net(tx)
 
 
-def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Tensor) -> torch.Tensor:
+def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Tensor = None) -> torch.Tensor:
     """
-    Hutchinson's trace estimator for divergence.
+    Computes exact divergence (trace of Jacobian).
 
     Args:
         output: Vector field [batch, dim]
         x: Input points [batch, dim] (must have requires_grad=True)
-        epsilon: Random probe vectors [batch, dim]
+        epsilon: Ignored (kept for API compatibility)
 
     Returns:
         Divergence estimates [batch]
     """
-    grad_outputs = torch.autograd.grad(
-        outputs=(output * epsilon).sum(),
-        inputs=x,
-        create_graph=True,
-        retain_graph=True,
-    )[0]
-    return (grad_outputs * epsilon).sum(dim=-1)
+    batch_size, dim = x.shape
+    divergence = torch.zeros(batch_size, device=x.device, dtype=x.dtype)
+
+    for i in range(dim):
+        grad_i = torch.autograd.grad(
+            outputs=output[:, i].sum(),
+            inputs=x,
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+        divergence = divergence + grad_i[:, i]
+
+    return divergence
 
 
 class SpatialVeloScore(DensityRatioEstimator):
@@ -225,9 +231,8 @@ class SpatialVeloScore(DensityRatioEstimator):
         outputs = self.model(t, x)
         b_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
 
-        # Divergences via Hutchinson estimator
-        epsilon = torch.randn_like(x)
-        div_b = compute_divergence(b_pred, x, epsilon)
+        # Exact divergence (trace of Jacobian)
+        div_b = compute_divergence(b_pred, x)
 
         # Scalar terms
         b_dot_s = (b_pred * s_pred).flatten(1).sum(1)
