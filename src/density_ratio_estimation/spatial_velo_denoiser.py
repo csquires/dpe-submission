@@ -12,13 +12,13 @@ from src.density_ratio_estimation.base import DensityRatioEstimator
 class SeparateNetworks(nn.Module):
     """
     sharing='none': Two completely separate networks with half width each.
-    Output is [v, s] concatenated (2 * input_dim).
+    Output is [v, d] concatenated (2 * input_dim).
     """
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
         self.input_dim = input_dim
         half_hidden = hidden_dim // 2
-        self.v_net = nn.Sequential(
+        self.b_net = nn.Sequential(
             nn.Linear(input_dim + 1, half_hidden),
             nn.ELU(),
             nn.Linear(half_hidden, half_hidden),
@@ -27,7 +27,7 @@ class SeparateNetworks(nn.Module):
             nn.ELU(),
             nn.Linear(half_hidden, input_dim),
         )
-        self.s_net = nn.Sequential(
+        self.eta_net = nn.Sequential(
             nn.Linear(input_dim + 1, half_hidden),
             nn.ELU(),
             nn.Linear(half_hidden, half_hidden),
@@ -43,18 +43,18 @@ class SeparateNetworks(nn.Module):
             t: Time values [batch, 1]
             x: Spatial values [batch, dim]
         Returns:
-            [v, s] concatenated [batch, 2*dim]
+            [v, d] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
-        v = self.v_net(tx)
-        s = self.s_net(tx)
-        return torch.cat([v, s], dim=-1)
+        v = self.b_net(tx)
+        d = self.eta_net(tx)
+        return torch.cat([v, d], dim=-1)
 
 
 class SharedBackboneNetwork(nn.Module):
     """
     sharing='embeddings': Shared backbone with separate output heads.
-    Output is [v, s] concatenated (2 * input_dim).
+    Output is [v, d] concatenated (2 * input_dim).
     """
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
@@ -67,8 +67,8 @@ class SharedBackboneNetwork(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ELU(),
         )
-        self.v_head = nn.Linear(hidden_dim, input_dim)
-        self.s_head = nn.Linear(hidden_dim, input_dim)
+        self.b_head = nn.Linear(hidden_dim, input_dim)
+        self.eta_head = nn.Linear(hidden_dim, input_dim)
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
@@ -76,19 +76,19 @@ class SharedBackboneNetwork(nn.Module):
             t: Time values [batch, 1]
             x: Spatial values [batch, dim]
         Returns:
-            [v, s] concatenated [batch, 2*dim]
+            [v, d] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
         h = self.backbone(tx)
-        v = self.v_head(h)
-        s = self.s_head(h)
-        return torch.cat([v, s], dim=-1)
+        v = self.b_head(h)
+        d = self.eta_head(h)
+        return torch.cat([v, d], dim=-1)
 
 
 class FullSharingNetwork(nn.Module):
     """
-    sharing='full': Single network with combined output split as [v, s].
-    Output is [v, s] concatenated (2 * input_dim).
+    sharing='full': Single network with combined output split as [v, d].
+    Output is [v, d] concatenated (2 * input_dim).
     """
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
@@ -109,34 +109,49 @@ class FullSharingNetwork(nn.Module):
             t: Time values [batch, 1]
             x: Spatial values [batch, dim]
         Returns:
-            [v, s] concatenated [batch, 2*dim]
+            [v, d] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
         return self.net(tx)
 
 
-def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Tensor) -> torch.Tensor:
+def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Tensor = None) -> torch.Tensor:
     """
-    Hutchinson's trace estimator for divergence.
+    Computes exact divergence (trace of Jacobian).
 
     Args:
         output: Vector field [batch, dim]
         x: Input points [batch, dim] (must have requires_grad=True)
-        epsilon: Random probe vectors [batch, dim]
+        epsilon: Ignored (kept for API compatibility)
 
     Returns:
         Divergence estimates [batch]
     """
-    grad_outputs = torch.autograd.grad(
-        outputs=(output * epsilon).sum(),
-        inputs=x,
-        create_graph=True,
-        retain_graph=True,
-    )[0]
-    return (grad_outputs * epsilon).sum(dim=-1)
+    batch_size, dim = x.shape
+    divergence = torch.zeros(batch_size, device=x.device, dtype=x.dtype)
+
+    for i in range(dim):
+        grad_i = torch.autograd.grad(
+            outputs=output[:, i].sum(),
+            inputs=x,
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+        divergence = divergence + grad_i[:, i]
+
+    return divergence
 
 
-class InterpolantScore(DensityRatioEstimator):
+class SpatialVeloDenoiser(DensityRatioEstimator):
+    """
+    Denoiser-based variant of the interpolant estimator.
+
+    The interpolant is: x_t = (1-t)*x0 + t*x1 + gamma(t)*z where z ~ N(0,I)
+
+    Denoiser interpretation: The denoiser predicts the normalized noise: d ≈ z
+
+    Relationship to score: s = -d / gamma, so d = -gamma * s
+    """
     def __init__(
         self,
         input_dim: int,
@@ -209,7 +224,12 @@ class InterpolantScore(DensityRatioEstimator):
         gamma_dot_t: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Compute partial_t log rho(t, x).
+        Compute partial_t log rho(t, x) using denoiser parameterization.
+
+        The relationship s = -eta/gamma is used to transform the time score formula.
+
+        Original formula (in terms of denoiser eta):
+            time_score = -div(b) + b.eta/gamma
 
         Args:
             t: Time tensor [batch, 1]
@@ -223,23 +243,15 @@ class InterpolantScore(DensityRatioEstimator):
         x = x.clone().requires_grad_(True)
 
         outputs = self.model(t, x)
-        v_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
+        b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
 
-        # Divergences via Hutchinson estimator
-        epsilon = torch.randn_like(x)
-        div_v = compute_divergence(v_pred, x, epsilon)
-        div_s = compute_divergence(s_pred, x, epsilon)
+        # Exact divergence (trace of Jacobian)
+        div_b = compute_divergence(b_pred, x)
 
         # Scalar terms
-        v_dot_s = (v_pred * s_pred).sum(dim=-1, keepdim=True)
-        s_norm_sq = (s_pred ** 2).sum(dim=-1, keepdim=True)
+        b_dot_eta= (b_pred * eta_pred).sum(dim=-1, keepdim=True)
 
-        # Assemble: time_score = -div(v) - v·s + gamma_dot*gamma*(div(s) + ||s||²)
-        term_signal = -div_v.view(-1, 1) - v_dot_s
-        c_t = gamma_dot_t * gamma_t
-        term_noise = c_t * (div_s.view(-1, 1) + s_norm_sq)
-
-        return term_signal + term_noise
+        return -div_b.view(-1, 1) + b_dot_eta/ gamma_t
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         self.init_model()
@@ -250,12 +262,9 @@ class InterpolantScore(DensityRatioEstimator):
         n_p0 = samples_p0.shape[0]
         n_p1 = samples_p1.shape[0]
 
-        # Pre-sample time grid
-        t_grid = torch.linspace(self.eps, 1 - self.eps, self.n_t, device=self.device)
-
         if self.verbose:
-            print(f"[InterpolantScore] Training with {self.n_epochs} epochs, {self.n_t} time points")
-            print(f"[InterpolantScore] gamma range: [{self.gamma(torch.tensor(self.eps)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
+            print(f"[SpatialVeloDenoiser] Training with {self.n_epochs} epochs, batch-based time sampling")
+            print(f"[SpatialVeloDenoiser] gamma range: [{self.gamma(torch.tensor(self.eps)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
 
         for epoch in range(self.n_epochs):
             # Sample batches
@@ -264,63 +273,77 @@ class InterpolantScore(DensityRatioEstimator):
             x0 = samples_p0[p0_idx].to(self.device)
             x1 = samples_p1[p1_idx].to(self.device)
 
-            # Sample noise (same for all t in this batch for variance reduction)
+            # Sample time uniformly from [eps, 1-eps] per sample
+            t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
+            t_batch = t.unsqueeze(-1)  # [B, 1]
+
+            # Sample noise (independent per sample)
             z = torch.randn_like(x0)
 
-            total_loss = 0.0
-            total_loss_v = 0.0
-            total_loss_s = 0.0
-            for t_val in t_grid:
-                t_batch = torch.full((self.batch_size, 1), t_val.item(), device=self.device)
-                gamma_t = self.gamma(t_val)
+            # Compute gamma and gamma' for each t
+            gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
+            gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
-                # Construct interpolant and forward pass
-                if self.antithetic:
-                    # Antithetic sampling: compute x_t+ and x_t-
-                    x_t_plus = (1 - t_val) * x0 + t_val * x1 + gamma_t * z
-                    x_t_minus = (1 - t_val) * x0 + t_val * x1 - gamma_t * z
+            # Interpolant mean
+            I_t = (1 - t_batch) * x0 + t_batch * x1
+            dtIt = x1 - x0  # derivative of I_t w.r.t. t
 
-                    outputs_plus = self.model(t_batch, x_t_plus)
-                    outputs_minus = self.model(t_batch, x_t_minus)
+            if self.antithetic:
+                # Antithetic sampling: x_t+ and x_t-
+                x_t_plus = I_t + gamma_t * z
+                x_t_minus = I_t - gamma_t * z
 
-                    v_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
-                    v_minus, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
+                outputs_plus = self.model(t_batch, x_t_plus)
+                outputs_minus = self.model(t_batch, x_t_minus)
 
-                    v_pred = (v_plus - v_minus) / 2
-                    s_pred = (s_plus - s_minus) / 2
-                else:
-                    # Standard: single x_t
-                    x_t = (1 - t_val) * x0 + t_val * x1 + gamma_t * z
-                    outputs = self.model(t_batch, x_t)
-                    v_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
+                b_plus, eta_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
+                b_minus, eta_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
 
-                # Velocity loss: 0.5*||v||² - (x1 - x0)·v
-                v_norm_sq = (v_pred ** 2).sum(dim=-1)
-                target_dot_v = ((x1 - x0) * v_pred).sum(dim=-1)
-                loss_v = (0.5 * v_norm_sq - target_dot_v).mean()
+                # Velocity loss with antithetic sampling
+                # loss_b+ = 0.5*||b+||² - (dtIt + γ'z)·b+
+                # loss_b- = 0.5*||b-||² - (dtIt - γ'z)·b-
+                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)
+                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
+                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
+                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
+                loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
+                        + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
 
-                # Score loss: 0.5*||s||² + (1/gamma)*z·s
-                s_norm_sq = (s_pred ** 2).sum(dim=-1)
-                z_dot_s = (z * s_pred).sum(dim=-1)
-                loss_s = (0.5 * s_norm_sq + (1.0 / gamma_t) * z_dot_s).mean()
+                # Denoiser loss: no antithetic (eta predicts z, use x_t+ only)
+                eta_norm_sq = (eta_plus ** 2).sum(dim=-1)
+                z_dot_eta = (z * eta_plus).sum(dim=-1)
+                loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
+            else:
+                # Standard (non-antithetic) training
+                x_t = I_t + gamma_t * z
+                outputs = self.model(t_batch, x_t)
+                b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
 
-                total_loss = total_loss + loss_v + loss_s
-                total_loss_v = total_loss_v + loss_v.item()
-                total_loss_s = total_loss_s + loss_s.item()
+                # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)
+                target_dot_b = ((dtIt + gamma_prime_t * z) * b_pred).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
+
+                # Denoiser loss: 0.5*||d||² - z·d
+                eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
+                z_dot_eta = (z * eta_pred).sum(dim=-1)
+                loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
+
+            total_loss = loss_b + loss_eta
 
             self.optimizer.zero_grad()
             total_loss.backward()
             self.optimizer.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
-                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_v={total_loss_v:.4f}, loss_s={total_loss_s:.4f}")
+                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_b={loss_b.item():.4f}, loss_eta={loss_eta.item():.4f}")
 
         if self.verbose:
-            print(f"[InterpolantScore] Training complete")
+            print(f"[SpatialVeloDenoiser] Training complete")
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         if self.model is None:
-            raise RuntimeError("InterpolantScore model is not trained. Call fit() before predict_ldr().")
+            raise RuntimeError("SpatialVeloDenoiser model is not trained. Call fit() before predict_ldr().")
 
         self.model.eval()
         samples = xs.float().to(self.device)
@@ -363,8 +386,9 @@ class InterpolantScore(DensityRatioEstimator):
 
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
-    from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
+    from experiments.utils.prescribed_kls import create_two_gaussians_kl
     from src.density_ratio_estimation.bdre import BDRE
+    from src.models.binary_classification import make_binary_classifier
 
     DIM = 2
     NSAMPLES_TRAIN = 10000
@@ -392,7 +416,8 @@ if __name__ == '__main__':
     print("=" * 50)
     print("BDRE (Baseline)")
     print("=" * 50)
-    bdre = BDRE(DIM, device=DEVICE)
+    classifier = make_binary_classifier("default", input_dim=DIM)
+    bdre = BDRE(classifier, device=DEVICE)
     bdre.fit(samples_p0.to(DEVICE), samples_p1.to(DEVICE))
     bdre_ldrs = bdre.predict_ldr(samples_test.to(DEVICE))
     bdre_mae = torch.mean(torch.abs(bdre_ldrs.cpu() - true_ldrs.cpu()))
@@ -400,15 +425,15 @@ if __name__ == '__main__':
     print(f"BDRE LDR range: [{bdre_ldrs.min().item():.4f}, {bdre_ldrs.max().item():.4f}]")
     print()
 
-    # === INTERPOLANT SCORE (all sharing modes) ===
+    # === SPATIAL VELO DENOISER (all sharing modes) ===
     sharing_modes = ['none', 'embeddings', 'full']
     maes = {}
 
     for sharing in sharing_modes:
         print("=" * 50)
-        print(f"InterpolantScore (sharing='{sharing}')")
+        print(f"SpatialVeloDenoiser (sharing='{sharing}')")
         print("=" * 50)
-        estimator = InterpolantScore(
+        estimator = SpatialVeloDenoiser(
             DIM,
             n_epochs=2000,
             verbose=True,
@@ -422,14 +447,14 @@ if __name__ == '__main__':
         est_ldrs = estimator.predict_ldr(samples_test)
         mae = torch.mean(torch.abs(est_ldrs.cpu() - true_ldrs.cpu()))
         maes[sharing] = mae.item()
-        print(f"InterpolantScore (sharing='{sharing}') MAE: {mae.item():.4f}")
-        print(f"InterpolantScore LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
+        print(f"SpatialVeloDenoiser (sharing='{sharing}') MAE: {mae.item():.4f}")
+        print(f"SpatialVeloDenoiser LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
         print()
 
     # === COMPARISON ===
     print("=" * 50)
     print("Comparison")
     print("=" * 50)
-    print(f"BDRE MAE:                              {bdre_mae.item():.4f}")
+    print(f"BDRE MAE:                                 {bdre_mae.item():.4f}")
     for sharing in sharing_modes:
-        print(f"InterpolantScore (sharing='{sharing}'): {maes[sharing]:.4f}")
+        print(f"SpatialVeloDenoiser (sharing='{sharing}'): {maes[sharing]:.4f}")

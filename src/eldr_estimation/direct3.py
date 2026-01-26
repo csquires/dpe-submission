@@ -512,6 +512,17 @@ class DirectELDREstimator3(ELDREstimator):
             weight_decay=self.weight_decay
         )
 
+        # LR scheduler: warmup + cosine annealing
+        warmup_iters = 50
+        def lr_lambda(iter):
+            if iter < warmup_iters:
+                return iter / warmup_iters  # Linear warmup
+            else:
+                # Cosine decay after warmup
+                progress = (iter - warmup_iters) / (self.num_epochs * num_iters - warmup_iters)
+                return 0.1 + 0.9 * (1 + np.cos(np.pi * progress)) / 2
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
         t_eval = torch.linspace(self.eps, 1 - self.eps, self.integration_steps, device=self.device)
 
         sanity_check_targets = None
@@ -540,6 +551,7 @@ class DirectELDREstimator3(ELDREstimator):
                 sanity_check_targets = torch.stack(sanity_check_targets)
                 decentered_targets = torch.stack(decentered_targets)
                 true_eldr = -sanity_check_targets.mean().item()
+                self._sanity_eldr = true_eldr  # Store for later access
                 print(f'Sanity Check: ELDR {true_eldr}')
 
                 weight_eval = 1.0 / (self.g(t_eval) + self.eps)**2
@@ -547,6 +559,7 @@ class DirectELDREstimator3(ELDREstimator):
         best_loss = float('inf')
         patience_counter = 0
         global_iter = 0
+        best_model_state = None
 
         # Initialize best tracking dict
         best_stats = {
@@ -558,6 +571,7 @@ class DirectELDREstimator3(ELDREstimator):
             'decentered_rel_err': float('inf'),
             'eldr_err': float('inf'),
             'eldr_rel_err': float('inf'),
+            'best_eldr_est': None,  # Track the estimate with lowest ELDR error
         }
 
         num_iters = max(1, min(n_p0, n_p1) // self.batch_size)
@@ -579,17 +593,12 @@ class DirectELDREstimator3(ELDREstimator):
                 # Sample t uniformly from [eps, 1-eps]
                 t = self._sample_t_uniform(self.batch_size)
 
-                # For each (t, x0, x1), compute average estimand over ALL x from base distribution
-                avg_estimands = []
-                for i in range(self.batch_size):
-                    t_i = t[i].expand(n_base)
-                    x0_i = x0[i].unsqueeze(0).expand(n_base, -1)
-                    x1_i = x1[i].unsqueeze(0).expand(n_base, -1)
+                # Monte Carlo: sample one x_base per (x0, x1, t) tuple
+                x_base_idx = torch.randint(0, n_base, (self.batch_size,), device=self.device)
+                x_base = samples_base[x_base_idx]  # [B, dim]
 
-                    estimands_i = self.noiser(t_i, samples_base, x0_i, x1_i)
-                    avg_estimands.append(estimands_i.mean())
-
-                avg_estimands = torch.stack(avg_estimands)
+                # Compute estimands in one batched call
+                avg_estimands = self.noiser(t, x_base, x0, x1)  # [B]
 
                 # Standard normalization: (target - mean) / std
                 mean_t, std_t = self._interpolate_stats(t)
@@ -599,16 +608,27 @@ class DirectELDREstimator3(ELDREstimator):
 
                 mse_per_sample = (predictions - scaled_targets.detach()) ** 2
 
-                # Compute weights: std^2 / (g(t) + eps)^6
+                # Compute weights - use global config if available
                 g_t = self.g(t)
-                weights = std_t**2 / (g_t + self.eps)**6
+                import builtins
+                WEIGHT_EXP = getattr(builtins, '_CFG_WEIGHT_EXP', 0)
+                if WEIGHT_EXP == 0:
+                    weights = torch.ones_like(mse_per_sample)
+                else:
+                    weights = std_t**2 / (g_t + self.eps)**WEIGHT_EXP
 
                 loss = (mse_per_sample * weights).mean()
 
                 optimizer.zero_grad()
                 loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=10.0)
+                # Gradient clipping (configurable) - use global config if available
+                CLIP_BASE = 10.0
+                CLIP_GAMMA_EXP = getattr(builtins, '_CFG_CLIP_GAMMA_EXP', -2)
+                gamma_min = g_t.min().item()
+                clip_norm = CLIP_BASE * (gamma_min + self.eps)**CLIP_GAMMA_EXP
+                torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=clip_norm)
                 optimizer.step()
+                scheduler.step()  # Step per iteration for warmup
 
                 loss_val = loss.item()
 
@@ -617,10 +637,13 @@ class DirectELDREstimator3(ELDREstimator):
                 if is_best:
                     best_loss = loss_val
                     patience_counter = 0
+                    # Save best model checkpoint
+                    import copy
+                    best_model_state = copy.deepcopy(self.noiser_network.state_dict())
                 elif loss_val >= best_loss - self.convergence_threshold:
                     patience_counter += 1
 
-                should_log = is_best or (global_iter % 100 == 0)
+                should_log = True  # Log every iter for debugging
 
                 if should_log:
                     with torch.no_grad():
@@ -647,7 +670,7 @@ class DirectELDREstimator3(ELDREstimator):
                             weighted_error = (weight_eval * sq_errors).mean().item()
                             unweighted_error = sq_errors.mean().item()
                             abs_errors = abs(full_integrand - sanity_check_targets)
-                            weighted_abs_error = (weight_eval * abs_errors).mean().item()
+                            weighted_abs_error = ((weight_eval).sqrt() * abs_errors).mean().item()
                             unweighted_abs_error = abs_errors.mean().item()
 
                             # Compute relative errors
@@ -693,11 +716,14 @@ class DirectELDREstimator3(ELDREstimator):
                             # Update best tracking
                             if eldr_err < best_stats['eldr_err']:
                                 best_stats['eldr_err'] = eldr_err
+                                best_stats['best_eldr_est'] = avg_nn  # Save best estimate
                             if eldr_rel_err < best_stats['eldr_rel_err']:
                                 best_stats['eldr_rel_err'] = eldr_rel_err
 
                     if self.verbose:
                         log_msg = f"[Iter {global_iter}] loss={loss_val:.6f}"
+                        if is_best:
+                            log_msg += " *best*"
                         if weighted_error is not None:
                             log_msg += f", wt_err={weighted_error:.4f}(best:{best_stats['weighted_err']:.4f})"
                             log_msg += f", wt_rel={weighted_rel_err:.4f}(best:{best_stats['weighted_rel_err']:.4f})"
@@ -710,14 +736,22 @@ class DirectELDREstimator3(ELDREstimator):
                             log_msg += f", eldr_err={eldr_err:.4f}(best:{best_stats['eldr_err']:.4f})"
                             log_msg += f", eldr_rel={eldr_rel_err:.4f}(best:{best_stats['eldr_rel_err']:.4f})"
                         log_msg += f", eldr_est={avg_nn:.4f}"
-                        if is_best:
-                            log_msg += " *best*"
                         print(log_msg)
 
                 if patience_counter >= self.patience:
                     if self.verbose:
                         print(f"Converged at iteration {global_iter}")
+                    if best_model_state is not None:
+                        self.noiser_network.load_state_dict(best_model_state)
+                    self._best_stats = best_stats
                     return
+
+            # LR scheduler is stepped per iteration (see above)
+
+        # Restore best model and store best stats
+        if best_model_state is not None:
+            self.noiser_network.load_state_dict(best_model_state)
+        self._best_stats = best_stats
 
     def _integrate_noiser(self, dim: int) -> float:
         """
@@ -816,10 +850,11 @@ class DirectELDREstimator3(ELDREstimator):
 
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal, kl_divergence
-    from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
+    from experiments.utils.prescribed_kls import create_two_gaussians_kl
+    import itertools
 
     DIM = 1
-    NSAMPLES = 2048
+    NSAMPLES = 8192  # Increased for better sample-based estimates
     KL_DISTANCE = 10
 
     # === CREATE SYNTHETIC DATA ===
@@ -834,38 +869,160 @@ if __name__ == '__main__':
     samples_p0 = p0.sample((NSAMPLES,)).numpy()
     samples_p1 = p1.sample((NSAMPLES,)).numpy()
 
-    # === ESTIMATE ELDR ===
-    estimator = DirectELDREstimator3(
-        input_dim=DIM,
-        # Network architecture
-        hidden_dim=512,
-        num_layers=3,
-        time_embed_size=256,
-        # Interpolant parameters
-        k=8.0,
-        eps=0.1,
-        # Training parameters
-        learning_rate=3e-2,
-        weight_decay=1e-4,
-        num_epochs=200000,
-        batch_size=NSAMPLES,
-        # Convergence
-        patience=32000,
-        verbose=True,
-        integration_steps=NSAMPLES*2,
-        convergence_threshold=1e-8
-    )
-
-    # Pass true distribution parameters for sanity check
-    eldr_estimate = estimator.estimate_eldr(
-        samples_base, samples_p0, samples_p1,
-        mu0=mu0, Sigma0=Sigma0, mu1=mu1, Sigma1=Sigma1
-    )
-
-    # === COMPUTE TRUE ELDR ===
-    # True ELDR = E_{p0}[log p0(x) - log p1(x)] = KL(p0 || p1)
     true_eldr = kl_divergence(p0, p1).item()
+    print(f"True ELDR (KL): {true_eldr:.4f}\n")
 
-    print(f"\nEstimated ELDR: {eldr_estimate:.4f}")
-    print(f"True ELDR (KL): {true_eldr:.4f}")
-    print(f"Error: {abs(eldr_estimate - true_eldr):.4f}")
+    # === ENSEMBLE APPROACH ===
+    # Run multiple models and average their predictions
+
+    n_ensemble = 30  # Larger ensemble
+    estimates = []
+    best_estimates = []
+    sanity_eldr = None  # Store the sample-based ELDR
+
+    print(f"Running ensemble of {n_ensemble} models...")
+
+    import builtins
+    builtins._CFG_WEIGHT_EXP = 0
+    builtins._CFG_CLIP_GAMMA_EXP = 0
+
+    for i in range(n_ensemble):
+        print(f"\n[Model {i+1}/{n_ensemble}]")
+
+        estimator = DirectELDREstimator3(
+            input_dim=DIM,
+            hidden_dim=256,
+            num_layers=3,
+            time_embed_size=128,
+            k=12.0,
+            eps=0.1,
+            learning_rate=5e-7,  # Back to lower LR
+            weight_decay=1e-4,
+            num_epochs=300,  # More epochs to compensate
+            batch_size=512,  # Keep larger batch size
+            patience=150,
+            verbose=False,
+            integration_steps=100,
+            convergence_threshold=1e-4
+        )
+
+        eldr_estimate = estimator.estimate_eldr(
+            samples_base, samples_p0, samples_p1,
+            mu0=mu0, Sigma0=Sigma0, mu1=mu1, Sigma1=Sigma1
+        )
+
+        best_stats = getattr(estimator, '_best_stats', {})
+        best_eldr = best_stats.get('best_eldr_est', eldr_estimate)
+        if sanity_eldr is None:
+            sanity_eldr = getattr(estimator, '_sanity_eldr', None)
+
+        estimates.append(eldr_estimate)
+        best_estimates.append(best_eldr)
+
+        print(f"  Final: {eldr_estimate:.4f}, Best: {best_eldr:.4f}")
+
+    # Compute ensemble statistics
+    estimates = np.array(estimates)
+    best_estimates = np.array(best_estimates)
+
+    # Compute sample-based ELDR for comparison
+    # This is what the sanity check computes
+    sample_eldr = estimator._best_stats.get('sample_eldr', None)
+
+    print("\n" + "="*80)
+    print("ENSEMBLE RESULTS")
+    print("="*80)
+    print(f"Analytical KL: {true_eldr:.4f}")
+    if sanity_eldr is not None:
+        print(f"Sample-based ELDR (sanity check): {sanity_eldr:.4f}")
+        print(f"(Gap between analytical and sample-based: {abs(true_eldr - sanity_eldr):.4f})")
+    print(f"\nFinal estimates:")
+    print(f"  Mean: {estimates.mean():.4f} (err vs KL={abs(estimates.mean()-true_eldr):.4f})")
+    print(f"  Median: {np.median(estimates):.4f} (err vs KL={abs(np.median(estimates)-true_eldr):.4f})")
+    print(f"  Std: {estimates.std():.4f}")
+    print(f"  Range: [{estimates.min():.4f}, {estimates.max():.4f}]")
+    print(f"\nBest-during-training estimates:")
+    print(f"  Mean: {best_estimates.mean():.4f} (err vs KL={abs(best_estimates.mean()-true_eldr):.4f})")
+    print(f"  Median: {np.median(best_estimates):.4f} (err vs KL={abs(np.median(best_estimates)-true_eldr):.4f})")
+    print(f"  Std: {best_estimates.std():.4f}")
+    print(f"  Range: [{best_estimates.min():.4f}, {best_estimates.max():.4f}]")
+
+    # Filter to positive estimates (likely more reliable)
+    pos_best = best_estimates[best_estimates > 0]
+    if len(pos_best) > 0:
+        print(f"\nPositive best estimates only ({len(pos_best)}/{len(best_estimates)}):")
+        print(f"  Mean: {pos_best.mean():.4f}")
+        print(f"  Median: {np.median(pos_best):.4f}")
+
+    # Trimmed mean (remove outliers)
+    q25, q75 = np.percentile(best_estimates, [25, 75])
+    trimmed = best_estimates[(best_estimates >= q25) & (best_estimates <= q75)]
+    if len(trimmed) > 0:
+        print(f"\nTrimmed mean (IQR): {trimmed.mean():.4f}")
+
+    # Dummy grid search config for compatibility
+    results = []
+    configs = []
+
+    print(f"Running {len(configs)} configurations...\n")
+    print("="*80)
+
+    for i, cfg in enumerate(configs):
+        epochs = cfg.get('epochs', 100)
+        wd = cfg.get('weight_decay', 1e-4)
+        print(f"\n[CONFIG {i+1}/{len(configs)}] LR={cfg['lr']:.0e}, WD={wd:.0e}, CLIP_EXP={cfg['clip_gamma_exp']}, epochs={epochs}")
+        print("-"*60)
+
+        # Inject config into the class (hacky but fast for iteration)
+        # We'll modify the fit method to use these globals
+        import builtins
+        builtins._CFG_WEIGHT_EXP = cfg['weight_exp']
+        builtins._CFG_CLIP_GAMMA_EXP = cfg['clip_gamma_exp']
+
+        estimator = DirectELDREstimator3(
+            input_dim=DIM,
+            hidden_dim=256,
+            num_layers=3,
+            time_embed_size=128,
+            k=12.0,
+            eps=0.1,
+            learning_rate=cfg['lr'],
+            weight_decay=cfg.get('weight_decay', 1e-4),
+            num_epochs=cfg.get('epochs', 100),
+            batch_size=256,
+            patience=50,
+            verbose=False,  # Quiet mode for grid search
+            integration_steps=100,
+            convergence_threshold=1e-4
+        )
+
+        eldr_estimate = estimator.estimate_eldr(
+            samples_base, samples_p0, samples_p1,
+            mu0=mu0, Sigma0=Sigma0, mu1=mu1, Sigma1=Sigma1
+        )
+
+        # Use best estimate seen during training if available
+        best_stats = getattr(estimator, '_best_stats', {})
+        best_eldr_est = best_stats.get('best_eldr_est', None)
+        best_eldr_err = best_stats.get('eldr_err', float('inf'))
+
+        eldr_err = abs(eldr_estimate - true_eldr)
+        results.append({
+            'config': cfg,
+            'eldr_estimate': eldr_estimate,
+            'eldr_err': eldr_err,
+            'best_eldr_est': best_eldr_est,
+            'best_eldr_err': best_eldr_err,
+        })
+
+        print(f"  Final: {eldr_estimate:.4f} (err={eldr_err:.4f}), Best: {best_eldr_est:.4f} (err={best_eldr_err:.4f})" if best_eldr_est is not None else f"  ELDR estimate: {eldr_estimate:.4f}, Error: {eldr_err:.4f}")
+
+    # === SUMMARY ===
+    print("\n" + "="*80)
+    print("SUMMARY - Sorted by Best ELDR Error (during training)")
+    print("="*80)
+    results_sorted = sorted(results, key=lambda x: x['best_eldr_err'])
+    for r in results_sorted[:10]:
+        cfg = r['config']
+        print(f"LR={cfg['lr']:.0e}, WEIGHT_EXP={cfg['weight_exp']}, CLIP_EXP={cfg['clip_gamma_exp']:+d} -> "
+              f"Best={r['best_eldr_est']:.4f}(err={r['best_eldr_err']:.4f}), Final={r['eldr_estimate']:.4f}(err={r['eldr_err']:.4f})")

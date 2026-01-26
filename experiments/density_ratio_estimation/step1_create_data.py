@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch.distributions import MultivariateNormal
 
-from experiments.utils.two_gaussians_kl import create_two_gaussians_kl_range
+from experiments.utils.prescribed_kls import create_two_gaussians_kl_range
 
 
 config = yaml.load(open('experiments/density_ratio_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
