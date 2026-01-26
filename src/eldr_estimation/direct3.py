@@ -599,7 +599,7 @@ class DirectELDREstimator3(ELDREstimator):
 
                 mse_per_sample = (predictions - scaled_targets.detach()) ** 2
 
-                # Compute weights: std^2 / (g(t) + eps)^6
+                # Compute weights: std^2 / (g(t) + eps)^6 (correct importance weighting for ELDR)
                 g_t = self.g(t)
                 weights = std_t**2 / (g_t + self.eps)**6
 
@@ -607,7 +607,7 @@ class DirectELDREstimator3(ELDREstimator):
 
                 optimizer.zero_grad()
                 loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=10.0)
+                torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=100.0)
                 optimizer.step()
 
                 loss_val = loss.item()
@@ -647,7 +647,7 @@ class DirectELDREstimator3(ELDREstimator):
                             weighted_error = (weight_eval * sq_errors).mean().item()
                             unweighted_error = sq_errors.mean().item()
                             abs_errors = abs(full_integrand - sanity_check_targets)
-                            weighted_abs_error = (weight_eval * abs_errors).mean().item()
+                            weighted_abs_error = ((weight_eval).sqrt() * abs_errors).mean().item()
                             unweighted_abs_error = abs_errors.mean().item()
 
                             # Compute relative errors
@@ -698,6 +698,8 @@ class DirectELDREstimator3(ELDREstimator):
 
                     if self.verbose:
                         log_msg = f"[Iter {global_iter}] loss={loss_val:.6f}"
+                        if is_best:
+                            log_msg += " *best*"
                         if weighted_error is not None:
                             log_msg += f", wt_err={weighted_error:.4f}(best:{best_stats['weighted_err']:.4f})"
                             log_msg += f", wt_rel={weighted_rel_err:.4f}(best:{best_stats['weighted_rel_err']:.4f})"
@@ -710,8 +712,6 @@ class DirectELDREstimator3(ELDREstimator):
                             log_msg += f", eldr_err={eldr_err:.4f}(best:{best_stats['eldr_err']:.4f})"
                             log_msg += f", eldr_rel={eldr_rel_err:.4f}(best:{best_stats['eldr_rel_err']:.4f})"
                         log_msg += f", eldr_est={avg_nn:.4f}"
-                        if is_best:
-                            log_msg += " *best*"
                         print(log_msg)
 
                 if patience_counter >= self.patience:
@@ -837,23 +837,23 @@ if __name__ == '__main__':
     # === ESTIMATE ELDR ===
     estimator = DirectELDREstimator3(
         input_dim=DIM,
-        # Network architecture
-        hidden_dim=512,
+        # Network architecture (reduced for fast iteration)
+        hidden_dim=256,
         num_layers=3,
-        time_embed_size=256,
-        # Interpolant parameters
-        k=8.0,
+        time_embed_size=128,
+        # Interpolant parameters (k=12 gives larger gamma near boundaries)
+        k=12.0,
         eps=0.1,
-        # Training parameters
-        learning_rate=3e-2,
+        # Training parameters (extremely low LR to not overshoot)
+        learning_rate=1e-5,
         weight_decay=1e-4,
-        num_epochs=200000,
-        batch_size=NSAMPLES,
+        num_epochs=5000,
+        batch_size=256,
         # Convergence
-        patience=32000,
+        patience=1000,
         verbose=True,
-        integration_steps=NSAMPLES*2,
-        convergence_threshold=1e-8
+        integration_steps=100,
+        convergence_threshold=1e-4
     )
 
     # Pass true distribution parameters for sanity check
