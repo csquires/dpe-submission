@@ -9,11 +9,13 @@ class DefaultBinaryClassifier(BinaryClassifier):
         self, 
         input_dim: int, 
         # model hyperparameters
+        # latent_dim: int = 10,
         latent_dim: int = 10,
         num_layers: int = 3,
         # training hyperparameters
         learning_rate: float = 0.05,
-        num_epochs: int = 100,
+        # num_epochs: int = 100,
+        num_epochs: int = 800,
     ):
         super().__init__()
         layers = []
