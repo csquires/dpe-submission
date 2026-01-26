@@ -646,11 +646,14 @@ class DirectELDREstimator3(ELDREstimator):
                             sq_errors = (full_integrand - sanity_check_targets) ** 2
                             weighted_error = (weight_eval * sq_errors).mean().item()
                             unweighted_error = sq_errors.mean().item()
+                            abs_errors = abs(full_integrand - sanity_check_targets)
+                            weighted_abs_error = (weight_eval * abs_errors).mean().item()
+                            unweighted_abs_error = abs_errors.mean().item()
 
                             # Compute relative errors
                             target_abs_mean = abs(sanity_check_targets).mean().item() + 1e-8
-                            weighted_rel_err = weighted_error / target_abs_mean
-                            unweighted_rel_err = unweighted_error / target_abs_mean
+                            weighted_rel_err =  weighted_abs_error/ target_abs_mean
+                            unweighted_rel_err = unweighted_abs_error / target_abs_mean
 
                             # Update best tracking
                             if weighted_error < best_stats['weighted_err']:
@@ -672,7 +675,7 @@ class DirectELDREstimator3(ELDREstimator):
 
                             # Compute relative error
                             decentered_abs_mean = abs(decentered_targets).mean().item() + 1e-8
-                            decentered_rel_err = decentered_err / decentered_abs_mean
+                            decentered_rel_err = abs(noiser_term-decentered_targets).mean().item() / decentered_abs_mean
 
                             # Update best tracking
                             if decentered_err < best_stats['decentered_err']:
