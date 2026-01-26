@@ -281,18 +281,14 @@ class DirectELDREstimator3(ELDREstimator):
 
         return d_dot_mu_prime * gamma_t + d_norm_sq * gamma_prime # [batch]
 
-    def _compute_v(
+    def _compute_estimand_stats(
         self,
         t: torch.Tensor,
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Compute sample variance v(t) of the averaged estimand.
-
-        v(t) = Var_{x0, x1}[E_x[d^T * mu_t' * gamma + ||d||^2]]
-
-        where d = x - mu(t)
+        Compute sample mean and std of the averaged estimand.
 
         For fixed (x0, x1), the averaged estimand (over x ~ p_*) is:
             Y(x0, x1) = m^T * (x1 - x0) * gamma + ||m||^2 + E
@@ -307,7 +303,7 @@ class DirectELDREstimator3(ELDREstimator):
             samples_p1: Samples from p1 [n_p1, dim]
 
         Returns:
-            Scalar variance v(t)
+            (mean, std) tuple
         """
         alpha = 1 - t
         beta = t
@@ -322,17 +318,19 @@ class DirectELDREstimator3(ELDREstimator):
         m_norm_sq = (m ** 2).sum(dim=-1)  # [n_samples]
         Y = m_dot_d * gamma_t + m_norm_sq + self._E
 
-        return Y.var() + 1e-8
+        mean_Y = Y.mean()
+        std_Y = Y.std() + 1e-8
+        return mean_Y, std_Y
 
-    def _interpolate_v(self, t: torch.Tensor) -> torch.Tensor:
+    def _interpolate_stats(self, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Interpolate v(t) from precomputed grid.
+        Interpolate mean(t) and std(t) from precomputed grid.
 
         Args:
             t: Time values [batch] or scalar
 
         Returns:
-            Interpolated v(t) values matching input shape
+            (mean, std) tuple with interpolated values matching input shape
         """
         t_clamped = torch.clamp(t, self.eps, 1 - self.eps)
 
@@ -342,9 +340,15 @@ class DirectELDREstimator3(ELDREstimator):
         idx_high = torch.clamp(idx_low + 1, max=len(self._v_grid_t) - 1)
         frac = idx_float - idx_low.float()
 
-        v_low = self._v_grid_vals[idx_low]
-        v_high = self._v_grid_vals[idx_high]
-        return v_low + frac * (v_high - v_low)
+        mean_low = self._mean_grid_vals[idx_low]
+        mean_high = self._mean_grid_vals[idx_high]
+        mean_interp = mean_low + frac * (mean_high - mean_low)
+
+        std_low = self._std_grid_vals[idx_low]
+        std_high = self._std_grid_vals[idx_high]
+        std_interp = std_low + frac * (std_high - std_low)
+
+        return mean_interp, std_interp
 
     def _compute_marginal_score(
         self,
@@ -483,18 +487,22 @@ class DirectELDREstimator3(ELDREstimator):
         n_p1 = samples_p1.shape[0]
         dim = samples_base.shape[-1]
 
-        # Precompute v(t) on a grid for variance normalization
+        # Precompute mean(t) and std(t) on a grid for normalization
         n_v_grid = 100
         self._v_grid_t = torch.linspace(self.eps, 1 - self.eps, n_v_grid, device=self.device)
-        self._v_grid_vals = []
+        self._mean_grid_vals = []
+        self._std_grid_vals = []
         with torch.no_grad():
             for t_val in self._v_grid_t:
-                v_t = self._compute_v(t_val, samples_p0, samples_p1)
-                self._v_grid_vals.append(v_t)
-        self._v_grid_vals = torch.stack(self._v_grid_vals)
+                mean_t, std_t = self._compute_estimand_stats(t_val, samples_p0, samples_p1)
+                self._mean_grid_vals.append(mean_t)
+                self._std_grid_vals.append(std_t)
+        self._mean_grid_vals = torch.stack(self._mean_grid_vals)
+        self._std_grid_vals = torch.stack(self._std_grid_vals)
 
         if self.verbose:
-            print(f"v(t) range: [{self._v_grid_vals.min().item():.4f}, {self._v_grid_vals.max().item():.4f}]")
+            print(f"mean(t) range: [{self._mean_grid_vals.min().item():.4f}, {self._mean_grid_vals.max().item():.4f}]")
+            print(f"std(t) range: [{self._std_grid_vals.min().item():.4f}, {self._std_grid_vals.max().item():.4f}]")
 
         optimizer = torch.optim.AdamW(
             self.noiser_network.parameters(),
@@ -568,17 +576,17 @@ class DirectELDREstimator3(ELDREstimator):
 
                 avg_estimands = torch.stack(avg_estimands)
 
-                # Scale by 1/v(t) for variance normalization
-                v_t = self._interpolate_v(t)
-                scaled_targets = avg_estimands / v_t
+                # Standard normalization: (target - mean) / std
+                mean_t, std_t = self._interpolate_stats(t)
+                scaled_targets = (avg_estimands - mean_t) / std_t
 
                 predictions = self.noiser_network(t)
 
                 mse_per_sample = (predictions - scaled_targets.detach()) ** 2
 
-                # Compute weights: 1 / (g(t) + eps)
+                # Compute weights: std^2 / (g(t) + eps)^6
                 g_t = self.g(t)
-                weights = v_t**2 / (g_t + self.eps)**6
+                weights = std_t**2 / (g_t + self.eps)**6
 
                 loss = (mse_per_sample * weights).mean()
 
@@ -603,13 +611,13 @@ class DirectELDREstimator3(ELDREstimator):
                     with torch.no_grad():
                         nn_predictions = self.noiser_network(t_eval)
 
-                        v_eval = self._interpolate_v(t_eval)
+                        mean_eval, std_eval = self._interpolate_stats(t_eval)
                         gamma_log = self.g(t_eval)
                         gamma_prime_log = self.dgdt(t_eval)
 
-                        # Full integrand: -dim * g'/g + v(t) * NN(t) / gamma^3
+                        # Full integrand: -dim * g'/g + (mean + std * NN(t)) / gamma^3
                         centering_term = -dim * gamma_prime_log / gamma_log
-                        noiser_term = v_eval * nn_predictions / (gamma_log ** 3)
+                        noiser_term = (mean_eval + std_eval * nn_predictions) / (gamma_log ** 3)
                         # full_integrand = centering_term + noiser_term
                         full_integrand = noiser_term  # centering_term commented out for now
 
@@ -675,14 +683,14 @@ class DirectELDREstimator3(ELDREstimator):
 
         with torch.no_grad():
             nn_predictions = self.noiser_network(t_vals)
-            v_vals = self._interpolate_v(t_vals)
+            mean_vals, std_vals = self._interpolate_stats(t_vals)
 
             gamma_vals = self.g(t_vals)
             gamma_prime_vals = self.dgdt(t_vals)
 
-            # Full integrand: -dim * g'/g + v(t) * NN(t) / gamma^3
+            # Full integrand: -dim * g'/g + (mean + std * NN(t)) / gamma^3
             centering_term = -dim * gamma_prime_vals / gamma_vals
-            noiser_term = v_vals * nn_predictions / (gamma_vals ** 3)
+            noiser_term = (mean_vals + std_vals * nn_predictions) / (gamma_vals ** 3)
             # integrand = (centering_term + noiser_term).cpu().numpy()
             integrand = noiser_term.cpu().numpy()  # centering_term commented out for now
 
