@@ -8,12 +8,8 @@ import yaml
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation.bdre import BDRE
-from src.density_ratio_estimation.tdre import TDRE
-from src.density_ratio_estimation.mdre import MDRE
-from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.triangular_tsm import TriangularTSM
-
+from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
+from src.eig_estimation.plugin import EIGPlugin
 
 
 config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -32,12 +28,19 @@ torch.manual_seed(SEED)
 dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
 results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM}.h5'
 
-algorithms = []
+# instantiate bdre plugin
+bdre_classifier = make_binary_classifier(name="default", input_dim=DATA_DIM+1)
+bdre = BDRE(bdre_classifier, device=DEVICE)
+bdre_plugin = EIGPlugin(density_ratio_estimator=bdre)
+
+algorithms = [
+    ("BDREPlugin", bdre_plugin),
+]
 
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
 with h5py.File(dataset_filename, 'r') as dataset_file:
-    nrows = dataset_file['kl_distance_arr'].shape[0]
+    nrows = dataset_file['design_arr'].shape[0]
 
     for alg_name, alg in algorithms:
         est_eigs_arr = np.zeros(nrows)

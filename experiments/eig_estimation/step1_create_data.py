@@ -62,15 +62,12 @@ for _ in trange(NUM_PRIORS):
             idx += 1
 
 
-# os.makedirs(DATA_DIR, exist_ok=True)
-# with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'w') as f:
-#     f.create_dataset('kl_distance_arr', data=kl_distance_arr)
-#     f.create_dataset('mu0_arr', data=mu0_arr)
-#     f.create_dataset('mu1_arr', data=mu1_arr)
-#     f.create_dataset('Sigma0_arr', data=Sigma0_arr)
-#     f.create_dataset('Sigma1_arr', data=Sigma1_arr)
-#     f.create_dataset('samples_p0_arr', data=samples_p0_arr)
-#     f.create_dataset('samples_p1_arr', data=samples_p1_arr)
-#     f.create_dataset('samples_pstar_arr', data=samples_pstar_arr)
-#     f.create_dataset('samples_pstar_train_arr', data=samples_pstar_train_arr)
-#     f.create_dataset('true_ldrs_arr', data=true_ldrs_arr)
+os.makedirs(DATA_DIR, exist_ok=True)
+dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
+with h5py.File(dataset_filename, 'w') as f:
+    f.create_dataset('prior_mean_arr', data=prior_mean_arr)
+    f.create_dataset('prior_covariance_arr', data=prior_covariance_arr)
+    f.create_dataset('design_eig_percentage_arr', data=design_eig_percentage_arr)
+    f.create_dataset('design_arr', data=design_arr)
+    f.create_dataset('theta_samples_arr', data=theta_samples_arr)
+    f.create_dataset('y_samples_arr', data=y_samples_arr)

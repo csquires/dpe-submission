@@ -5,9 +5,9 @@ figures_dir: "experiments/eig_estimation/figures"
 data_dim: 3
 eig_min: 0.1
 eig_max: 1.0
-num_priors: 10
-num_runs_per_design: 10
-nsamples: 1000
+num_priors: 5
 design_eig_percentages: [0.5, 0.6, 0.7, 0.8, 0.9, 0.999]
+num_runs_per_design: 5
+nsamples: 1000
 device: "cuda"
 seed: 1729
