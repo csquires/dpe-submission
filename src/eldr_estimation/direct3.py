@@ -512,6 +512,11 @@ class DirectELDREstimator3(ELDREstimator):
             weight_decay=self.weight_decay
         )
 
+        # LR scheduler: cosine annealing to 1/10th of initial LR
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.num_epochs, eta_min=self.learning_rate / 10
+        )
+
         t_eval = torch.linspace(self.eps, 1 - self.eps, self.integration_steps, device=self.device)
 
         sanity_check_targets = None
@@ -599,15 +604,19 @@ class DirectELDREstimator3(ELDREstimator):
 
                 mse_per_sample = (predictions - scaled_targets.detach()) ** 2
 
-                # Compute weights: std^2 / (g(t) + eps)^6 (correct importance weighting for ELDR)
+                # Compute weights: std^2 / (g(t) + eps)^n
                 g_t = self.g(t)
-                weights = std_t**2 / (g_t + self.eps)**6
+                WEIGHT_EXP = 3  # Testing different exponents
+                weights = std_t**2 / (g_t + self.eps)**WEIGHT_EXP
 
                 loss = (mse_per_sample * weights).mean()
 
                 optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=100.0)
+                # Time-dependent gradient clipping: 100 / gamma_min^2
+                gamma_min = g_t.min().item()
+                clip_norm = 100.0 / (gamma_min + self.eps)**2
+                torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=clip_norm)
                 optimizer.step()
 
                 loss_val = loss.item()
@@ -718,6 +727,9 @@ class DirectELDREstimator3(ELDREstimator):
                     if self.verbose:
                         print(f"Converged at iteration {global_iter}")
                     return
+
+            # Step the LR scheduler at end of each epoch
+            scheduler.step()
 
     def _integrate_noiser(self, dim: int) -> float:
         """
@@ -844,9 +856,9 @@ if __name__ == '__main__':
         # Interpolant parameters (k=12 gives larger gamma near boundaries)
         k=12.0,
         eps=0.1,
-        # Training parameters (extremely low LR to not overshoot)
+        # Training parameters (very low LR with decay)
         learning_rate=1e-5,
-        weight_decay=1e-4,
+        weight_decay=1e-3,  # Strong weight decay
         num_epochs=5000,
         batch_size=256,
         # Convergence
