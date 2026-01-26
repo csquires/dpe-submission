@@ -167,6 +167,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         verbose: bool = False,
         log_every: int = 100,
         sharing: str = 'full',
+        antithetic: bool = False,
     ):
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -182,6 +183,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         if sharing not in {'none', 'embeddings', 'full'}:
             raise ValueError(f"Unknown sharing mode: {sharing}. Expected 'none', 'embeddings', or 'full'.")
         self.sharing = sharing
+        self.antithetic = antithetic
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -282,21 +284,50 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
             gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
-            # Construct interpolant and forward pass
-            x_t = (1 - t_batch) * x0 + t_batch * x1 + gamma_t * z
-            outputs = self.model(t_batch, x_t)
-            b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
+            # Interpolant mean
+            I_t = (1 - t_batch) * x0 + t_batch * x1
+            dtIt = x1 - x0  # derivative of I_t w.r.t. t
 
-            # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
-            b_norm_sq = (b_pred ** 2).sum(dim=-1)
-            target_dot_b = (((x1 - x0) + gamma_prime_t * z) * b_pred).sum(dim=-1)
-            loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
+            if self.antithetic:
+                # Antithetic sampling: x_t+ and x_t-
+                x_t_plus = I_t + gamma_t * z
+                x_t_minus = I_t - gamma_t * z
 
-            # Denoiser loss: 0.5*||d||² - z·d
-            # Target: d = z (since d = -gamma*s and s = -z/gamma)
-            eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
-            z_dot_eta = (z * eta_pred).sum(dim=-1)
-            loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
+                outputs_plus = self.model(t_batch, x_t_plus)
+                outputs_minus = self.model(t_batch, x_t_minus)
+
+                b_plus, eta_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
+                b_minus, eta_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
+
+                # Velocity loss with antithetic sampling
+                # loss_b+ = 0.5*||b+||² - (dtIt + γ'z)·b+
+                # loss_b- = 0.5*||b-||² - (dtIt - γ'z)·b-
+                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)
+                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
+                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
+                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
+                loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
+                        + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
+
+                # Denoiser loss: no antithetic (eta predicts z, use x_t+ only)
+                eta_norm_sq = (eta_plus ** 2).sum(dim=-1)
+                z_dot_eta = (z * eta_plus).sum(dim=-1)
+                loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
+            else:
+                # Standard (non-antithetic) training
+                x_t = I_t + gamma_t * z
+                outputs = self.model(t_batch, x_t)
+                b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
+
+                # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)
+                target_dot_b = ((dtIt + gamma_prime_t * z) * b_pred).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
+
+                # Denoiser loss: 0.5*||d||² - z·d
+                eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
+                z_dot_eta = (z * eta_pred).sum(dim=-1)
+                loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
 
             total_loss = loss_b + loss_eta
 

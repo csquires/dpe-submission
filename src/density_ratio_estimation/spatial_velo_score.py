@@ -273,28 +273,43 @@ class SpatialVeloScore(DensityRatioEstimator):
 
             # Interpolant
             I_t = (1 - t_batch) * x0 + t_batch * x1
+            dtIt = x1 - x0  # derivative of I_t w.r.t. t
             eta_t = gamma_t * z
             x_t_plus = I_t + eta_t
 
             # Forward pass
             outputs_plus = self.model(t_batch, x_t_plus)
             b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
-
-            # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
             s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
-            b_norm_sq = (b_plus ** 2).sum(dim=-1)
-            target_dot_b = (((x1 - x0) + gamma_prime_t * z) * b_plus).sum(dim=-1)
-            loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
-            # Score loss
             if self.antithetic:
                 # Antithetic sampling: compute x_t+ and x_t-
                 x_t_minus = I_t - eta_t
                 outputs_minus = self.model(t_batch, x_t_minus)
-                _, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
+                b_minus, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
+
+                # Velocity loss with antithetic sampling
+                # loss_b+ = 0.5*||b+||² - (dtIt + γ'z)·b+
+                # loss_b- = 0.5*||b-||² - (dtIt - γ'z)·b-
+                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)
+                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
+                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
+                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
+                loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
+                        + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
+
+                # Score loss with antithetic sampling
+                # loss_s+ = 0.5*||s+||² + (1/γ)*z·s+
+                # loss_s- = 0.5*||s-||² - (1/γ)*z·s-
                 s_norm_sq_minus = (s_minus ** 2).sum(dim=-1)
-                loss_s = (0.25 * s_norm_sq_plus + 0.25 * s_norm_sq_minus + 0.5 * (z * (s_plus - s_minus) / gamma_t).sum(dim=-1)).mean()
+                loss_s = (0.25 * s_norm_sq_plus + 0.25 * s_norm_sq_minus
+                        + 0.5 * (z * (s_plus - s_minus) / gamma_t).sum(dim=-1)).mean()
             else:
+                # Standard (non-antithetic) training
+                b_norm_sq = (b_plus ** 2).sum(dim=-1)
+                target_dot_b = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
+
                 z_dot_s = (z * s_plus).sum(dim=-1)
                 loss_s = (0.5 * s_norm_sq_plus + (1.0 / gamma_t.squeeze(-1)) * z_dot_s).mean()
 

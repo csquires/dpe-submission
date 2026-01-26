@@ -88,6 +88,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         integration_steps: int = 10000,
         verbose: bool = False,
         log_every: int = 100,
+        antithetic: bool = False,
     ):
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -100,6 +101,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         self.integration_steps = integration_steps
         self.verbose = verbose
         self.log_every = log_every
+        self.antithetic = antithetic
         
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,16 +196,34 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
             gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
-            # Interpolant
-            x_t = (1 - t_batch) * x0 + t_batch * x1 + gamma_t * z
+            # Interpolant mean
+            I_t = (1 - t_batch) * x0 + t_batch * x1
+            dtIt = x1 - x0  # derivative of I_t w.r.t. t
 
-            # Predict b
-            b_pred = self.net_b(t_batch, x_t)
+            if self.antithetic:
+                # Antithetic sampling: x_t+ and x_t-
+                x_t_plus = I_t + gamma_t * z
+                x_t_minus = I_t - gamma_t * z
 
-            # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
-            b_norm_sq = (b_pred ** 2).sum(dim=-1)
-            target_dot_b = (((x1 - x0) + gamma_prime_t * z) * b_pred).sum(dim=-1)
-            loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
+                b_plus = self.net_b(t_batch, x_t_plus)
+                b_minus = self.net_b(t_batch, x_t_minus)
+
+                # Velocity loss with antithetic sampling
+                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)
+                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
+                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
+                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
+                loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
+                        + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
+            else:
+                # Standard (non-antithetic) training
+                x_t = I_t + gamma_t * z
+                b_pred = self.net_b(t_batch, x_t)
+
+                # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)
+                target_dot_b = ((dtIt + gamma_prime_t * z) * b_pred).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
             optimizer_b.zero_grad()
             loss_b.backward()
