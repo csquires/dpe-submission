@@ -323,7 +323,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
                 integral += 4 * integrand[i]
         integral *= h / 3
 
-        return torch.from_numpy(integral)
+        return -torch.from_numpy(integral)
 
 
 if __name__ == '__main__':
@@ -375,9 +375,9 @@ if __name__ == '__main__':
     # Instantiate with separate training logic
     estimator = SpatialVeloDenoiser(
         DIM,
-        n_epochs=2000,
+        n_epochs=100,
         verbose=True,
-        log_every=200,
+        log_every=1,
         device=DEVICE,
     )
     
