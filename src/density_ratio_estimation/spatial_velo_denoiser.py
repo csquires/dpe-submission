@@ -18,7 +18,7 @@ class SeparateNetworks(nn.Module):
         super().__init__()
         self.input_dim = input_dim
         half_hidden = hidden_dim // 2
-        self.v_net = nn.Sequential(
+        self.b_net = nn.Sequential(
             nn.Linear(input_dim + 1, half_hidden),
             nn.ELU(),
             nn.Linear(half_hidden, half_hidden),
@@ -27,7 +27,7 @@ class SeparateNetworks(nn.Module):
             nn.ELU(),
             nn.Linear(half_hidden, input_dim),
         )
-        self.d_net = nn.Sequential(
+        self.eta_net = nn.Sequential(
             nn.Linear(input_dim + 1, half_hidden),
             nn.ELU(),
             nn.Linear(half_hidden, half_hidden),
@@ -46,8 +46,8 @@ class SeparateNetworks(nn.Module):
             [v, d] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
-        v = self.v_net(tx)
-        d = self.d_net(tx)
+        v = self.b_net(tx)
+        d = self.eta_net(tx)
         return torch.cat([v, d], dim=-1)
 
 
@@ -67,8 +67,8 @@ class SharedBackboneNetwork(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ELU(),
         )
-        self.v_head = nn.Linear(hidden_dim, input_dim)
-        self.d_head = nn.Linear(hidden_dim, input_dim)
+        self.b_head = nn.Linear(hidden_dim, input_dim)
+        self.eta_head = nn.Linear(hidden_dim, input_dim)
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
@@ -80,8 +80,8 @@ class SharedBackboneNetwork(nn.Module):
         """
         tx = torch.cat([t, x], dim=-1)
         h = self.backbone(tx)
-        v = self.v_head(h)
-        d = self.d_head(h)
+        v = self.b_head(h)
+        d = self.eta_head(h)
         return torch.cat([v, d], dim=-1)
 
 
@@ -218,14 +218,10 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         """
         Compute partial_t log rho(t, x) using denoiser parameterization.
 
-        The relationship s = -d/gamma is used to transform the time score formula.
+        The relationship s = -eta/gamma is used to transform the time score formula.
 
-        Original formula (in terms of score s):
-            time_score = -div(v) - v·s + gamma_dot*gamma*(div(s) + ||s||²)
-
-        Transformed formula (in terms of denoiser d):
-            term_signal = -div(v) + v·d/gamma
-            term_noise = -gamma_dot*div(d) + gamma_dot*||d||²/gamma
+        Original formula (in terms of denoiser eta):
+            time_score = -div(b) + b.eta/gamma
 
         Args:
             t: Time tensor [batch, 1]
@@ -239,24 +235,16 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         x = x.clone().requires_grad_(True)
 
         outputs = self.model(t, x)
-        v_pred, d_pred = torch.chunk(outputs, chunks=2, dim=1)
+        b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
 
         # Divergences via Hutchinson estimator
         epsilon = torch.randn_like(x)
-        div_v = compute_divergence(v_pred, x, epsilon)
-        div_d = compute_divergence(d_pred, x, epsilon)
+        div_b = compute_divergence(b_pred, x, epsilon)
 
         # Scalar terms
-        v_dot_d = (v_pred * d_pred).sum(dim=-1, keepdim=True)
-        d_norm_sq = (d_pred ** 2).sum(dim=-1, keepdim=True)
+        b_dot_eta= (b_pred * eta_pred).sum(dim=-1, keepdim=True)
 
-        # Assemble using transformed formula:
-        # term_signal = -div(v) + v·d/gamma
-        # term_noise = -gamma_dot*div(d) + gamma_dot*||d||²/gamma
-        term_signal = -div_v.view(-1, 1) + v_dot_d / gamma_t
-        term_noise = -gamma_dot_t * div_d.view(-1, 1) + (gamma_dot_t / gamma_t) * d_norm_sq
-
-        return term_signal + term_noise
+        return -div_b.view(-1, 1) + b_dot_eta/ gamma_t
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         self.init_model()
@@ -285,8 +273,8 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             z = torch.randn_like(x0)
 
             total_loss = 0.0
-            total_loss_v = 0.0
-            total_loss_d = 0.0
+            total_loss_b = 0.0
+            total_loss_eta= 0.0
             for t_val in t_grid:
                 t_batch = torch.full((self.batch_size, 1), t_val.item(), device=self.device)
                 gamma_t = self.gamma(t_val)
@@ -294,29 +282,29 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
                 # Construct interpolant and forward pass
                 x_t = (1 - t_val) * x0 + t_val * x1 + gamma_t * z
                 outputs = self.model(t_batch, x_t)
-                v_pred, d_pred = torch.chunk(outputs, chunks=2, dim=1)
+                b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
 
                 # Velocity loss: 0.5*||v||² - (x1 - x0)·v
-                v_norm_sq = (v_pred ** 2).sum(dim=-1)
-                target_dot_v = ((x1 - x0) * v_pred).sum(dim=-1)
-                loss_v = (0.5 * v_norm_sq - target_dot_v).mean()
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)
+                target_dot_b = ((x1 - x0) * b_pred).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
-                # Denoiser loss: 0.5*||d||² - z·d
-                # (MSE: ||d-z||²/2 = 0.5||d||² - z·d + const)
-                d_norm_sq = (d_pred ** 2).sum(dim=-1)
-                z_dot_d = (z * d_pred).sum(dim=-1)
-                loss_d = (0.5 * d_norm_sq - z_dot_d).mean()
+                # Denoiser loss: 0.5*||d||² + z·d
+                # Target: d = -z (since s = z/gamma and d = -gamma*s)
+                eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
+                z_dot_eta= (z * eta_pred).sum(dim=-1)
+                loss_eta= (0.5 * eta_norm_sq - z_dot_eta).mean()
 
-                total_loss = total_loss + loss_v + loss_d
-                total_loss_v = total_loss_v + loss_v.item()
-                total_loss_d = total_loss_d + loss_d.item()
+                total_loss = total_loss + loss_b + loss_eta
+                total_loss_b = total_loss_b + loss_b.item()
+                total_loss_eta= total_loss_eta+ loss_eta.item()
 
             self.optimizer.zero_grad()
             total_loss.backward()
             self.optimizer.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
-                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_v={total_loss_v:.4f}, loss_d={total_loss_d:.4f}")
+                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_b={total_loss_b:.4f}, loss_eta={total_loss_eta:.4f}")
 
         if self.verbose:
             print(f"[SpatialVeloDenoiser] Training complete")

@@ -18,7 +18,7 @@ class SeparateNetworks(nn.Module):
         super().__init__()
         self.input_dim = input_dim
         half_hidden = hidden_dim // 2
-        self.v_net = nn.Sequential(
+        self.b_net = nn.Sequential(
             nn.Linear(input_dim + 1, half_hidden),
             nn.ELU(),
             nn.Linear(half_hidden, half_hidden),
@@ -46,7 +46,7 @@ class SeparateNetworks(nn.Module):
             [v, s] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
-        v = self.v_net(tx)
+        v = self.b_net(tx)
         s = self.s_net(tx)
         return torch.cat([v, s], dim=-1)
 
@@ -67,7 +67,7 @@ class SharedBackboneNetwork(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ELU(),
         )
-        self.v_head = nn.Linear(hidden_dim, input_dim)
+        self.b_head = nn.Linear(hidden_dim, input_dim)
         self.s_head = nn.Linear(hidden_dim, input_dim)
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -80,7 +80,7 @@ class SharedBackboneNetwork(nn.Module):
         """
         tx = torch.cat([t, x], dim=-1)
         h = self.backbone(tx)
-        v = self.v_head(h)
+        v = self.b_head(h)
         s = self.s_head(h)
         return torch.cat([v, s], dim=-1)
 
@@ -223,23 +223,17 @@ class SpatialVeloScore(DensityRatioEstimator):
         x = x.clone().requires_grad_(True)
 
         outputs = self.model(t, x)
-        v_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
+        b_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
 
         # Divergences via Hutchinson estimator
         epsilon = torch.randn_like(x)
-        div_v = compute_divergence(v_pred, x, epsilon)
-        div_s = compute_divergence(s_pred, x, epsilon)
+        div_b = compute_divergence(b_pred, x, epsilon)
 
         # Scalar terms
-        v_dot_s = (v_pred * s_pred).sum(dim=-1, keepdim=True)
-        s_norm_sq = (s_pred ** 2).sum(dim=-1, keepdim=True)
+        b_dot_s = (b_pred * s_pred).flatten(1).sum(1)
 
-        # Assemble: time_score = -div(v) - v·s + gamma_dot*gamma*(div(s) + ||s||²)
-        term_signal = -div_v.view(-1, 1) - v_dot_s
-        c_t = gamma_dot_t * gamma_t
-        term_noise = c_t * (div_s.view(-1, 1) + s_norm_sq)
-
-        return term_signal + term_noise
+        # Assemble: time_score = -div(b) - b·s 
+        return -div_b - b_dot_s
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         self.init_model()
@@ -268,7 +262,7 @@ class SpatialVeloScore(DensityRatioEstimator):
             z = torch.randn_like(x0)
 
             total_loss = 0.0
-            total_loss_v = 0.0
+            total_loss_b = 0.0
             total_loss_s = 0.0
             for t_val in t_grid:
                 t_batch = torch.full((self.batch_size, 1), t_val.item(), device=self.device)
@@ -283,29 +277,30 @@ class SpatialVeloScore(DensityRatioEstimator):
                     outputs_plus = self.model(t_batch, x_t_plus)
                     outputs_minus = self.model(t_batch, x_t_minus)
 
-                    v_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
-                    v_minus, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
+                    b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
+                    b_minus, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
 
-                    v_pred = (v_plus - v_minus) / 2
+                    b_pred = (b_plus - b_minus) / 2
                     s_pred = (s_plus - s_minus) / 2
                 else:
                     # Standard: single x_t
                     x_t = (1 - t_val) * x0 + t_val * x1 + gamma_t * z
                     outputs = self.model(t_batch, x_t)
-                    v_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
+                    b_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
 
                 # Velocity loss: 0.5*||v||² - (x1 - x0)·v
-                v_norm_sq = (v_pred ** 2).sum(dim=-1)
-                target_dot_v = ((x1 - x0) * v_pred).sum(dim=-1)
-                loss_v = (0.5 * v_norm_sq - target_dot_v).mean()
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)
+                target_dot_b = ((x1 - x0) * b_pred).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq + target_dot_b).mean()
 
-                # Score loss: 0.5*||s||² + (1/gamma)*z·s
+                # Score loss: 0.5*||s||² - (1/gamma)*z·s
+                # Target: s = -z/gamma, so we want s·z < 0
                 s_norm_sq = (s_pred ** 2).sum(dim=-1)
                 z_dot_s = (z * s_pred).sum(dim=-1)
-                loss_s = (0.5 * s_norm_sq + (1.0 / gamma_t) * z_dot_s).mean()
+                loss_s = (0.5 * s_norm_sq - (1.0 / gamma_t) * z_dot_s).mean()
 
-                total_loss = total_loss + loss_v + loss_s
-                total_loss_v = total_loss_v + loss_v.item()
+                total_loss = total_loss + loss_b + loss_s
+                total_loss_b = total_loss_b + loss_b.item()
                 total_loss_s = total_loss_s + loss_s.item()
 
             self.optimizer.zero_grad()
@@ -313,7 +308,7 @@ class SpatialVeloScore(DensityRatioEstimator):
             self.optimizer.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
-                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_v={total_loss_v:.4f}, loss_s={total_loss_s:.4f}")
+                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_b={total_loss_b:.4f}, loss_s={total_loss_s:.4f}")
 
         if self.verbose:
             print(f"[SpatialVeloScore] Training complete")
