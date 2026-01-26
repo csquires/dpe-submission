@@ -244,11 +244,8 @@ class SpatialVeloScore(DensityRatioEstimator):
         n_p0 = samples_p0.shape[0]
         n_p1 = samples_p1.shape[0]
 
-        # Pre-sample time grid
-        t_grid = torch.linspace(self.eps, 1 - self.eps, self.n_t, device=self.device)
-
         if self.verbose:
-            print(f"[SpatialVeloScore] Training with {self.n_epochs} epochs, {self.n_t} time points")
+            print(f"[SpatialVeloScore] Training with {self.n_epochs} epochs, batch-based time sampling")
             print(f"[SpatialVeloScore] gamma range: [{self.gamma(torch.tensor(self.eps)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
 
         for epoch in range(self.n_epochs):
@@ -258,48 +255,52 @@ class SpatialVeloScore(DensityRatioEstimator):
             x0 = samples_p0[p0_idx].to(self.device)
             x1 = samples_p1[p1_idx].to(self.device)
 
-            # Sample noise (same for all t in this batch for variance reduction)
+            # Sample time uniformly from [eps, 1-eps] per sample
+            t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
+            t_batch = t.unsqueeze(-1)  # [B, 1]
+
+            # Sample noise (independent per sample)
             z = torch.randn_like(x0)
 
-            total_loss = 0.0
-            total_loss_b = 0.0
-            total_loss_s = 0.0
-            for t_val in t_grid:
-                t_batch = torch.full((self.batch_size, 1), t_val.item(), device=self.device)
-                gamma_t = self.gamma(t_val)
-                gamma_prime_t = self.dgamma_dt(t_val)
-                I_t = (1 - t_val) * x0 + t_val * x1
-                eta_t = gamma_t * z
-                x_t_plus = I_t + eta_t
-                outputs_plus = self.model(t_batch, x_t_plus)
-                b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
-                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
-                b_norm_sq = (b_pred ** 2).sum(dim=-1)
-                target_dot_b = (((x1 - x0) + gamma_prime_t * z)*b_pred).sum(dim=-1)
-                loss_b = (0.5 * b_norm_sq + target_dot_b).mean()
+            # Compute gamma and gamma' for each t
+            gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
+            gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
-                # Construct interpolant and forward pass
-                if self.antithetic:
-                    # Antithetic sampling: compute x_t+ and x_t-
-                    x_t_minus = I_t - eta_t
-                    outputs_minus = self.model(t_batch, x_t_minus)
-                    _, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
-                    s_norm_sq_minus = (s_minus ** 2).sum(dim=-1)
-                    loss_s = (0.25 * s_norm_sq_plus + 0.25 * s_norm_sq_minus + 0.5 * (z * (s_plus - s_minus) / gamma_t).sum(dim=-1)).mean()
-                else:
-                z_dot_s = 
-                    loss_s = (0.5*s_norm_sq_plus + 1.0/gamma_t*(z * s_plus).sum(dim=-1)).mean()
+            # Interpolant
+            I_t = (1 - t_batch) * x0 + t_batch * x1
+            eta_t = gamma_t * z
+            x_t_plus = I_t + eta_t
 
-                total_loss = total_loss + loss_b + loss_s
-                total_loss_b = total_loss_b + loss_b.item()
-                total_loss_s = total_loss_s + loss_s.item()
+            # Forward pass
+            outputs_plus = self.model(t_batch, x_t_plus)
+            b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
+
+            # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
+            s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
+            b_norm_sq = (b_plus ** 2).sum(dim=-1)
+            target_dot_b = (((x1 - x0) + gamma_prime_t * z) * b_plus).sum(dim=-1)
+            loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
+
+            # Score loss
+            if self.antithetic:
+                # Antithetic sampling: compute x_t+ and x_t-
+                x_t_minus = I_t - eta_t
+                outputs_minus = self.model(t_batch, x_t_minus)
+                _, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
+                s_norm_sq_minus = (s_minus ** 2).sum(dim=-1)
+                loss_s = (0.25 * s_norm_sq_plus + 0.25 * s_norm_sq_minus + 0.5 * (z * (s_plus - s_minus) / gamma_t).sum(dim=-1)).mean()
+            else:
+                z_dot_s = (z * s_plus).sum(dim=-1)
+                loss_s = (0.5 * s_norm_sq_plus + (1.0 / gamma_t.squeeze(-1)) * z_dot_s).mean()
+
+            total_loss = loss_b + loss_s
 
             self.optimizer.zero_grad()
             total_loss.backward()
             self.optimizer.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
-                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_b={total_loss_b:.4f}, loss_s={total_loss_s:.4f}")
+                print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_b={loss_b.item():.4f}, loss_s={loss_s.item():.4f}")
 
         if self.verbose:
             print(f"[SpatialVeloScore] Training complete")
