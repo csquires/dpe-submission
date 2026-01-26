@@ -46,7 +46,6 @@ class TriangularTSM(DensityRatioEstimator):
 
     def time_score_loss(
         self,
-        score_fn,
         p0_samples: torch.Tensor,
         p1_samples: torch.Tensor,
         x_t: torch.Tensor,
@@ -66,11 +65,11 @@ class TriangularTSM(DensityRatioEstimator):
             lambda_t = lambda_t0 = lambda_t1 = 1.0
             lambda_dt = 0.0
 
-        term1 = (2 * score_fn(p1_samples, t0, t_prime_zeros)).squeeze() * lambda_t0
-        term2 = (2 * score_fn(p0_samples, t1, t_prime_zeros)).squeeze() * lambda_t1
+        term1 = (2 * self.model(p1_samples, t0, t_prime_zeros)).squeeze() * lambda_t0
+        term2 = (2 * self.model(p0_samples, t1, t_prime_zeros)).squeeze() * lambda_t1
 
         t = t.clone().detach().requires_grad_(True)
-        x_t_score = score_fn(x_t, t, t_prime.detach())
+        x_t_score = self.model(x_t, t, t_prime.detach())
         x_t_score_dt = autograd.grad(x_t_score.sum(), t, create_graph=True)[0]
         term3 = (2 * x_t_score_dt).squeeze() * lambda_t
         term4 = x_t_score.squeeze() * lambda_dt if isinstance(lambda_dt, torch.Tensor) else x_t_score.squeeze() * lambda_dt
@@ -106,7 +105,6 @@ class TriangularTSM(DensityRatioEstimator):
 
             score_fn = lambda x, t_in, t_prime_in: self.model(x, t_in, t_prime_in)
             loss = self.time_score_loss(
-                score_fn,
                 p0_samples,
                 p1_samples,
                 x_t_tprime,

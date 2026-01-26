@@ -37,6 +37,7 @@ Sigma1_arr = np.zeros((nrows, DATA_DIM, DATA_DIM), dtype=np.float32)
 samples_p0_arr = np.zeros((nrows, NSAMPLES_TRAIN, DATA_DIM), dtype=np.float32)
 samples_p1_arr = np.zeros((nrows, NSAMPLES_TRAIN, DATA_DIM), dtype=np.float32)
 samples_pstar_arr = np.zeros((nrows, NTEST_SETS, NSAMPLES_TEST, DATA_DIM), dtype=np.float32)
+samples_pstar_train_arr = np.zeros((nrows, NSAMPLES_TRAIN, DATA_DIM), dtype=np.float32)
 # true density ratios
 true_ldrs_arr = np.zeros((nrows, NTEST_SETS, NSAMPLES_TEST), dtype=np.float32)
 
@@ -72,6 +73,9 @@ for kl_distance in tqdm(KL_DISTANCES):
         samples_pstar3 = pstar3.sample((NSAMPLES_TEST,))
         samples_pstar_arr[idx] = torch.stack([samples_pstar1, samples_pstar2, samples_pstar3], dim=0).numpy()
 
+        samples_pstar_train = pstar3.sample((NSAMPLES_TRAIN,))
+        samples_pstar_train_arr[idx] = samples_pstar_train.numpy()
+
         # compute true ldrs
         true_ldrs1 = p0.log_prob(samples_pstar1) - p1.log_prob(samples_pstar1)
         true_ldrs2 = p0.log_prob(samples_pstar2) - p1.log_prob(samples_pstar2)
@@ -91,4 +95,5 @@ with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={
     f.create_dataset('samples_p0_arr', data=samples_p0_arr)
     f.create_dataset('samples_p1_arr', data=samples_p1_arr)
     f.create_dataset('samples_pstar_arr', data=samples_pstar_arr)
+    f.create_dataset('samples_pstar_train_arr', data=samples_pstar_train_arr)
     f.create_dataset('true_ldrs_arr', data=true_ldrs_arr)
