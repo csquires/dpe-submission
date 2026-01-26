@@ -606,7 +606,7 @@ class DirectELDREstimator3(ELDREstimator):
 
                 # Compute weights: std^2 / (g(t) + eps)^n
                 g_t = self.g(t)
-                WEIGHT_EXP = 3  # Testing different exponents
+                WEIGHT_EXP = 5  # Best from earlier experiments
                 weights = std_t**2 / (g_t + self.eps)**WEIGHT_EXP
 
                 loss = (mse_per_sample * weights).mean()
@@ -828,7 +828,7 @@ class DirectELDREstimator3(ELDREstimator):
 
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal, kl_divergence
-    from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
+    from experiments.utils.prescribed_kls import create_two_gaussians_kl
 
     DIM = 1
     NSAMPLES = 2048
@@ -858,7 +858,7 @@ if __name__ == '__main__':
         eps=0.1,
         # Training parameters (very low LR with decay)
         learning_rate=1e-5,
-        weight_decay=1e-3,  # Strong weight decay
+        weight_decay=1e-4,  # Moderate weight decay
         num_epochs=5000,
         batch_size=256,
         # Convergence

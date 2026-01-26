@@ -366,7 +366,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
 
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
-    from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
+    from experiments.utils.prescribed_kls import create_two_gaussians_kl
     from src.density_ratio_estimation.bdre import BDRE
     from src.models.binary_classification import make_binary_classifier
 
