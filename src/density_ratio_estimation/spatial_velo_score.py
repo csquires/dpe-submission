@@ -136,7 +136,7 @@ def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Ten
     return (grad_outputs * epsilon).sum(dim=-1)
 
 
-class InterpolantScore(DensityRatioEstimator):
+class SpatialVeloScore(DensityRatioEstimator):
     def __init__(
         self,
         input_dim: int,
@@ -254,8 +254,8 @@ class InterpolantScore(DensityRatioEstimator):
         t_grid = torch.linspace(self.eps, 1 - self.eps, self.n_t, device=self.device)
 
         if self.verbose:
-            print(f"[InterpolantScore] Training with {self.n_epochs} epochs, {self.n_t} time points")
-            print(f"[InterpolantScore] gamma range: [{self.gamma(torch.tensor(self.eps)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
+            print(f"[SpatialVeloScore] Training with {self.n_epochs} epochs, {self.n_t} time points")
+            print(f"[SpatialVeloScore] gamma range: [{self.gamma(torch.tensor(self.eps)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
 
         for epoch in range(self.n_epochs):
             # Sample batches
@@ -316,11 +316,11 @@ class InterpolantScore(DensityRatioEstimator):
                 print(f"[Epoch {epoch+1}/{self.n_epochs}] total_loss={total_loss.item():.4f}, loss_v={total_loss_v:.4f}, loss_s={total_loss_s:.4f}")
 
         if self.verbose:
-            print(f"[InterpolantScore] Training complete")
+            print(f"[SpatialVeloScore] Training complete")
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         if self.model is None:
-            raise RuntimeError("InterpolantScore model is not trained. Call fit() before predict_ldr().")
+            raise RuntimeError("SpatialVeloScore model is not trained. Call fit() before predict_ldr().")
 
         self.model.eval()
         samples = xs.float().to(self.device)
@@ -365,6 +365,7 @@ if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
     from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
     from src.density_ratio_estimation.bdre import BDRE
+    from src.models.binary_classification import make_binary_classifier
 
     DIM = 2
     NSAMPLES_TRAIN = 10000
@@ -392,7 +393,8 @@ if __name__ == '__main__':
     print("=" * 50)
     print("BDRE (Baseline)")
     print("=" * 50)
-    bdre = BDRE(DIM, device=DEVICE)
+    classifier = make_binary_classifier("default", input_dim=DIM)
+    bdre = BDRE(classifier, device=DEVICE)
     bdre.fit(samples_p0.to(DEVICE), samples_p1.to(DEVICE))
     bdre_ldrs = bdre.predict_ldr(samples_test.to(DEVICE))
     bdre_mae = torch.mean(torch.abs(bdre_ldrs.cpu() - true_ldrs.cpu()))
@@ -406,9 +408,9 @@ if __name__ == '__main__':
 
     for sharing in sharing_modes:
         print("=" * 50)
-        print(f"InterpolantScore (sharing='{sharing}')")
+        print(f"SpatialVeloScore (sharing='{sharing}')")
         print("=" * 50)
-        estimator = InterpolantScore(
+        estimator = SpatialVeloScore(
             DIM,
             n_epochs=2000,
             verbose=True,
@@ -422,8 +424,8 @@ if __name__ == '__main__':
         est_ldrs = estimator.predict_ldr(samples_test)
         mae = torch.mean(torch.abs(est_ldrs.cpu() - true_ldrs.cpu()))
         maes[sharing] = mae.item()
-        print(f"InterpolantScore (sharing='{sharing}') MAE: {mae.item():.4f}")
-        print(f"InterpolantScore LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
+        print(f"SpatialVeloScore (sharing='{sharing}') MAE: {mae.item():.4f}")
+        print(f"SpatialVeloScore LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
         print()
 
     # === COMPARISON ===
@@ -432,4 +434,4 @@ if __name__ == '__main__':
     print("=" * 50)
     print(f"BDRE MAE:                              {bdre_mae.item():.4f}")
     for sharing in sharing_modes:
-        print(f"InterpolantScore (sharing='{sharing}'): {maes[sharing]:.4f}")
+        print(f"SpatialVeloScore (sharing='{sharing}'): {maes[sharing]:.4f}")
