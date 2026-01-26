@@ -291,11 +291,12 @@ class DirectELDREstimator3(ELDREstimator):
         Compute sample mean and std of the averaged estimand.
 
         For fixed (x0, x1), the averaged estimand (over x ~ p_*) is:
-            Y(x0, x1) = m^T * (x1 - x0) * gamma + ||m||^2 + E
+            Y(x0, x1) = m^T * (x1 - x0) * gamma + (||m||^2 + E) * gamma'
         where:
             m = mean_x - alpha*x0 - beta*x1
             E = sum of Var(x) across dims
             gamma = g(t)
+            gamma' = dg/dt
 
         Args:
             t: Time value (scalar tensor)
@@ -308,15 +309,16 @@ class DirectELDREstimator3(ELDREstimator):
         alpha = 1 - t
         beta = t
         gamma_t = self.g(t)
+        gamma_prime_t = self.dgdt(t)
 
         # m = mean_x - alpha*x0 - beta*x1 for all (x0, x1) pairs
         m = self._mean_x - alpha * samples_p0 - beta * samples_p1  # [n_samples, dim]
         d = samples_p1 - samples_p0  # x1 - x0
 
-        # Y = m^T * d * gamma + ||m||^2 + E
+        # Y = m^T * d * gamma + (||m||^2 + E) * gamma'
         m_dot_d = (m * d).sum(dim=-1)  # [n_samples]
         m_norm_sq = (m ** 2).sum(dim=-1)  # [n_samples]
-        Y = m_dot_d * gamma_t + m_norm_sq + self._E
+        Y = m_dot_d * gamma_t + (m_norm_sq + self._E) * gamma_prime_t
 
         mean_Y = Y.mean()
         std_Y = Y.std() + 1e-8
