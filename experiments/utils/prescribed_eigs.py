@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from torch import log1p
 
 
@@ -18,10 +19,13 @@ def create_prior_eig_range(
     eig_max: float,
     sigma: float = 1.0  # likelihood variance
 ):
-    eigs = torch.linspace(eig_min, eig_max, dim)
-    rhos = (sigma ** 2) * (torch.exp(2 * eigs) - 1)
+    rho_min = (sigma ** 2) * (np.exp(2 * eig_min) - 1)
+    rho_max = (sigma ** 2) * (np.exp(2 * eig_max) - 1)
+    rhos_inner = np.random.uniform(rho_min, rho_max, dim - 2)
+    rhos_inner.sort()
+    rhos = np.concatenate([[rho_min], rhos_inner, [rho_max]])
     mu_pi = torch.zeros(dim)
-    Sigma_pi = torch.eye(dim) * rhos
+    Sigma_pi = torch.eye(dim) * torch.tensor(rhos).to(torch.float32)
     return mu_pi, Sigma_pi
 
 
@@ -54,12 +58,15 @@ def create_design_eig(
     weight_lower = torch.sqrt(1 - t)
 
     # create the design
-    xi = weight_upper * eigvecs[:, upper_eigval_idx] + weight_lower * eigvecs[:, lower_eigval_idx]
+    eigvec_upper = eigvecs[:, upper_eigval_idx]
+    eigvec_lower = eigvecs[:, lower_eigval_idx]
+    xi = weight_upper * eigvec_upper + weight_lower * eigvec_lower
     return xi
 
 
 if __name__ == '__main__':
     mu_pi, Sigma_pi = create_prior_eig_range(dim=3, eig_min=0.1, eig_max=0.9, sigma=1.0)
+    print(Sigma_pi)
     xi = create_design_eig(mu_pi, Sigma_pi, desired_eig=0.7, sigma=1.0)
     xi_eig = compute_gaussian_eig(mu_pi, Sigma_pi, xi, sigma=1.0)
     print("EIG(xi) = ", xi_eig)
