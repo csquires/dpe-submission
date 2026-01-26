@@ -267,6 +267,7 @@ class SpatialVeloScore(DensityRatioEstimator):
             for t_val in t_grid:
                 t_batch = torch.full((self.batch_size, 1), t_val.item(), device=self.device)
                 gamma_t = self.gamma(t_val)
+                gamma_prime_t = self.dgamma_dt(t_val)
 
                 # Construct interpolant and forward pass
                 if self.antithetic:
@@ -278,9 +279,10 @@ class SpatialVeloScore(DensityRatioEstimator):
                     outputs_minus = self.model(t_batch, x_t_minus)
 
                     b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
-                    b_minus, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
+                    _, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
 
-                    b_pred = (b_plus - b_minus) / 2
+                    # b_pred = (b_plus - b_minus) / 2
+                    b_pred = b_plus
                     s_pred = (s_plus - s_minus) / 2
                 else:
                     # Standard: single x_t
@@ -288,9 +290,9 @@ class SpatialVeloScore(DensityRatioEstimator):
                     outputs = self.model(t_batch, x_t)
                     b_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
 
-                # Velocity loss: 0.5*||v||² - (x1 - x0)·v
+                # Velocity loss: 0.5*||v||² - ((x1 - x0)+gamma'z)·v
                 b_norm_sq = (b_pred ** 2).sum(dim=-1)
-                target_dot_b = ((x1 - x0) * b_pred).sum(dim=-1)
+                target_dot_b = ((x1 - x0) * b_pred + gamma_prime_t * z).sum(dim=-1)
                 loss_b = (0.5 * b_norm_sq + target_dot_b).mean()
 
                 # Score loss: 0.5*||s||² - (1/gamma)*z·s

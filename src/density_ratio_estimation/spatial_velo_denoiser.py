@@ -278,15 +278,16 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             for t_val in t_grid:
                 t_batch = torch.full((self.batch_size, 1), t_val.item(), device=self.device)
                 gamma_t = self.gamma(t_val)
+                gamma_prime_t = self.dgamma_dt(t_val)
 
                 # Construct interpolant and forward pass
                 x_t = (1 - t_val) * x0 + t_val * x1 + gamma_t * z
                 outputs = self.model(t_batch, x_t)
                 b_pred, eta_pred = torch.chunk(outputs, chunks=2, dim=1)
 
-                # Velocity loss: 0.5*||v||² - (x1 - x0)·v
+                # Velocity loss: 0.5*||v||² - ((x1 - x0)+gamma'z)·v
                 b_norm_sq = (b_pred ** 2).sum(dim=-1)
-                target_dot_b = ((x1 - x0) * b_pred).sum(dim=-1)
+                target_dot_b = ((x1 - x0) * b_pred + gamma_prime_t * z).sum(dim=-1)
                 loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
                 # Denoiser loss: 0.5*||d||² + z·d
