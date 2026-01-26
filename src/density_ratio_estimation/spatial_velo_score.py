@@ -268,38 +268,27 @@ class SpatialVeloScore(DensityRatioEstimator):
                 t_batch = torch.full((self.batch_size, 1), t_val.item(), device=self.device)
                 gamma_t = self.gamma(t_val)
                 gamma_prime_t = self.dgamma_dt(t_val)
+                I_t = (1 - t_val) * x0 + t_val * x1
+                eta_t = gamma_t * z
+                x_t_plus = I_t + eta_t
+                outputs_plus = self.model(t_batch, x_t_plus)
+                b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
+                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)
+                target_dot_b = (((x1 - x0) + gamma_prime_t * z)*b_pred).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq + target_dot_b).mean()
 
                 # Construct interpolant and forward pass
                 if self.antithetic:
                     # Antithetic sampling: compute x_t+ and x_t-
-                    x_t_plus = (1 - t_val) * x0 + t_val * x1 + gamma_t * z
-                    x_t_minus = (1 - t_val) * x0 + t_val * x1 - gamma_t * z
-
-                    outputs_plus = self.model(t_batch, x_t_plus)
+                    x_t_minus = I_t - eta_t
                     outputs_minus = self.model(t_batch, x_t_minus)
-
-                    b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
                     _, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
-
-                    # b_pred = (b_plus - b_minus) / 2
-                    b_pred = b_plus
-                    s_pred = (s_plus - s_minus) / 2
+                    s_norm_sq_minus = (s_minus ** 2).sum(dim=-1)
+                    loss_s = (0.25 * s_norm_sq_plus + 0.25 * s_norm_sq_minus + 0.5 * (z * (s_plus - s_minus) / gamma_t).sum(dim=-1)).mean()
                 else:
-                    # Standard: single x_t
-                    x_t = (1 - t_val) * x0 + t_val * x1 + gamma_t * z
-                    outputs = self.model(t_batch, x_t)
-                    b_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
-
-                # Velocity loss: 0.5*||v||² - ((x1 - x0)+gamma'z)·v
-                b_norm_sq = (b_pred ** 2).sum(dim=-1)
-                target_dot_b = ((x1 - x0) * b_pred + gamma_prime_t * z).sum(dim=-1)
-                loss_b = (0.5 * b_norm_sq + target_dot_b).mean()
-
-                # Score loss: 0.5*||s||² - (1/gamma)*z·s
-                # Target: s = -z/gamma, so we want s·z < 0
-                s_norm_sq = (s_pred ** 2).sum(dim=-1)
-                z_dot_s = (z * s_pred).sum(dim=-1)
-                loss_s = (0.5 * s_norm_sq - (1.0 / gamma_t) * z_dot_s).mean()
+                z_dot_s = 
+                    loss_s = (0.5*s_norm_sq_plus + 1.0/gamma_t*(z * s_plus).sum(dim=-1)).mean()
 
                 total_loss = total_loss + loss_b + loss_s
                 total_loss_b = total_loss_b + loss_b.item()
