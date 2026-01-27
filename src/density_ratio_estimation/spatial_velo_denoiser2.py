@@ -386,14 +386,14 @@ if __name__ == '__main__':
     }
     param_grid = {
         'eps': [9e-4],
-        'epochs': [300, 600],
+        'epochs': [300],
         'antithetic': [True],
         'lr': [9e-3],
-        'k': [24, 48],
-        'steps': [3000, 9000],
+        'k': [20, 24, 28],
+        'steps': [2500, 5000, 7500],
         'type': ['2']
     }
-    for r in range(5):
+    for r in range(20):
         for this_eps in param_grid['eps']:
             for this_epochs in param_grid['epochs']:
                 for this_antithetic in param_grid['antithetic']:
