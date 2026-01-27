@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import h5py
@@ -6,6 +7,10 @@ import torch
 from tqdm import trange
 import yaml
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--force', action='store_true', help='Force re-run of all algorithms, overwriting existing results')
+args = parser.parse_args()
+
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation.bdre import BDRE
@@ -13,6 +18,7 @@ from src.density_ratio_estimation.tdre import TDRE
 from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_tsm import TriangularTSM
+from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
 
 
@@ -34,8 +40,10 @@ torch.manual_seed(SEED)
 dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
 results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
 
+existing_results = set()
 if os.path.exists(results_filename):
     with h5py.File(results_filename, 'r') as results_file:
+        existing_results = set(results_file.keys())
         print("Existing results for:", results_file.keys())
 
 # instantiate bdre
@@ -67,6 +75,9 @@ for num_waypoints_mdre in mdre_waypoints:
 tsm = TSM(DATA_DIM, device=DEVICE)
 # instantiate triangular tsm
 triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
+# instantiate spatial velo denoiser
+spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
+
 algorithms = [
     # ("BDRE", bdre),
     # ("TDRE", tdre),
@@ -75,6 +86,7 @@ algorithms = [
     # ("TSM", tsm),
     *tdre_variants,
     *mdre_variants,
+    ("Spatial", spatial),
 ]
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
@@ -82,6 +94,11 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
     nrows = dataset_file['kl_distance_arr'].shape[0]
 
     for alg_name, alg in algorithms:
+        dataset_name = f'est_ldrs_arr_{alg_name}'
+        if dataset_name in existing_results and not args.force:
+            print(f"Skipping {alg_name} (results exist, use --force to overwrite)")
+            continue
+
         est_ldrs_arr = np.zeros((nrows, NTEST_SETS, NSAMPLES_TEST))
         for idx in trange(nrows):
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
@@ -98,4 +115,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
                 est_ldrs_arr[idx, test_set_idx] = est_ldrs.cpu().numpy()
 
         with h5py.File(results_filename, 'a') as results_file:
-            results_file.create_dataset(f'est_ldrs_arr_{alg_name}', data=est_ldrs_arr)
+            dataset_name = f'est_ldrs_arr_{alg_name}'
+            if dataset_name in results_file:
+                del results_file[dataset_name]
+            results_file.create_dataset(dataset_name, data=est_ldrs_arr)
