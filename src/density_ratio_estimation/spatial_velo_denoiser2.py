@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal
 
 import numpy as np
 import torch
@@ -86,11 +86,13 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         eps: float = 0.01,
         device: Optional[str] = None,
         integration_steps: int = 10000,
+        integration_type: Literal['1', '2', '3'] = '1',
         verbose: bool = False,
         log_every: int = 100,
         antithetic: bool = False,
     ):
         super().__init__(input_dim)
+        self.integration_type = integration_type
         self.hidden_dim = hidden_dim
         self.n_epochs = n_epochs
         self.batch_size = batch_size
@@ -249,7 +251,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             x1 = samples_p1[p1_idx].to(self.device)
 
             # Sample time uniformly from [eps, 1-eps] per sample
-            t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
+            t = torch.rand(self.batch_size, device=self.device)
             t_batch = t.unsqueeze(-1)  # [B, 1]
 
             # Sample noise (independent per sample)
@@ -310,20 +312,26 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         time_scores = torch.stack(time_scores, dim=0)  # [n_points, n_samples, 1]
         time_scores = time_scores.squeeze(-1)  # [n_points, n_samples]
 
-        # Simpson's rule integration
-        t_np = t_vals.cpu().numpy()
-        h = (t_np[-1] - t_np[0]) / (n_points - 1)
+        if self.integration_type == '3':
+            # Simpson's rule integration
+            t_np = t_vals.cpu().numpy()
+            h = (t_np[-1] - t_np[0]) / (n_points - 1)
 
-        integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
-        integral = integrand[0] + integrand[-1]
-        for i in range(1, n_points - 1):
-            if i % 2 == 0:
-                integral += 2 * integrand[i]
-            else:
-                integral += 4 * integrand[i]
-        integral *= h / 3
+            integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
+            integral = integrand[0] + integrand[-1]
+            for i in range(1, n_points - 1):
+                if i % 2 == 0:
+                    integral += 2 * integrand[i]
+                else:
+                    integral += 4 * integrand[i]
+            integral *= h / 3
+            out = -torch.from_numpy(integral)
+        elif self.integration_type == '1':
+            out = -time_scores.mean(dim=0).cpu()
+        elif self.integration_type == '2':
+            out = -torch.trapz(time_scores, t_vals, dim=0).cpu()
 
-        return -torch.from_numpy(integral)
+        return out
 
 
 if __name__ == '__main__':
@@ -371,23 +379,89 @@ if __name__ == '__main__':
     print("=" * 50)
     print(f"SpatialVeloDenoiser (Sequential Separate Networks)")
     print("=" * 50)
-    
-    # Instantiate with separate training logic
-    estimator = SpatialVeloDenoiser(
-        DIM,
-        n_epochs=100,
-        verbose=True,
-        log_every=1,
-        device=DEVICE,
-    )
-    
-    estimator.fit(samples_p0, samples_p1)
+    import pandas as pd
+    report = {
+        'eps': [], 'epochs': [], 'antithetic': [], 'lr': [], 
+        'k': [], 'steps': [],'type':[], 'mae': []
+    }
+    param_grid = {
+        'eps': [9e-4],
+        'epochs': [300, 600],
+        'antithetic': [True],
+        'lr': [9e-3],
+        'k': [24, 48],
+        'steps': [3000, 9000],
+        'type': ['2']
+    }
+    for r in range(5):
+        for this_eps in param_grid['eps']:
+            for this_epochs in param_grid['epochs']:
+                for this_antithetic in param_grid['antithetic']:
+                    for this_lr in param_grid['lr']:
+                        for this_k in param_grid['k']:
+                            for this_integration_steps in param_grid['steps']:
+                                for this_integration_type in param_grid['type']:
+                                
+                                    estimator = SpatialVeloDenoiser(
+                                        DIM,
+                                        n_epochs=this_epochs,
+                                        verbose=False,
+                                        log_every=101,
+                                        device=DEVICE,
+                                        eps=this_eps,
+                                        antithetic=this_antithetic,
+                                        lr=this_lr,
+                                        k=this_k,
+                                        integration_steps=this_integration_steps,
+                                        integration_type=this_integration_type,
+                                    )
+                                
+                                    estimator.fit(samples_p0, samples_p1)
 
-    print("\nEvaluating...")
-    est_ldrs = estimator.predict_ldr(samples_test)
-    mae = torch.mean(torch.abs(est_ldrs.cpu() - true_ldrs.cpu()))
+                                    est_ldrs = estimator.predict_ldr(samples_test)
+                                    mae = torch.mean(torch.abs(est_ldrs.cpu() - true_ldrs.cpu())).item()
+                                    
+                                    report['eps'].append(this_eps)
+                                    report['epochs'].append(this_epochs)
+                                    report['antithetic'].append(this_antithetic)
+                                    report['lr'].append(this_lr)
+                                    report['k'].append(this_k)
+                                    report['steps'].append(this_integration_steps)
+                                    report['type'].append(this_integration_type)
+                                    report['mae'].append(mae)
+                                    print(f'Report so far:\n{pd.DataFrame(report)}')
+
+    # --- summary ---
+    df = pd.DataFrame(report)
+    hyperparams = ['eps', 'epochs', 'antithetic', 'lr', 'k', 'steps', 'type']
+
+    print("\n" + "="*80)
+    print("FINAL STATISTICAL REPORT")
+    print("="*80)
+
+    # hyperparameter treatment
+    print("\n--- Single Hyperparameter Stats ---")
+    for param in hyperparams:
+        print(f"\nStats by [{param}]:")
+        stats = df.groupby(param)['mae'].agg(['mean', 'std', 'min', 'max', lambda x: x.max()-x.min()])
+        print(stats)
+
+    # pairwise hyperparam treatment
+    print("\n" + "-"*40)
+    print("--- Pairwise Hyperparameter Stats ---")
+    print("-" * 40)
+    import itertools
+    for p1, p2 in itertools.combinations(hyperparams, 2):
+        print(f"\nStats by [{p1} AND {p2}]:")
+        stats = df.groupby([p1, p2])['mae'].agg(['mean', 'std', 'min', 'max', lambda x: x.max()-x.min()])
+        print(stats)
+
+    print("\n" + "="*80)
+    print("GLOBAL T10:")
+    print(df.sort_values(by='mae', ascending=True).head(10))
+    print("="*80)
     
-    print(f"SpatialVeloDenoiser MAE: {mae.item():.4f}")
+    # print(f"SpatialVeloDenoiser MAE:\n{report}")
     print(f"SpatialVeloDenoiser LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
     print()
 
@@ -396,4 +470,4 @@ if __name__ == '__main__':
     print("Comparison")
     print("=" * 50)
     print(f"BDRE MAE:                {bdre_mae.item():.4f}")
-    print(f"SpatialVeloDenoiser MAE: {mae.item():.4f}")
+    print(f"SpatialVeloDenoiser MAE: {mae:.4f}")
