@@ -24,6 +24,10 @@ raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES
 dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
 processed_results_filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
 
+#dataset_filename = f'{DATA_DIR}/dataset.h5'
+#raw_results_filename = f'{RAW_RESULTS_DIR}/added_cauchy_01.h5'   
+#processed_results_filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
+
 with h5py.File(raw_results_filename, 'r') as f:
     result_keys = [key for key in f.keys() if key.startswith('est_ldrs_arr_')]
     est_ldrs_by_alg = {key.replace('est_ldrs_arr_', ''): f[key][:] for key in result_keys}

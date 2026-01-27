@@ -3,10 +3,11 @@ raw_results_dir: "experiments/density_ratio_estimation/raw_results"
 processed_results_dir: "experiments/density_ratio_estimation/processed_results"
 figures_dir: "experiments/density_ratio_estimation/figures"
 data_dim: 3
+gamma: 0.05
 kl_distances: [0.5, 2, 8, 32, 128]
 num_instances_per_kl: 10
 nsamples_train: 1000
-ntest_sets: 3
+ntest_sets: 4
 nsamples_test: 1000
 device: "cuda"
 seed: 1729

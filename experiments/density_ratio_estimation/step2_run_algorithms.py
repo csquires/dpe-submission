@@ -32,7 +32,9 @@ np.random.seed(SEED)
 torch.manual_seed(SEED)
 
 dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
+#dataset_filename = f'{DATA_DIR}/dataset.h5'
 results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
+#results_filename = f'{RAW_RESULTS_DIR}/added_cauchy_01.h5'
 
 if os.path.exists(results_filename):
     with h5py.File(results_filename, 'r') as results_file:
@@ -42,7 +44,7 @@ if os.path.exists(results_filename):
 bdre_classifier = make_binary_classifier(name="default", input_dim=DATA_DIM)
 bdre = BDRE(bdre_classifier, device=DEVICE)
 # instantiate tdre variants
-tdre_waypoints = [5, 10, 15, 20, 30]
+tdre_waypoints = [5]
 tdre_variants = []
 for num_waypoints_tdre in tdre_waypoints:
     tdre_classifiers = make_pairwise_binary_classifiers(
@@ -53,7 +55,7 @@ for num_waypoints_tdre in tdre_waypoints:
     tdre_variants.append((f"TDRE_{num_waypoints_tdre}", TDRE(tdre_classifiers, num_waypoints=num_waypoints_tdre, device=DEVICE)))
 
 # instantiate mdre variants
-mdre_waypoints = [5, 10, 15, 20, 30]
+mdre_waypoints = [15]
 mdre_variants = []
 for num_waypoints_mdre in mdre_waypoints:
     mdre_classifier = make_multiclass_classifier(
@@ -68,13 +70,13 @@ tsm = TSM(DATA_DIM, device=DEVICE)
 # instantiate triangular tsm
 triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
 algorithms = [
-    # ("BDRE", bdre),
+    ("BDRE", bdre),
     # ("TDRE", tdre),
     # ("MDRE", mdre),
-    # ("TriangularTSM", triangular_tsm),
-    # ("TSM", tsm),
-    *tdre_variants,
-    *mdre_variants,
+    ("TriangularTSM", triangular_tsm),
+    ("TSM", tsm),
+    #*tdre_variants,
+    #*mdre_variants,
 ]
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
