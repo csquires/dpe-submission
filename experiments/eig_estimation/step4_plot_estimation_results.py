@@ -3,24 +3,35 @@ import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 import yaml
-
-
+import h5py
 
 
 config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
-EIG_MIN = config['eig_min']
-EIG_MAX = config['eig_max']
-DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
+PROCESSED_RESULTS_DIR = config['processed_results_dir']
+FIGURES_DIR = config['figures_dir']
+DATA_DIM = config['data_dim']
 
-estimation_errors_bdre = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/mae_by_beta_d={DATA_DIM}.h5'
+with h5py.File(processed_results_filename, 'r') as f:
+    design_eig_percentages = f['design_eig_percentages'][:]
+    mae_by_beta = {key.replace('mae_by_beta_', ''): f[key][:] for key in f.keys() if key.startswith('mae_by_beta_')}
+
+colors = {
+    "BDRE": "#1f77b4",
+    "TDRE_5": "#ff7f0e",
+    "MDRE_15": "#2ca02c",
+    "TSM": "#d62728",
+}
 
 plt.clf()
 sns.set_style('whitegrid')
 plt.style.use('half-width.mplstyle')
-plt.plot(DESIGN_EIG_PERCENTAGES, estimation_errors_bdre, label='BDRE')
+for alg_name, maes in mae_by_beta.items():
+    color = colors.get(alg_name, None)
+    plt.plot(design_eig_percentages, maes, label=alg_name, color=color)
 plt.xlabel(r"$\beta$ (Design Optimality Percentage)")
 plt.ylabel(r"EIG Estimation Error")
-plt.legend()
+plt.legend(loc="upper left", fontsize=10)
 plt.tight_layout()
-os.makedirs('experiments/eig_estimation/figures', exist_ok=True)
-plt.savefig('experiments/eig_estimation/figures/eig_estimation.pdf')
+os.makedirs(FIGURES_DIR, exist_ok=True)
+plt.savefig(f'{FIGURES_DIR}/eig_estimation2.pdf')
