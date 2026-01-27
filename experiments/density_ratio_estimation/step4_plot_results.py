@@ -18,8 +18,8 @@ NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
 
-#filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
-filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
+filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
+# filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
 
 with h5py.File(filename, 'r') as f:
     maes_by_kl = {key.replace('maes_by_kl_', ''): f[key][:] for key in f.keys()}
@@ -34,7 +34,7 @@ y_max = max(all_maxs) if all_maxs else 1.0
 plt.clf()
 sns.set_style('whitegrid')
 plt.style.use('full-width.mplstyle')
-fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=3)
+fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=NTEST_SETS)
 # colors
 colors = {
     "BDRE": "#1f77b4",
@@ -93,5 +93,5 @@ plt.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
 # saving
 os.makedirs(FIGURES_DIR, exist_ok=True)
-# plt.savefig(f'{FIGURES_DIR}/varying_kl_03.pdf')
-plt.savefig(f'{FIGURES_DIR}/Cauchy_test.pdf')
+plt.savefig(f'{FIGURES_DIR}/varying_kl_01.pdf')
+# plt.savefig(f'{FIGURES_DIR}/Cauchy_test.pdf')

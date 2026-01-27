@@ -21,17 +21,24 @@ colors = {
     "TDRE_5": "#ff7f0e",
     "MDRE_15": "#2ca02c",
     "TSM": "#d62728",
+    "TriangularTSM": "#17becf",
 }
 
 plt.clf()
 sns.set_style('whitegrid')
 plt.style.use('half-width.mplstyle')
+label_map = {
+    "TDRE_5": "TDRE(5)",
+    "MDRE_15": "MDRE(15)",
+}
+
 for alg_name, maes in mae_by_beta.items():
     color = colors.get(alg_name, None)
-    plt.plot(design_eig_percentages, maes, label=alg_name, color=color)
+    label = label_map.get(alg_name, alg_name)
+    plt.plot(design_eig_percentages, maes, label=label, color=color)
 plt.xlabel(r"$\beta$ (Design Optimality Percentage)")
 plt.ylabel(r"EIG Estimation Error")
 plt.legend(loc="upper left", fontsize=10)
 plt.tight_layout()
 os.makedirs(FIGURES_DIR, exist_ok=True)
-plt.savefig(f'{FIGURES_DIR}/eig_estimation2.pdf')
+plt.savefig(f'{FIGURES_DIR}/eig_estimation.pdf')

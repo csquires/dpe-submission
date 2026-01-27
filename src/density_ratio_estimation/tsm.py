@@ -63,8 +63,11 @@ class TSM(DensityRatioEstimator):
             lambda_t = lambda_t0 = lambda_t1 = 1.0
             lambda_dt = 0.0
 
-        term1 = (2 * self.model(p1_samples, t0)).squeeze() * lambda_t0
-        term2 = (2 * self.model(p0_samples, t1)).squeeze() * lambda_t1
+        # term1 = (2 * self.model(p1_samples, t0)).squeeze() * lambda_t0
+        # term2 = (2 * self.model(p0_samples, t1)).squeeze() * lambda_t1
+
+        term1 = (2 * self.model(p0_samples, t0)).squeeze() * lambda_t0
+        term2 = (2 * self.model(p1_samples, t1)).squeeze() * lambda_t1
 
         t = t.clone().detach().requires_grad_(True)
         x_t_score = self.model(x_t, t)
@@ -92,7 +95,8 @@ class TSM(DensityRatioEstimator):
             p1_samples = samples_p1[p1_idx].to(self.device)
 
             t = torch.rand(self.batch_size, 1, device=self.device) * (1 - self.eps)
-            x_t = t * p0_samples + torch.sqrt(1 - t ** 2) * p1_samples
+            # x_t = t * p0_samples + torch.sqrt(1 - t ** 2) * p1_samples
+            x_t = torch.sqrt(1 - t ** 2) * p0_samples + t * p1_samples
 
             self.optimizer.zero_grad()
             loss = self.time_score_loss(p0_samples, p1_samples, x_t, t)
@@ -110,7 +114,8 @@ class TSM(DensityRatioEstimator):
             def ode_func(t, y, samples_tensor):
                 t_tensor = torch.ones(samples_tensor.size(0), 1, device=self.device) * t
                 score = self.model(samples_tensor, t_tensor)
-                return score.squeeze().cpu().numpy()
+                # return score.squeeze().cpu().numpy()
+                return (-score).squeeze().cpu().numpy()
 
             ode_fn = lambda t, y: ode_func(t, y, samples)
             solution = integrate.solve_ivp(
