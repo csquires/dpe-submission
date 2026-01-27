@@ -11,6 +11,10 @@ experiments/eig_estimation/data/
 experiments/eig_estimation/raw_results/
 experiments/eig_estimation/processed_results/
 experiments/eig_estimation/figures/
+experiments/elbo_estimation/data/
+experiments/elbo_estimation/raw_results/
+experiments/elbo_estimation/processed_results/
+experiments/elbo_estimation/figures/
 **/*.DS_Store
 **/__pycache__/
 CLAUDE.md

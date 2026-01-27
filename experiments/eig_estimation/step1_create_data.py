@@ -18,7 +18,7 @@ DATA_DIM = config['data_dim']
 EIG_MIN = config['eig_min']
 EIG_MAX = config['eig_max']
 NUM_PRIORS = config['num_priors']
-NUM_RUNS_PER_DESIGN = config['num_runs_per_design']
+NUM_DESIGNS_PER_SETTING = config['num_designs_per_setting']
 DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 NSAMPLES = config['nsamples']
 # random seed
@@ -26,7 +26,7 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-nrows = NUM_PRIORS * len(DESIGN_EIG_PERCENTAGES) * NUM_RUNS_PER_DESIGN
+nrows = NUM_PRIORS * len(DESIGN_EIG_PERCENTAGES) * NUM_DESIGNS_PER_SETTING
 # priors
 prior_mean_arr = np.zeros((nrows, DATA_DIM), dtype=np.float32)
 prior_covariance_arr = np.zeros((nrows, DATA_DIM, DATA_DIM), dtype=np.float32)
@@ -44,9 +44,10 @@ for _ in trange(NUM_PRIORS):
     
     for design_eig_percentage in DESIGN_EIG_PERCENTAGES:
         desired_eig = EIG_MAX * design_eig_percentage
-        xi = create_design_eig(mu_pi, Sigma_pi, desired_eig, sigma=1.0)
 
-        for run in range(NUM_RUNS_PER_DESIGN):
+        for _ in range(NUM_DESIGNS_PER_SETTING):
+            xi = create_design_eig(mu_pi, Sigma_pi, desired_eig, sigma=1.0)
+
             theta_samples = MultivariateNormal(mu_pi, covariance_matrix=Sigma_pi).sample((NSAMPLES,))
             y_samples = theta_samples @ xi + torch.randn(NSAMPLES, 1)
             
