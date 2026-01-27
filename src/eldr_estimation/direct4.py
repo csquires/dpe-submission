@@ -5,8 +5,12 @@ Ports the spatial velocity denoiser approach to ELDR estimation using
 separate networks for velocity (b) and denoiser (eta), with the denoiser-only
 parameterization.
 
-Key idea: Instead of sampling z ~ N(0,I), we compute z_equiv deterministically
-from x ~ p_* using: z_equiv = (x - I_t) / gamma_t
+Training follows the correct stochastic interpolant approach:
+- Sample z ~ N(0, I) fresh noise
+- Compute noisy interpolant x_t = I_t + gamma_t * z
+- Train networks on x_t (not raw x from base distribution)
+- Velocity target: (x1 - x0) + gamma'_t * z
+- Denoiser target: z (the actual sampled noise)
 
 This allows us to estimate ELDR = E_{p_*}[log(p_0(x)/p_1(x))] directly.
 """
@@ -21,17 +25,68 @@ import torch.optim as optim
 from src.eldr_estimation.base import ELDREstimator
 
 
+class FourierTimeEmbedding(nn.Module):
+    """
+    Gaussian Fourier feature embedding for time values.
+
+    Maps scalar time t to high-dimensional representation using random Fourier features:
+        [sin(2π * t * B), cos(2π * t * B)]
+
+    where B is a fixed (non-learnable) random frequency matrix.
+    """
+
+    def __init__(self, mapping_size: int = 64, scale: float = 10.0):
+        """
+        Args:
+            mapping_size: Number of random frequencies (output dimension = 2 * mapping_size)
+            scale: Scale factor for the random frequencies (controls frequency range)
+        """
+        super().__init__()
+        self.B = nn.Parameter(
+            torch.randn(1, mapping_size) * scale,
+            requires_grad=False
+        )
+
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Apply Fourier feature mapping to time values.
+
+        Args:
+            t: Time values of shape [batch, 1]
+
+        Returns:
+            Fourier features of shape [batch, 2 * mapping_size]
+        """
+        if t.dim() == 1:
+            t = t.unsqueeze(-1)
+        x_proj = 2 * np.pi * t @ self.B
+        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+
+
 class MLP(nn.Module):
     """
-    Standard Multi-Layer Perceptron for estimating vector fields.
+    Multi-Layer Perceptron with Fourier time embedding for estimating vector fields.
     """
-    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = None):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 256,
+        output_dim: int = None,
+        time_embed_size: int = 64,
+        time_embed_scale: float = 10.0,
+    ):
         super().__init__()
         if output_dim is None:
             output_dim = input_dim
 
+        self.time_embed = FourierTimeEmbedding(
+            mapping_size=time_embed_size,
+            scale=time_embed_scale
+        )
+
+        # Input: 2 * time_embed_size (from Fourier) + input_dim (spatial)
         self.net = nn.Sequential(
-            nn.Linear(input_dim + 1, hidden_dim),
+            nn.Linear(2 * time_embed_size + input_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -48,7 +103,8 @@ class MLP(nn.Module):
         Returns:
             Vector field [batch, output_dim]
         """
-        tx = torch.cat([t, x], dim=-1)
+        t_embed = self.time_embed(t)
+        tx = torch.cat([t_embed, x], dim=-1)
         return self.net(tx)
 
 
@@ -80,10 +136,13 @@ def compute_divergence(output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
 class DirectELDREstimator4(ELDREstimator):
     """
-    ELDR estimator using spatial velocity-denoiser approach with z replacement.
+    ELDR estimator using spatial velocity-denoiser approach.
 
-    Instead of sampling z ~ N(0,I), we compute z_equiv = (x - I_t) / gamma_t
-    where x comes from the base distribution p_*.
+    Training follows the correct stochastic interpolant approach:
+    - Sample z ~ N(0, I) fresh noise
+    - Compute noisy interpolant x_t = I_t + gamma_t * z
+    - Train velocity network b on x_t with target (x1 - x0) + gamma'_t * z
+    - Train denoiser network eta on x_t with target z
 
     The time score is: dt_log_rho = -div(b) + b.eta/gamma
 
@@ -102,6 +161,10 @@ class DirectELDREstimator4(ELDREstimator):
         verbose: bool = False,
         log_every: int = 100,
         device: Optional[str] = None,
+        time_embed_size: int = 64,
+        time_embed_scale: float = 10.0,
+        warmup_iters: int = 50,
+        antithetic: bool = False,
     ):
         """
         Args:
@@ -116,6 +179,10 @@ class DirectELDREstimator4(ELDREstimator):
             verbose: Print training progress
             log_every: Print every N epochs when verbose
             device: Device to use ('cuda', 'cpu', or None for auto)
+            time_embed_size: Size of Fourier time embedding (output = 2 * time_embed_size)
+            time_embed_scale: Scale for random Fourier frequencies
+            warmup_iters: Number of warmup iterations for LR scheduler
+            antithetic: Use antithetic sampling for variance reduction
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -127,6 +194,10 @@ class DirectELDREstimator4(ELDREstimator):
         self.integration_steps = integration_steps
         self.verbose = verbose
         self.log_every = log_every
+        self.time_embed_size = time_embed_size
+        self.time_embed_scale = time_embed_scale
+        self.warmup_iters = warmup_iters
+        self.antithetic = antithetic
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -138,8 +209,20 @@ class DirectELDREstimator4(ELDREstimator):
 
     def init_model(self) -> None:
         """Initialize two completely separate networks for b and eta."""
-        self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
-        self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
+        self.net_b = MLP(
+            self.input_dim,
+            self.hidden_dim,
+            output_dim=self.input_dim,
+            time_embed_size=self.time_embed_size,
+            time_embed_scale=self.time_embed_scale,
+        ).to(self.device)
+        self.net_eta = MLP(
+            self.input_dim,
+            self.hidden_dim,
+            output_dim=self.input_dim,
+            time_embed_size=self.time_embed_size,
+            time_embed_scale=self.time_embed_scale,
+        ).to(self.device)
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """gamma(t) = (1 - exp(-k*t)) * (1 - exp(-k*(1-t)))"""
@@ -196,11 +279,14 @@ class DirectELDREstimator4(ELDREstimator):
         """
         Train the velocity and denoiser networks.
 
-        Key difference from standard spatial_velo: instead of sampling z ~ N(0,I),
-        we compute z_equiv = (x - I_t) / gamma_t where x ~ p_*.
+        Training follows the correct stochastic interpolant approach:
+        - Sample z ~ N(0, I) fresh noise
+        - Compute noisy interpolant x_t = I_t + gamma_t * z
+        - Train networks on x_t (not raw x from base distribution)
 
         Args:
             samples_base: Samples from the base distribution p_* [n_base, dim]
+                         (used only for ELDR estimation, not for training)
             samples_p0: Samples from p_0 [n_p0, dim]
             samples_p1: Samples from p_1 [n_p1, dim]
         """
@@ -210,7 +296,6 @@ class DirectELDREstimator4(ELDREstimator):
         samples_p0 = samples_p0.float().to(self.device)
         samples_p1 = samples_p1.float().to(self.device)
 
-        n_base = samples_base.shape[0]
         n_p0 = samples_p0.shape[0]
         n_p1 = samples_p1.shape[0]
 
@@ -228,15 +313,25 @@ class DirectELDREstimator4(ELDREstimator):
         self.net_eta.eval()
         optimizer_b = optim.Adam(self.net_b.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
+        # LR scheduler: linear warmup + cosine decay
+        def lr_lambda_b(iter):
+            if iter < self.warmup_iters:
+                return iter / self.warmup_iters  # Linear warmup
+            else:
+                progress = (iter - self.warmup_iters) / (self.n_epochs - self.warmup_iters)
+                return 0.1 + 0.9 * (1 + np.cos(np.pi * progress)) / 2
+        scheduler_b = optim.lr_scheduler.LambdaLR(optimizer_b, lr_lambda_b)
+
         for epoch in range(self.n_epochs):
-            # Sample batches from all three distributions
-            base_idx = torch.randint(0, n_base, (self.batch_size,))
+            # Sample batches from p0 and p1 only (not from samples_base)
             p0_idx = torch.randint(0, n_p0, (self.batch_size,))
             p1_idx = torch.randint(0, n_p1, (self.batch_size,))
 
-            x = samples_base[base_idx]  # from p_*
             x0 = samples_p0[p0_idx]     # from p0
             x1 = samples_p1[p1_idx]     # from p1
+
+            # Sample fresh noise z ~ N(0, I)
+            z = torch.randn_like(x0)
 
             # Sample time uniformly from [eps, 1-eps] per sample
             t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
@@ -249,25 +344,49 @@ class DirectELDREstimator4(ELDREstimator):
             # Interpolant mean I_t = (1-t)*x0 + t*x1
             I_t = (1 - t_batch) * x0 + t_batch * x1
 
-            # Compute z_equiv = (x - I_t) / gamma_t (deterministic given x, x0, x1, t)
-            z_equiv = (x - I_t) / gamma_t
+            # Derivative of I_t w.r.t. t
+            dtIt = x1 - x0
 
-            # Target velocity: (x1 - x0) + gamma' * z_equiv
-            # Equivalently: (x1 - x0) + (gamma'/gamma) * (x - I_t)
-            dtIt = x1 - x0  # derivative of I_t w.r.t. t
-            target_v = dtIt + gamma_prime_t * z_equiv
+            if self.antithetic:
+                # Antithetic sampling: x_t+ and x_t-
+                x_t_plus = I_t + gamma_t * z
+                x_t_minus = I_t - gamma_t * z
 
-            # Forward pass: network takes (t, x) NOT (t, x_t)
-            b_pred = self.net_b(t_batch, x)
+                b_plus = self.net_b(t_batch, x_t_plus)
+                b_minus = self.net_b(t_batch, x_t_minus)
 
-            # Velocity loss: 0.5*||b||^2 - target_v.b
-            b_norm_sq = (b_pred ** 2).sum(dim=-1)
-            target_dot_b = (target_v * b_pred).sum(dim=-1)
-            loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
+                # Velocity loss with antithetic sampling
+                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)
+                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
+                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
+                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
+                loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
+                        + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
+            else:
+                # Noisy interpolant: x_t = I_t + gamma_t * z
+                x_t = I_t + gamma_t * z
+
+                # Target velocity: (x1 - x0) + gamma'_t * z
+                target_v = dtIt + gamma_prime_t * z
+
+                # Forward pass: network takes (t, x_t) - train on noisy interpolant
+                b_pred = self.net_b(t_batch, x_t)
+
+                # Velocity loss: 0.5*||b||^2 - target_v.b
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)
+                target_dot_b = (target_v * b_pred).sum(dim=-1)
+                loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
             optimizer_b.zero_grad()
             loss_b.backward()
+
+            # Gradient clipping based on gamma
+            gamma_min = gamma_t.min().item()
+            clip_norm = 10.0 * (gamma_min + self.eps) ** (-2)
+            torch.nn.utils.clip_grad_norm_(self.net_b.parameters(), max_norm=clip_norm)
+
             optimizer_b.step()
+            scheduler_b.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_b={loss_b.item():.4f}")
@@ -282,15 +401,25 @@ class DirectELDREstimator4(ELDREstimator):
         self.net_eta.train()
         optimizer_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
+        # LR scheduler: linear warmup + cosine decay
+        def lr_lambda_eta(iter):
+            if iter < self.warmup_iters:
+                return iter / self.warmup_iters  # Linear warmup
+            else:
+                progress = (iter - self.warmup_iters) / (self.n_epochs - self.warmup_iters)
+                return 0.1 + 0.9 * (1 + np.cos(np.pi * progress)) / 2
+        scheduler_eta = optim.lr_scheduler.LambdaLR(optimizer_eta, lr_lambda_eta)
+
         for epoch in range(self.n_epochs):
-            # Sample batches from all three distributions
-            base_idx = torch.randint(0, n_base, (self.batch_size,))
+            # Sample batches from p0 and p1 only
             p0_idx = torch.randint(0, n_p0, (self.batch_size,))
             p1_idx = torch.randint(0, n_p1, (self.batch_size,))
 
-            x = samples_base[base_idx]  # from p_*
             x0 = samples_p0[p0_idx]     # from p0
             x1 = samples_p1[p1_idx]     # from p1
+
+            # Sample fresh noise z ~ N(0, I)
+            z = torch.randn_like(x0)
 
             # Sample time uniformly from [eps, 1-eps] per sample
             t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
@@ -302,20 +431,28 @@ class DirectELDREstimator4(ELDREstimator):
             # Interpolant mean I_t = (1-t)*x0 + t*x1
             I_t = (1 - t_batch) * x0 + t_batch * x1
 
-            # Compute z_equiv = (x - I_t) / gamma_t (target for denoiser)
-            z_equiv = (x - I_t) / gamma_t
+            # Noisy interpolant: x_t = I_t + gamma_t * z
+            x_t = I_t + gamma_t * z
 
-            # Forward pass: network takes (t, x)
-            eta_pred = self.net_eta(t_batch, x)
+            # Forward pass: network takes (t, x_t) - train on noisy interpolant
+            eta_pred = self.net_eta(t_batch, x_t)
 
-            # Denoiser loss: 0.5*||eta||^2 - z_equiv.eta
+            # Denoiser loss: 0.5*||eta||^2 - z.eta
+            # Target is z (the actual sampled noise), NOT z_equiv
             eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
-            z_dot_eta = (z_equiv * eta_pred).sum(dim=-1)
+            z_dot_eta = (z * eta_pred).sum(dim=-1)
             loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
 
             optimizer_eta.zero_grad()
             loss_eta.backward()
+
+            # Gradient clipping based on gamma
+            gamma_min = gamma_t.min().item()
+            clip_norm = 10.0 * (gamma_min + self.eps) ** (-2)
+            torch.nn.utils.clip_grad_norm_(self.net_eta.parameters(), max_norm=clip_norm)
+
             optimizer_eta.step()
+            scheduler_eta.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_eta={loss_eta.item():.4f}")
