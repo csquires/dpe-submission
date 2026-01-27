@@ -192,20 +192,20 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         self,
         input_dim: int,
         hidden_dim: int = 256,
-        n_epochs: int = 1000,
+        n_epochs: int = 300,
         batch_size: int = 512,
-        lr: float = 2e-3,
-        k: float = 0.5,
+        lr: float = 9e-3,
+        k: float = 24.0,
         n_t: int = 50,
-        eps: float = 0.01,
+        eps: float = 9e-4,
         device: Optional[str] = None,
-        integration_steps: int = 10000,
-        integration_type: Literal['1', '2', '3'] = '1',
+        integration_steps: int = 5000,
+        integration_type: Literal['1', '2', '3'] = '2',
         verbose: bool = False,
         log_every: int = 100,
         training_mode: Literal['sequential', 'simultaneous'] = 'sequential',
         sharing: str = 'full',
-        antithetic: bool = False,
+        antithetic: bool = True,
     ):
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -622,11 +622,9 @@ if __name__ == '__main__':
     print("=" * 50)
     estimator = SpatialVeloDenoiser(
         DIM,
-        n_epochs=1000,
         verbose=True,
-        log_every=200,
+        log_every=100,
         device=DEVICE,
-        training_mode='sequential',
     )
     estimator.fit(samples_p0, samples_p1)
 
@@ -637,43 +635,9 @@ if __name__ == '__main__':
     print(f"SpatialVeloDenoiser LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
     print()
 
-    # === SPATIAL VELO DENOISER (Simultaneous Mode - Backward Compat) ===
-    sharing_modes = ['none', 'embeddings', 'full']
-    maes = {}
-
-    for sharing in sharing_modes:
-        print("=" * 50)
-        print(f"SpatialVeloDenoiser (simultaneous, sharing='{sharing}')")
-        print("=" * 50)
-        estimator = SpatialVeloDenoiser(
-            DIM,
-            n_epochs=2000,
-            verbose=True,
-            log_every=400,
-            device=DEVICE,
-            training_mode='simultaneous',
-            sharing=sharing,
-            # Use old defaults for simultaneous mode comparison
-            eps=0.1,
-            lr=1e-3,
-            integration_steps=100,
-            integration_type='3',
-        )
-        estimator.fit(samples_p0, samples_p1)
-
-        print("\nEvaluating...")
-        est_ldrs = estimator.predict_ldr(samples_test)
-        mae = torch.mean(torch.abs(est_ldrs.cpu() - true_ldrs.cpu()))
-        maes[sharing] = mae.item()
-        print(f"SpatialVeloDenoiser (simultaneous, sharing='{sharing}') MAE: {mae.item():.4f}")
-        print(f"SpatialVeloDenoiser LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
-        print()
-
     # === COMPARISON ===
     print("=" * 50)
     print("Comparison")
     print("=" * 50)
-    print(f"BDRE MAE:                                       {bdre_mae.item():.4f}")
-    print(f"SpatialVeloDenoiser (sequential):               {sequential_mae.item():.4f}")
-    for sharing in sharing_modes:
-        print(f"SpatialVeloDenoiser (simultaneous, '{sharing}'): {maes[sharing]:.4f}")
+    print(f"BDRE MAE:                         {bdre_mae.item():.4f}")
+    print(f"SpatialVeloDenoiser (sequential): {sequential_mae.item():.4f}")

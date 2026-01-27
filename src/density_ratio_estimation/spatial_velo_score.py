@@ -190,20 +190,20 @@ class SpatialVeloScore(DensityRatioEstimator):
         self,
         input_dim: int,
         hidden_dim: int = 256,
-        n_epochs: int = 1000,
+        n_epochs: int = 300,
         batch_size: int = 512,
-        lr: float = 2e-3,
-        k: float = 0.5,
+        lr: float = 9e-3,
+        k: float = 24.0,
         n_t: int = 50,
-        eps: float = 0.01,
+        eps: float = 9e-4,
         device: Optional[str] = None,
-        integration_steps: int = 10000,
-        integration_type: Literal['1', '2', '3'] = '1',
+        integration_steps: int = 5000,
+        integration_type: Literal['1', '2', '3'] = '2',
         verbose: bool = False,
         log_every: int = 100,
         training_mode: Literal['sequential', 'simultaneous'] = 'sequential',
         sharing: str = 'full',
-        antithetic: bool = False,
+        antithetic: bool = True,
     ):
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -405,14 +405,11 @@ class SpatialVeloScore(DensityRatioEstimator):
 
             s_pred = self.net_s(t_batch, x_t)
 
-            # Score loss reformulated to avoid division by gamma:
-            # s = -z/gamma => gamma*s = -z
-            # Minimize: 0.5*||gamma*s||² + z·(gamma*s)
-            # = 0.5*gamma²*||s||² + gamma*(z·s)
-            gamma_s = gamma_t * s_pred
-            gamma_s_norm_sq = (gamma_s ** 2).sum(dim=-1)
-            z_dot_gamma_s = (z * gamma_s).sum(dim=-1)
-            loss_s = (0.5 * gamma_s_norm_sq + z_dot_gamma_s).mean()
+            # Score loss: 0.5*||s||² + (1/γ)*z·s
+            # (s should approximate -z/gamma, i.e., z·s ≈ -||z||²/gamma)
+            s_norm_sq = (s_pred ** 2).sum(dim=-1)
+            z_dot_s = (z * s_pred).sum(dim=-1)
+            loss_s = (0.5 * s_norm_sq + (1.0 / gamma_t.squeeze(-1)) * z_dot_s).mean()
 
             optimizer_s.zero_grad()
             loss_s.backward()
@@ -484,24 +481,22 @@ class SpatialVeloScore(DensityRatioEstimator):
                 loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
                         + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
 
-                # Score loss with antithetic sampling (reformulated to avoid 1/gamma)
-                gamma_s_plus = gamma_t * s_plus
-                gamma_s_minus = gamma_t * s_minus
-                gamma_s_norm_sq_plus = (gamma_s_plus ** 2).sum(dim=-1)
-                gamma_s_norm_sq_minus = (gamma_s_minus ** 2).sum(dim=-1)
-                loss_s = (0.25 * gamma_s_norm_sq_plus + 0.25 * gamma_s_norm_sq_minus
-                        + 0.5 * (z * (gamma_s_plus - gamma_s_minus)).sum(dim=-1)).mean()
+                # Score loss with antithetic sampling
+                # loss_s+ = 0.5*||s+||² + (1/γ)*z·s+
+                # loss_s- = 0.5*||s-||² - (1/γ)*z·s-
+                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
+                s_norm_sq_minus = (s_minus ** 2).sum(dim=-1)
+                loss_s = (0.25 * s_norm_sq_plus + 0.25 * s_norm_sq_minus
+                        + 0.5 * (z * (s_plus - s_minus) / gamma_t).sum(dim=-1)).mean()
             else:
                 # Standard (non-antithetic) training
                 b_norm_sq = (b_plus ** 2).sum(dim=-1)
                 target_dot_b = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
                 loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
-                # Reformulated to avoid 1/gamma
-                gamma_s = gamma_t * s_plus
-                gamma_s_norm_sq = (gamma_s ** 2).sum(dim=-1)
-                z_dot_gamma_s = (z * gamma_s).sum(dim=-1)
-                loss_s = (0.5 * gamma_s_norm_sq + z_dot_gamma_s).mean()
+                z_dot_s = (z * s_plus).sum(dim=-1)
+                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
+                loss_s = (0.5 * s_norm_sq_plus + (1.0 / gamma_t.squeeze(-1)) * z_dot_s).mean()
 
             total_loss = loss_b + loss_s
 
@@ -621,11 +616,9 @@ if __name__ == '__main__':
     print("=" * 50)
     estimator = SpatialVeloScore(
         DIM,
-        n_epochs=1000,
         verbose=True,
-        log_every=200,
+        log_every=100,
         device=DEVICE,
-        training_mode='sequential',
     )
     estimator.fit(samples_p0, samples_p1)
 
@@ -636,43 +629,9 @@ if __name__ == '__main__':
     print(f"SpatialVeloScore LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
     print()
 
-    # === SPATIAL VELO SCORE (Simultaneous Mode - Backward Compat) ===
-    sharing_modes = ['none', 'embeddings', 'full']
-    maes = {}
-
-    for sharing in sharing_modes:
-        print("=" * 50)
-        print(f"SpatialVeloScore (simultaneous, sharing='{sharing}')")
-        print("=" * 50)
-        estimator = SpatialVeloScore(
-            DIM,
-            n_epochs=2000,
-            verbose=True,
-            log_every=400,
-            device=DEVICE,
-            training_mode='simultaneous',
-            sharing=sharing,
-            # Use old defaults for simultaneous mode comparison
-            eps=0.1,
-            lr=1e-3,
-            integration_steps=100,
-            integration_type='3',
-        )
-        estimator.fit(samples_p0, samples_p1)
-
-        print("\nEvaluating...")
-        est_ldrs = estimator.predict_ldr(samples_test)
-        mae = torch.mean(torch.abs(est_ldrs.cpu() - true_ldrs.cpu()))
-        maes[sharing] = mae.item()
-        print(f"SpatialVeloScore (simultaneous, sharing='{sharing}') MAE: {mae.item():.4f}")
-        print(f"SpatialVeloScore LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
-        print()
-
     # === COMPARISON ===
     print("=" * 50)
     print("Comparison")
     print("=" * 50)
-    print(f"BDRE MAE:                                    {bdre_mae.item():.4f}")
-    print(f"SpatialVeloScore (sequential):              {sequential_mae.item():.4f}")
-    for sharing in sharing_modes:
-        print(f"SpatialVeloScore (simultaneous, '{sharing}'): {maes[sharing]:.4f}")
+    print(f"BDRE MAE:                      {bdre_mae.item():.4f}")
+    print(f"SpatialVeloScore (sequential): {sequential_mae.item():.4f}")
