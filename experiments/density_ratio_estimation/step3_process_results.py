@@ -20,9 +20,9 @@ NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
 NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
 
-raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'   
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
+raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 
 #dataset_filename = f'{DATA_DIR}/dataset.h5'
 #raw_results_filename = f'{RAW_RESULTS_DIR}/added_cauchy_01.h5'   
@@ -37,6 +37,7 @@ with h5py.File(dataset_filename, 'r') as f:
 
 maes_by_kl = {}
 for alg_name, est_ldrs_arr in est_ldrs_by_alg.items():
+    breakpoint()
     absolute_errors = np.abs(est_ldrs_arr - true_ldrs_arr)  # (nrows, NTEST_SETS, NSAMPLES_TEST)
     maes = reduce(absolute_errors, 'n t d -> n t', 'mean')  # (nrows, NTEST_SETS)
     maes_by_kl[alg_name] = maes.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)

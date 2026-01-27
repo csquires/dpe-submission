@@ -94,7 +94,7 @@ for kl_distance in tqdm(KL_DISTANCES):
 
 os.makedirs(DATA_DIR, exist_ok=True)
 # with h5py.File(f'{DATA_DIR}/dataset.h5', 'w') as f:
-with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5', 'w') as f:
+with h5py.File(f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5', 'w') as f:
     f.create_dataset('kl_distance_arr', data=kl_distance_arr)
     f.create_dataset('mu0_arr', data=mu0_arr)
     f.create_dataset('mu1_arr', data=mu1_arr)
