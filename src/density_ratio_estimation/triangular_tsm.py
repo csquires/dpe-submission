@@ -46,11 +46,7 @@ class TriangularTSM(DensityRatioEstimator):
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
     def path_t_tprime(self, tau: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-          tau=0   -> (t, t') = (0, 0)
-          tau=0.5 -> (t, t') = (0.5, 1)
-          tau=1   -> (t, t') = (1, 0)
-        """
+        # define the curve path
         t = tau
         t_prime = 4.0 * tau * (1.0 - tau) 
         t = torch.clamp(t, min=self.eps, max=1.0)
@@ -67,7 +63,8 @@ class TriangularTSM(DensityRatioEstimator):
         t, t_prime = self.path_t_tprime(tau)
         sqrt_1_minus_t2 = torch.sqrt(torch.clamp(1.0 - t ** 2, min=self.eps))
         sqrt_1_minus_tp2 = torch.sqrt(torch.clamp(1.0 - t_prime ** 2, min=self.eps))
-        x_t = t * p0_samples + sqrt_1_minus_t2 * p1_samples
+        # x_t = t * p0_samples + sqrt_1_minus_t2 * p1_samples
+        x_t = sqrt_1_minus_t2 * p0_samples + t * p1_samples
         x_t_tprime = sqrt_1_minus_tp2 * x_t + t_prime * pstar_samples
         return x_t_tprime
 
@@ -93,9 +90,12 @@ class TriangularTSM(DensityRatioEstimator):
             lambda_tau = lambda_tau0 = lambda_tau1 = 1.0
             lambda_dtau = 0.0
 
-        term1 = (2.0 * self.model(p1_samples, t0, tp0)).squeeze() * lambda_tau0
-        term2 = (2.0 * self.model(p0_samples, t1, tp1)).squeeze() * lambda_tau1
+        #term1 = (2.0 * self.model(p1_samples, t0, tp0)).squeeze() * lambda_tau0
+        #term2 = (2.0 * self.model(p0_samples, t1, tp1)).squeeze() * lambda_tau1
         
+        term1 = (2.0 * self.model(p0_samples, t0, tp0)).squeeze() * lambda_tau0
+        term2 = (2.0 * self.model(p1_samples, t1, tp1)).squeeze() * lambda_tau1
+
         tau = tau.clone().detach().requires_grad_(True)
         t_mid, tp_mid = self.path_t_tprime(tau)
         x_tau_score = self.model(x_tau, t_mid, tp_mid)
@@ -147,7 +147,8 @@ class TriangularTSM(DensityRatioEstimator):
                 tau_tensor = torch.ones(samples_tensor.size(0), 1, device=self.device) * float(tau_scalar)
                 t, t_prime = self.path_t_tprime(tau_tensor)
                 score = self.model(samples_tensor, t, t_prime)  
-                return score.squeeze().cpu().numpy()
+                # return score.squeeze().cpu().numpy()
+                return (-score).squeeze().cpu().numpy()
 
             ode_fn = lambda tau_scalar, y: ode_func(tau_scalar, y, samples)
             solution = integrate.solve_ivp(
