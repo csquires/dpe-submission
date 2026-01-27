@@ -2,20 +2,21 @@
 Direct ELDR Estimation using Stochastic Interpolants (Version 4)
 
 Ports the spatial velocity denoiser approach to ELDR estimation using
-separate networks for velocity (b) and denoiser (eta), with the denoiser-only
-parameterization.
+separate networks for velocity (b) and denoiser (eta).
 
-Training follows the correct stochastic interpolant approach:
+Training follows the spatial_velo_denoiser2.py recipe:
 - Sample z ~ N(0, I) fresh noise
 - Compute noisy interpolant x_t = I_t + gamma_t * z
 - Train networks on x_t (not raw x from base distribution)
 - Velocity target: (x1 - x0) + gamma'_t * z
 - Denoiser target: z (the actual sampled noise)
 
-This allows us to estimate ELDR = E_{p_*}[log(p_0(x)/p_1(x))] directly.
+From direct3.py:
+- Fourier time embedding for better time representation
+- ELDR estimation by integrating time score over samples from p_*
 """
 
-from typing import Optional
+from typing import Optional, Literal
 
 import numpy as np
 import torch
@@ -138,33 +139,34 @@ class DirectELDREstimator4(ELDREstimator):
     """
     ELDR estimator using spatial velocity-denoiser approach.
 
-    Training follows the correct stochastic interpolant approach:
+    Training follows spatial_velo_denoiser2.py exactly:
     - Sample z ~ N(0, I) fresh noise
     - Compute noisy interpolant x_t = I_t + gamma_t * z
     - Train velocity network b on x_t with target (x1 - x0) + gamma'_t * z
     - Train denoiser network eta on x_t with target z
 
-    The time score is: dt_log_rho = -div(b) + b.eta/gamma
-
-    ELDR is estimated by integrating the negative time score over t.
+    ELDR estimation:
+    - Compute time score: dt_log_rho = -div(b) + b.eta/gamma
+    - Integrate over t for each sample x from p_*
+    - Return negative mean integral as ELDR estimate
     """
     def __init__(
         self,
         input_dim: int,
         hidden_dim: int = 256,
-        n_epochs: int = 1000,
+        n_epochs: int = 600,
         batch_size: int = 512,
         lr: float = 2e-3,
-        k: float = 0.5,
-        eps: float = 0.01,
-        integration_steps: int = 10000,
+        k: float = 24.0,
+        eps: float = 9e-4,
+        integration_steps: int = 3000,
+        integration_type: Literal['1', '2', '3'] = '2',
         verbose: bool = False,
         log_every: int = 100,
         device: Optional[str] = None,
+        antithetic: bool = True,
         time_embed_size: int = 64,
         time_embed_scale: float = 10.0,
-        warmup_iters: int = 50,
-        antithetic: bool = False,
     ):
         """
         Args:
@@ -176,13 +178,13 @@ class DirectELDREstimator4(ELDREstimator):
             k: Parameter for gamma(t) = (1 - exp(-k*t)) * (1 - exp(-k*(1-t)))
             eps: Boundary epsilon (t in [eps, 1-eps])
             integration_steps: Number of points for numerical integration
+            integration_type: '1' for mean, '2' for trapz, '3' for Simpson
             verbose: Print training progress
             log_every: Print every N epochs when verbose
             device: Device to use ('cuda', 'cpu', or None for auto)
+            antithetic: Use antithetic sampling for variance reduction
             time_embed_size: Size of Fourier time embedding (output = 2 * time_embed_size)
             time_embed_scale: Scale for random Fourier frequencies
-            warmup_iters: Number of warmup iterations for LR scheduler
-            antithetic: Use antithetic sampling for variance reduction
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -192,12 +194,12 @@ class DirectELDREstimator4(ELDREstimator):
         self.k = k
         self.eps = eps
         self.integration_steps = integration_steps
+        self.integration_type = integration_type
         self.verbose = verbose
         self.log_every = log_every
+        self.antithetic = antithetic
         self.time_embed_size = time_embed_size
         self.time_embed_scale = time_embed_scale
-        self.warmup_iters = warmup_iters
-        self.antithetic = antithetic
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -272,30 +274,25 @@ class DirectELDREstimator4(ELDREstimator):
 
     def fit(
         self,
-        samples_base: torch.Tensor,
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
     ) -> None:
         """
         Train the velocity and denoiser networks.
 
-        Training follows the correct stochastic interpolant approach:
+        Training follows spatial_velo_denoiser2.py exactly:
         - Sample z ~ N(0, I) fresh noise
         - Compute noisy interpolant x_t = I_t + gamma_t * z
         - Train networks on x_t (not raw x from base distribution)
 
         Args:
-            samples_base: Samples from the base distribution p_* [n_base, dim]
-                         (used only for ELDR estimation, not for training)
             samples_p0: Samples from p_0 [n_p0, dim]
             samples_p1: Samples from p_1 [n_p1, dim]
         """
         self.init_model()
 
-        samples_base = samples_base.float().to(self.device)
-        samples_p0 = samples_p0.float().to(self.device)
-        samples_p1 = samples_p1.float().to(self.device)
-
+        samples_p0 = samples_p0.float()
+        samples_p1 = samples_p1.float()
         n_p0 = samples_p0.shape[0]
         n_p1 = samples_p1.shape[0]
 
@@ -313,39 +310,27 @@ class DirectELDREstimator4(ELDREstimator):
         self.net_eta.eval()
         optimizer_b = optim.Adam(self.net_b.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
-        # LR scheduler: linear warmup + cosine decay
-        def lr_lambda_b(iter):
-            if iter < self.warmup_iters:
-                return iter / self.warmup_iters  # Linear warmup
-            else:
-                progress = (iter - self.warmup_iters) / (self.n_epochs - self.warmup_iters)
-                return 0.1 + 0.9 * (1 + np.cos(np.pi * progress)) / 2
-        scheduler_b = optim.lr_scheduler.LambdaLR(optimizer_b, lr_lambda_b)
-
         for epoch in range(self.n_epochs):
-            # Sample batches from p0 and p1 only (not from samples_base)
+            # Sample batches
             p0_idx = torch.randint(0, n_p0, (self.batch_size,))
             p1_idx = torch.randint(0, n_p1, (self.batch_size,))
-
-            x0 = samples_p0[p0_idx]     # from p0
-            x1 = samples_p1[p1_idx]     # from p1
-
-            # Sample fresh noise z ~ N(0, I)
-            z = torch.randn_like(x0)
+            x0 = samples_p0[p0_idx].to(self.device)
+            x1 = samples_p1[p1_idx].to(self.device)
 
             # Sample time uniformly from [eps, 1-eps] per sample
             t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
             t_batch = t.unsqueeze(-1)  # [B, 1]
 
+            # Sample noise (independent per sample)
+            z = torch.randn_like(x0)
+
             # Compute gamma and gamma' for each t
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
             gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
-            # Interpolant mean I_t = (1-t)*x0 + t*x1
+            # Interpolant mean
             I_t = (1 - t_batch) * x0 + t_batch * x1
-
-            # Derivative of I_t w.r.t. t
-            dtIt = x1 - x0
+            dtIt = x1 - x0  # derivative of I_t w.r.t. t
 
             if self.antithetic:
                 # Antithetic sampling: x_t+ and x_t-
@@ -363,30 +348,18 @@ class DirectELDREstimator4(ELDREstimator):
                 loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
                         + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
             else:
-                # Noisy interpolant: x_t = I_t + gamma_t * z
+                # Standard (non-antithetic) training
                 x_t = I_t + gamma_t * z
-
-                # Target velocity: (x1 - x0) + gamma'_t * z
-                target_v = dtIt + gamma_prime_t * z
-
-                # Forward pass: network takes (t, x_t) - train on noisy interpolant
                 b_pred = self.net_b(t_batch, x_t)
 
-                # Velocity loss: 0.5*||b||^2 - target_v.b
+                # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
                 b_norm_sq = (b_pred ** 2).sum(dim=-1)
-                target_dot_b = (target_v * b_pred).sum(dim=-1)
+                target_dot_b = ((dtIt + gamma_prime_t * z) * b_pred).sum(dim=-1)
                 loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
             optimizer_b.zero_grad()
             loss_b.backward()
-
-            # Gradient clipping based on gamma
-            gamma_min = gamma_t.min().item()
-            clip_norm = 10.0 * (gamma_min + self.eps) ** (-2)
-            torch.nn.utils.clip_grad_norm_(self.net_b.parameters(), max_norm=clip_norm)
-
             optimizer_b.step()
-            scheduler_b.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_b={loss_b.item():.4f}")
@@ -401,58 +374,36 @@ class DirectELDREstimator4(ELDREstimator):
         self.net_eta.train()
         optimizer_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
-        # LR scheduler: linear warmup + cosine decay
-        def lr_lambda_eta(iter):
-            if iter < self.warmup_iters:
-                return iter / self.warmup_iters  # Linear warmup
-            else:
-                progress = (iter - self.warmup_iters) / (self.n_epochs - self.warmup_iters)
-                return 0.1 + 0.9 * (1 + np.cos(np.pi * progress)) / 2
-        scheduler_eta = optim.lr_scheduler.LambdaLR(optimizer_eta, lr_lambda_eta)
-
         for epoch in range(self.n_epochs):
-            # Sample batches from p0 and p1 only
             p0_idx = torch.randint(0, n_p0, (self.batch_size,))
             p1_idx = torch.randint(0, n_p1, (self.batch_size,))
-
-            x0 = samples_p0[p0_idx]     # from p0
-            x1 = samples_p1[p1_idx]     # from p1
-
-            # Sample fresh noise z ~ N(0, I)
-            z = torch.randn_like(x0)
+            x0 = samples_p0[p0_idx].to(self.device)
+            x1 = samples_p1[p1_idx].to(self.device)
 
             # Sample time uniformly from [eps, 1-eps] per sample
             t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
             t_batch = t.unsqueeze(-1)  # [B, 1]
 
+            # Sample noise (independent per sample)
+            z = torch.randn_like(x0)
+
             # Compute gamma for each t
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
 
-            # Interpolant mean I_t = (1-t)*x0 + t*x1
-            I_t = (1 - t_batch) * x0 + t_batch * x1
+            # Interpolant
+            x_t = (1 - t_batch) * x0 + t_batch * x1 + gamma_t * z
 
-            # Noisy interpolant: x_t = I_t + gamma_t * z
-            x_t = I_t + gamma_t * z
-
-            # Forward pass: network takes (t, x_t) - train on noisy interpolant
+            # Predict eta
             eta_pred = self.net_eta(t_batch, x_t)
 
-            # Denoiser loss: 0.5*||eta||^2 - z.eta
-            # Target is z (the actual sampled noise), NOT z_equiv
+            # Denoiser loss: 0.5*||d||² - z·d
             eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
             z_dot_eta = (z * eta_pred).sum(dim=-1)
             loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
 
             optimizer_eta.zero_grad()
             loss_eta.backward()
-
-            # Gradient clipping based on gamma
-            gamma_min = gamma_t.min().item()
-            clip_norm = 10.0 * (gamma_min + self.eps) ** (-2)
-            torch.nn.utils.clip_grad_norm_(self.net_eta.parameters(), max_norm=clip_norm)
-
             optimizer_eta.step()
-            scheduler_eta.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_eta={loss_eta.item():.4f}")
@@ -495,20 +446,24 @@ class DirectELDREstimator4(ELDREstimator):
         time_scores = torch.stack(time_scores, dim=0)  # [n_points, n_samples, 1]
         time_scores = time_scores.squeeze(-1)  # [n_points, n_samples]
 
-        # Simpson's rule integration
-        t_np = t_vals.cpu().numpy()
-        h = (t_np[-1] - t_np[0]) / (n_points - 1)
+        if self.integration_type == '3':
+            # Simpson's rule integration
+            t_np = t_vals.cpu().numpy()
+            h = (t_np[-1] - t_np[0]) / (n_points - 1)
 
-        integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
-        integral = integrand[0] + integrand[-1]
-        for i in range(1, n_points - 1):
-            if i % 2 == 0:
-                integral += 2 * integrand[i]
-            else:
-                integral += 4 * integrand[i]
-        integral *= h / 3
-
-        return torch.from_numpy(integral)
+            integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
+            integral = integrand[0] + integrand[-1]
+            for i in range(1, n_points - 1):
+                if i % 2 == 0:
+                    integral += 2 * integrand[i]
+                else:
+                    integral += 4 * integrand[i]
+            integral *= h / 3
+            return torch.from_numpy(integral)
+        elif self.integration_type == '1':
+            return time_scores.mean(dim=0).cpu()
+        elif self.integration_type == '2':
+            return torch.trapz(time_scores, t_vals, dim=0).cpu()
 
     def estimate_eldr(
         self,
@@ -535,8 +490,8 @@ class DirectELDREstimator4(ELDREstimator):
         if isinstance(samples_p1, np.ndarray):
             samples_p1 = torch.from_numpy(samples_p1).float()
 
-        # Train the model
-        self.fit(samples_pstar, samples_p0, samples_p1)
+        # Train the model (only uses samples_p0 and samples_p1)
+        self.fit(samples_p0, samples_p1)
 
         # Compute time_score integral for each x in samples_pstar
         samples_pstar = samples_pstar.float().to(self.device)
@@ -588,14 +543,8 @@ if __name__ == '__main__':
     estimator = DirectELDREstimator4(
         input_dim=DIM,
         hidden_dim=256,
-        n_epochs=2000,
-        batch_size=512,
-        lr=2e-3,
-        k=0.5,
-        eps=0.01,
-        integration_steps=10001,
         verbose=True,
-        log_every=200,
+        log_every=100,
         device=DEVICE,
     )
 
