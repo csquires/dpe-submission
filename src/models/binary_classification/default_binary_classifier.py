@@ -13,9 +13,9 @@ class DefaultBinaryClassifier(BinaryClassifier):
         latent_dim: int = 10,
         num_layers: int = 3,
         # training hyperparameters
-        learning_rate: float = 0.05,
+        learning_rate: float = 0.005,
         # num_epochs: int = 100,
-        num_epochs: int = 800,
+        num_epochs: int = 300,
     ):
         super().__init__()
         layers = []
