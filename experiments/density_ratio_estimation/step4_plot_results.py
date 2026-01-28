@@ -19,7 +19,6 @@ NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
 
 filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-# filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
 
 with h5py.File(filename, 'r') as f:
     maes_by_kl = {key.replace('maes_by_kl_', ''): f[key][:] for key in f.keys()}
@@ -41,8 +40,12 @@ colors = {
     "MDRE": "#2ca02c",
     "TSM": "#d62728",
     "TriangularTSM": "#17becf",
-    "TriangularTDRE": "#ff9896",
+    "TriangularTDRE": "#c3d922",
+    "TriangularTDRE_Gauss": "#000000",
+    "TriangularMDRE": "#aec7e8",
+    "TriangularMDRE_Gauss": "#9edae5",
     "TDRE_5": "#ff7f0e",
+    "TDRE_5_Gauss": "#ffbb78",
     "TDRE_10": "#8c564b", # default TDRE
     "TDRE_15": "#9467bd",
     "TDRE_20": "#e377c2",
@@ -50,6 +53,7 @@ colors = {
     "MDRE_5": "#17becf",
     "MDRE_10": "#7f7f7f", # default MDRE
     "MDRE_15": "#2ca02c",
+    "MDRE_15_Gauss": "#98df8a",
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
     "Spatial": "#9467bd",
@@ -59,21 +63,68 @@ colors = {
 # mdre_order = ["MDRE_5", "MDRE_10", "MDRE_15", "MDRE_20", "MDRE_30"]
 
 tdre_order = ["TDRE_5"]
-mdre_order = ["MDRE_15"]
+# mdre_order = ["MDRE_15"]
 
 # plotting
 for i in range(NTEST_SETS):
-    axes[i].plot(KL_DISTANCES, avg_mae_by_kl["BDRE"][:, i], label='BDRE', color=colors["BDRE"])
-    axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TSM"][:, i], label='TSM', color=colors["TSM"])
-    axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TriangularTSM"][:, i], label="TriangularTSM", color=colors["TriangularTSM"])
+    #axes[i].plot(KL_DISTANCES, avg_mae_by_kl["BDRE"][:, i], label='BDRE', color=colors["BDRE"])
+    if "TSM" in avg_mae_by_kl:
+        axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TSM"][:, i], label="TSM", color=colors["TSM"])
+    if "TriangularTSM" in avg_mae_by_kl:
+        axes[i].plot(
+            KL_DISTANCES,
+            avg_mae_by_kl["TriangularTSM"][:, i],
+            label="TriangularTSM",
+            color=colors["TriangularTSM"],
+        )
     for tdre_name in tdre_order:
         if tdre_name in avg_mae_by_kl:
             axes[i].plot(KL_DISTANCES, avg_mae_by_kl[tdre_name][:, i], label="TDRE", color=colors[tdre_name])
-    for mdre_name in mdre_order:
-        if mdre_name in avg_mae_by_kl:
-            axes[i].plot(KL_DISTANCES, avg_mae_by_kl[mdre_name][:, i], label="MDRE", color=colors[mdre_name])
-    if "Spatial" in avg_mae_by_kl:
-        axes[i].plot(KL_DISTANCES, avg_mae_by_kl["Spatial"][:, i], label="Spatial", color=colors["Spatial"])
+    if "TDRE_5_Gauss" in avg_mae_by_kl:
+        axes[i].plot(
+            KL_DISTANCES,
+            avg_mae_by_kl["TDRE_5_Gauss"][:, i],
+            label="TDRE_Gauss",
+            color=colors["TDRE_5_Gauss"],
+        )
+    axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TriangularTDRE"][:, i], label="TriangularTDRE", color=colors["TriangularTDRE"])
+    if "TriangularTDRE_Gauss" in avg_mae_by_kl:
+        axes[i].plot(
+            KL_DISTANCES,
+            avg_mae_by_kl["TriangularTDRE_Gauss"][:, i],
+            label="TriangularTDRE_Gauss",
+            color=colors["TriangularTDRE_Gauss"],
+        )
+    if "TriangularMDRE" in avg_mae_by_kl:
+        axes[i].plot(
+            KL_DISTANCES,
+            avg_mae_by_kl["TriangularMDRE"][:, i],
+            label="TriangularMDRE",
+            color=colors["TriangularMDRE"],
+        )
+    if "TriangularMDRE_Gauss" in avg_mae_by_kl:
+        axes[i].plot(
+            KL_DISTANCES,
+            avg_mae_by_kl["TriangularMDRE_Gauss"][:, i],
+            label="TriangularMDRE_Gauss",
+            color=colors["TriangularMDRE_Gauss"],
+        )
+    if "MDRE_15" in avg_mae_by_kl:
+        axes[i].plot(
+            KL_DISTANCES,
+            avg_mae_by_kl["MDRE_15"][:, i],
+            label="MDRE",
+            color=colors["MDRE_15"],
+        )
+    if "MDRE_15_Gauss" in avg_mae_by_kl:
+        axes[i].plot(
+            KL_DISTANCES,
+            avg_mae_by_kl["MDRE_15_Gauss"][:, i],
+            label="MDRE_Gauss",
+            color=colors["MDRE_15_Gauss"],
+        )
+    # if "Spatial" in avg_mae_by_kl:
+    #     axes[i].plot(KL_DISTANCES, avg_mae_by_kl["Spatial"][:, i], label="Spatial", color=colors["Spatial"])
     axes[i].set_ylim(y_min, y_max)
     axes[i].set_xscale('log')
     axes[i].set_yscale('log')
@@ -82,11 +133,10 @@ axes[0].set_ylabel('Mean Absolute Error \n (Test Set)')
 axes[0].set_title(r'$p_* = p_0$')
 axes[1].set_title(r'$p_* = p_1$')
 axes[2].set_title(r'$p_* = q_0$')
-axes[3].set_title(r'$p_* = q_1$') # Cauchy
+axes[3].set_title(r'$p_* = q_1$')
 handles, labels = axes[0].get_legend_handles_labels()
 plt.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
 # saving
 os.makedirs(FIGURES_DIR, exist_ok=True)
 plt.savefig(f'{FIGURES_DIR}/varying_kl_01.pdf')
-# plt.savefig(f'{FIGURES_DIR}/Cauchy_test.pdf')
