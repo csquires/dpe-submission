@@ -18,8 +18,8 @@ NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
 
-# filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST}.h5'
-filename = f'{PROCESSED_RESULTS_DIR}/new_pstar.h5'
+filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+# filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
 
 with h5py.File(filename, 'r') as f:
     maes_by_kl = {key.replace('maes_by_kl_', ''): f[key][:] for key in f.keys()}
@@ -52,6 +52,7 @@ colors = {
     "MDRE_15": "#2ca02c",
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
+    "Spatial": "#9467bd",
 }
 
 # tdre_order = ["TDRE_5", "TDRE_10", "TDRE_15", "TDRE_20", "TDRE_30"]
@@ -62,26 +63,17 @@ mdre_order = ["MDRE_15"]
 
 # plotting
 for i in range(NTEST_SETS):
-    #axes[i].plot(KL_DISTANCES, avg_mae_by_kl["BDRE"][:, i], label='BDRE', color=colors["BDRE"])
-    # axes[i].plot(KL_DISTANCES, avg_mae_by_kl["MDRE"][:, i], label='MDRE', color=colors["MDRE"])
-    #axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TSM"][:, i], label='TSM', color=colors["TSM"])
-    #axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TriangularTSM"][:, i], label="TriangularTSM", color=colors["TriangularTSM"])
-    if "TriangularTDRE" in avg_mae_by_kl:
-        axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TriangularTDRE"][:, i], label="TriangularTDRE", color=colors["TriangularTDRE"])
+    axes[i].plot(KL_DISTANCES, avg_mae_by_kl["BDRE"][:, i], label='BDRE', color=colors["BDRE"])
+    axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TSM"][:, i], label='TSM', color=colors["TSM"])
+    axes[i].plot(KL_DISTANCES, avg_mae_by_kl["TriangularTSM"][:, i], label="TriangularTSM", color=colors["TriangularTSM"])
     for tdre_name in tdre_order:
         if tdre_name in avg_mae_by_kl:
-            label = f'TDRE ({tdre_name.split("_")[1]})'
-            axes[i].plot(KL_DISTANCES, avg_mae_by_kl[tdre_name][:, i], label=label, color=colors[tdre_name])
-    # for tdre_name in tdre_order:
-    #     if tdre_name in avg_mae_by_kl:
-    #         axes[i].plot(KL_DISTANCES, avg_mae_by_kl[tdre_name][:, i], label="TDRE", color=colors[tdre_name])
-    # for mdre_name in mdre_order:
-    #     if mdre_name in avg_mae_by_kl:
-    #         label = f'MDRE ({mdre_name.split("_")[1]})'
-    #         axes[i].plot(KL_DISTANCES, avg_mae_by_kl[mdre_name][:, i], label=label, color=colors[mdre_name])
-    # for mdre_name in mdre_order:
-    #     if mdre_name in avg_mae_by_kl:
-    #         axes[i].plot(KL_DISTANCES, avg_mae_by_kl[mdre_name][:, i], label="MDRE", color=colors[mdre_name])
+            axes[i].plot(KL_DISTANCES, avg_mae_by_kl[tdre_name][:, i], label="TDRE", color=colors[tdre_name])
+    for mdre_name in mdre_order:
+        if mdre_name in avg_mae_by_kl:
+            axes[i].plot(KL_DISTANCES, avg_mae_by_kl[mdre_name][:, i], label="MDRE", color=colors[mdre_name])
+    if "Spatial" in avg_mae_by_kl:
+        axes[i].plot(KL_DISTANCES, avg_mae_by_kl["Spatial"][:, i], label="Spatial", color=colors["Spatial"])
     axes[i].set_ylim(y_min, y_max)
     axes[i].set_xscale('log')
     axes[i].set_yscale('log')

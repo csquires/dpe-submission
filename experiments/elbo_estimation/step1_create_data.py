@@ -103,7 +103,7 @@ for _ in trange(NUM_PRIORS):
 
 
 os.makedirs(DATA_DIR, exist_ok=True)
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
+dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 with h5py.File(dataset_filename, 'w') as f:
     # metadata
     f.create_dataset('design_eig_percentage_arr', data=design_eig_percentage_arr)

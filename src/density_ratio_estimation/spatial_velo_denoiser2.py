@@ -385,15 +385,15 @@ if __name__ == '__main__':
         'k': [], 'steps': [],'type':[], 'mae': []
     }
     param_grid = {
-        'eps': [9e-4],
+        'eps': [2.1e-3, 2.2e-3, 2.3e-3],
         'epochs': [300],
         'antithetic': [True],
-        'lr': [9e-3],
-        'k': [20, 24, 28],
-        'steps': [2500, 5000, 7500],
+        'lr': [1.3e-3, 1.4e-3, 1.5e-3],
+        'k': [20],
+        'steps': [5000],
         'type': ['2']
     }
-    for r in range(20):
+    for r in range(10):
         for this_eps in param_grid['eps']:
             for this_epochs in param_grid['epochs']:
                 for this_antithetic in param_grid['antithetic']:
@@ -443,7 +443,7 @@ if __name__ == '__main__':
     print("\n--- Single Hyperparameter Stats ---")
     for param in hyperparams:
         print(f"\nStats by [{param}]:")
-        stats = df.groupby(param)['mae'].agg(['mean', 'std', 'min', 'max', lambda x: x.max()-x.min()])
+        stats = df.groupby(param)['mae'].agg(['mean', 'std', 'min', 'max', lambda x: x.quantile(0.75)-x.quantile(0.25)])
         print(stats)
 
     # pairwise hyperparam treatment
@@ -453,7 +453,7 @@ if __name__ == '__main__':
     import itertools
     for p1, p2 in itertools.combinations(hyperparams, 2):
         print(f"\nStats by [{p1} AND {p2}]:")
-        stats = df.groupby([p1, p2])['mae'].agg(['mean', 'std', 'min', 'max', lambda x: x.max()-x.min()])
+        stats = df.groupby([p1, p2])['mae'].agg(['mean', 'std', 'min', 'max', lambda x:x.quantile(0.75)-x.quantile(0.25)])
         print(stats)
 
     print("\n" + "="*80)

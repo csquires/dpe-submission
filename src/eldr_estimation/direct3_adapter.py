@@ -88,24 +88,36 @@ def make_direct3_estimator(input_dim: int, device: str = "cuda", **kwargs) -> Di
     Returns:
         Configured Direct3Adapter instance
 
-    Default hyperparameters (tuned for typical use cases):
+    Default hyperparameters (tuned via HPO in __main__ block):
         k: 16.0 - Interpolant parameter for gamma(t)
-        eps: 0.03 - Boundary epsilon for training
+        eps_train: 0.03 - Boundary epsilon for training
         eps_eval: 0.03 - Boundary epsilon for integration
         learning_rate: 2e-6 - Learning rate for optimizer
-        num_epochs: 100 - Maximum training epochs
+        weight_decay: 1e-4 - Weight decay for regularization
+        num_epochs: 1000 - Maximum training epochs
         batch_size: 256 - Training batch size
+        hidden_dim: 256 - Hidden layer dimension
+        num_layers: 3 - Number of hidden layers
+        time_embed_size: 128 - Size of Fourier time embedding
         integration_steps: 100 - Grid points for integration
+        patience: 100000 - Steps to wait for convergence
+        convergence_threshold: 1e-8 - Convergence threshold
         verbose: False - Suppress training output
     """
     defaults = {
         'k': 16.0,
-        'eps': 0.03,
+        'eps_train': 0.03,
         'eps_eval': 0.03,
         'learning_rate': 2e-6,
-        'num_epochs': 100,
+        'weight_decay': 1e-4,
+        'num_epochs': 1000,
         'batch_size': 256,
+        'hidden_dim': 256,
+        'num_layers': 3,
+        'time_embed_size': 128,
         'integration_steps': 100,
+        'patience': 100000,
+        'convergence_threshold': 1e-8,
         'verbose': False,
     }
     defaults.update(kwargs)

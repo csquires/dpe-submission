@@ -15,14 +15,15 @@ RAW_RESULTS_DIR = config['raw_results_dir']
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
+NSAMPLES = config['nsamples']
 ALPHAS = config['alphas']
 DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 NUM_PRIORS = config['num_priors']
 NUM_DESIGNS_PER_SETTING = config['num_designs_per_setting']
 
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
-raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM}.h5'
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM}.h5'
+dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 
 
 def compute_true_eldr(
