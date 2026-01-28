@@ -1,19 +1,16 @@
 """
-Direct ELDR Estimation using Stochastic Interpolants (Version 4)
+Direct ELDR Estimation using Stochastic Interpolants (Version 5)
 
-Ports the spatial velocity denoiser approach to ELDR estimation using
-separate networks for velocity (b) and denoiser (eta).
+Extends direct4.py with gamma-scaled denoiser training for improved stability.
 
-Training follows the spatial_velo_denoiser2.py recipe:
-- Sample z ~ N(0, I) fresh noise
-- Compute noisy interpolant x_t = I_t + gamma_t * z
-- Train networks on x_t (not raw x from base distribution)
-- Velocity target: (x1 - x0) + gamma'_t * z
-- Denoiser target: z (the actual sampled noise)
+Key changes from direct4.py:
+- Denoiser predicts eta_gamma = eta * gamma instead of eta
+- Target becomes gamma * z instead of z
+- Gamma-based gradient clipping: clip_norm = 10.0 * (gamma_min + eps)^(-2)
+- Time score: b.eta_gamma / gamma^2 instead of b.eta / gamma
 
-From direct3.py:
-- Fourier time embedding for better time representation
-- ELDR estimation by integrating time score over samples from p_*
+These techniques from direct3.py help stabilize training near t=0 and t=1
+where gamma approaches 0.
 """
 
 from typing import Optional, Literal
@@ -135,20 +132,17 @@ def compute_divergence(output: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     return divergence
 
 
-class DirectELDREstimator4(ELDREstimator):
+class DirectELDREstimator5(ELDREstimator):
     """
-    ELDR estimator using spatial velocity-denoiser approach.
+    ELDR estimator using spatial velocity-denoiser approach with gamma scaling.
 
-    Training follows spatial_velo_denoiser2.py exactly:
-    - Sample z ~ N(0, I) fresh noise
-    - Compute noisy interpolant x_t = I_t + gamma_t * z
-    - Train velocity network b on x_t with target (x1 - x0) + gamma'_t * z
-    - Train denoiser network eta on x_t with target z
+    Key differences from DirectELDREstimator4:
+    - Denoiser network predicts eta_gamma = eta * gamma (scaled by gamma)
+    - Target is gamma * z instead of z
+    - Uses gamma-based gradient clipping for stability (no loss weighting)
+    - Time score formula: dt_log_rho = -div(b) + b.eta_gamma/gamma^2
 
-    ELDR estimation:
-    - Compute time score: dt_log_rho = -div(b) + b.eta/gamma
-    - Integrate over t for each sample x from p_*
-    - Return negative mean integral as ELDR estimate
+    These modifications improve numerical stability near t=0 and t=1.
     """
     def __init__(
         self,
@@ -158,8 +152,8 @@ class DirectELDREstimator4(ELDREstimator):
         batch_size: int = 512,
         lr: float = 2e-3,
         k: float = 24.0,
-        eps_train: float = 9e-4,  # Training eps for t sampling bounds and grad clipping
-        eps_eval: float = 0.01,   # Integration eps for bounds [eps_eval, 1-eps_eval]
+        eps_train: float = 0.1,  # Training eps for clamping gamma in grad norm clipping / loss weighting
+        eps_eval: float = 0.01,  # Integration eps for bounds [eps_eval, 1-eps_eval]
         loss_weight_exp: float = 0,  # Loss weighting exponent: 0 = disabled, >0 = 1/(gamma+eps)^exp
         integration_steps: int = 3000,
         integration_type: Literal['1', '2', '3'] = '2',
@@ -178,7 +172,7 @@ class DirectELDREstimator4(ELDREstimator):
             batch_size: Batch size for training
             lr: Learning rate
             k: Parameter for gamma(t) = (1 - exp(-k*t)) * (1 - exp(-k*(1-t)))
-            eps_train: Training epsilon for t sampling bounds [eps_train, 1-eps_train] and grad clipping
+            eps_train: Training epsilon for clamping gamma in grad norm clipping / loss weighting
             eps_eval: Integration epsilon for bounds [eps_eval, 1-eps_eval]
             loss_weight_exp: Loss weighting exponent: 0 = disabled, >0 = 1/(gamma+eps)^exp
             integration_steps: Number of points for numerical integration
@@ -254,7 +248,10 @@ class DirectELDREstimator4(ELDREstimator):
     ) -> torch.Tensor:
         """
         Compute partial_t log rho(t, x) using:
-        dt_log_rho = -div(b) + b.eta/gamma
+        dt_log_rho = -div(b) + b.eta_gamma/gamma^2
+
+        Note: net_eta now predicts eta_gamma = eta * gamma, so:
+        b.eta = b.eta_gamma / gamma, thus b.eta/gamma = b.eta_gamma/gamma^2
 
         Args:
             t: Time tensor [batch, 1]
@@ -268,15 +265,15 @@ class DirectELDREstimator4(ELDREstimator):
 
         # Run separate forward passes
         b_pred = self.net_b(t, x)
-        eta_pred = self.net_eta(t, x)
+        eta_gamma_pred = self.net_eta(t, x)  # This is eta * gamma
 
         # Exact divergence (trace of Jacobian)
         div_b = compute_divergence(b_pred, x)
 
-        # Scalar terms
-        b_dot_eta = (b_pred * eta_pred).sum(dim=-1, keepdim=True)
+        # Scalar terms: b.eta_gamma / gamma^2
+        b_dot_eta_gamma = (b_pred * eta_gamma_pred).sum(dim=-1, keepdim=True)
 
-        return -div_b.view(-1, 1) + b_dot_eta / gamma_t
+        return -div_b.view(-1, 1) + b_dot_eta_gamma / (gamma_t ** 2)
 
     def fit(
         self,
@@ -303,8 +300,8 @@ class DirectELDREstimator4(ELDREstimator):
         n_p1 = samples_p1.shape[0]
 
         if self.verbose:
-            print(f"[DirectELDREstimator4] Starting Sequential Training")
-            print(f"[DirectELDREstimator4] gamma range: [{self.gamma(torch.tensor(self.eps_train)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
+            print(f"[DirectELDREstimator5] Starting Sequential Training")
+            print(f"[DirectELDREstimator5] gamma range: [{self.gamma(torch.tensor(self.eps_train)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
 
         # ==========================================
         # PHASE 1: Train Velocity Network (b)
@@ -323,8 +320,8 @@ class DirectELDREstimator4(ELDREstimator):
             x0 = samples_p0[p0_idx].to(self.device)
             x1 = samples_p1[p1_idx].to(self.device)
 
-            # Sample time uniformly from [eps_train, 1-eps_train] per sample
-            t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps_train) + self.eps_train
+            # Sample time uniformly from [0, 1] (full range, like direct3)
+            t = torch.rand(self.batch_size, device=self.device)
             t_batch = t.unsqueeze(-1)  # [B, 1]
 
             # Sample noise (independent per sample)
@@ -351,8 +348,8 @@ class DirectELDREstimator4(ELDREstimator):
                 b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
                 target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
                 target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
-                per_sample_loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
-                        + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus)
+                loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
+                        + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
             else:
                 # Standard (non-antithetic) training
                 x_t = I_t + gamma_t * z
@@ -361,37 +358,20 @@ class DirectELDREstimator4(ELDREstimator):
                 # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
                 b_norm_sq = (b_pred ** 2).sum(dim=-1)
                 target_dot_b = ((dtIt + gamma_prime_t * z) * b_pred).sum(dim=-1)
-                per_sample_loss_b = (0.5 * b_norm_sq - target_dot_b)
-
-            # Apply loss weighting if enabled
-            if self.loss_weight_exp != 0:
-                t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
-                gamma_clamped = self.gamma(t_clamped)
-                weights = 1.0 / (gamma_clamped + self.eps_train) ** self.loss_weight_exp
-                loss_b = (per_sample_loss_b * weights).mean()
-            else:
-                loss_b = per_sample_loss_b.mean()
+                loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
             optimizer_b.zero_grad()
             loss_b.backward()
-
-            # Gamma-based gradient clipping
-            t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
-            gamma_clamped = self.gamma(t_clamped)
-            gamma_min = gamma_clamped.min().item()
-            clip_norm = 10.0 * (gamma_min + self.eps_train) ** (-2)
-            torch.nn.utils.clip_grad_norm_(self.net_b.parameters(), max_norm=clip_norm)
-
             optimizer_b.step()
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_b={loss_b.item():.4f}")
 
         # ==========================================
-        # PHASE 2: Train Denoiser Network (eta)
+        # PHASE 2: Train Denoiser Network (eta_gamma = eta * gamma)
         # ==========================================
         if self.verbose:
-            print(f"\n[Phase 2/2] Training Denoiser Network (eta) for {self.n_epochs} epochs...")
+            print(f"\n[Phase 2/2] Training Denoiser Network (eta_gamma) for {self.n_epochs} epochs...")
 
         self.net_b.eval()
         self.net_eta.train()
@@ -403,8 +383,8 @@ class DirectELDREstimator4(ELDREstimator):
             x0 = samples_p0[p0_idx].to(self.device)
             x1 = samples_p1[p1_idx].to(self.device)
 
-            # Sample time uniformly from [eps_train, 1-eps_train] per sample
-            t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps_train) + self.eps_train
+            # Sample time uniformly from [0, 1] (full range, like direct3)
+            t = torch.rand(self.batch_size, device=self.device)
             t_batch = t.unsqueeze(-1)  # [B, 1]
 
             # Sample noise (independent per sample)
@@ -416,18 +396,23 @@ class DirectELDREstimator4(ELDREstimator):
             # Interpolant
             x_t = (1 - t_batch) * x0 + t_batch * x1 + gamma_t * z
 
-            # Predict eta
-            eta_pred = self.net_eta(t_batch, x_t)
+            # Target is gamma * z (scaled by gamma)
+            target_eta_gamma = gamma_t * z
 
-            # Denoiser loss: 0.5*||d||² - z·d
-            eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
-            z_dot_eta = (z * eta_pred).sum(dim=-1)
-            per_sample_loss_eta = (0.5 * eta_norm_sq - z_dot_eta)
+            # Predict eta_gamma = eta * gamma
+            eta_gamma_pred = self.net_eta(t_batch, x_t)
+
+            # Denoiser loss: 0.5*||eta_gamma||² - (gamma*z)·eta_gamma
+            eta_gamma_norm_sq = (eta_gamma_pred ** 2).sum(dim=-1)
+            target_dot_eta_gamma = (target_eta_gamma * eta_gamma_pred).sum(dim=-1)
+            per_sample_loss_eta = (0.5 * eta_gamma_norm_sq - target_dot_eta_gamma)
+
+            # Clamp t to [eps_train, 1-eps_train] for computing gamma in weighting/clipping
+            t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
+            gamma_clamped = self.gamma(t_clamped)
 
             # Apply loss weighting if enabled
             if self.loss_weight_exp != 0:
-                t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
-                gamma_clamped = self.gamma(t_clamped)
                 weights = 1.0 / (gamma_clamped + self.eps_train) ** self.loss_weight_exp
                 loss_eta = (per_sample_loss_eta * weights).mean()
             else:
@@ -436,9 +421,7 @@ class DirectELDREstimator4(ELDREstimator):
             optimizer_eta.zero_grad()
             loss_eta.backward()
 
-            # Gamma-based gradient clipping
-            t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
-            gamma_clamped = self.gamma(t_clamped)
+            # Gamma-based gradient clipping (matches direct3 CLIP_GAMMA_EXP=-2)
             gamma_min = gamma_clamped.min().item()
             clip_norm = 10.0 * (gamma_min + self.eps_train) ** (-2)
             torch.nn.utils.clip_grad_norm_(self.net_eta.parameters(), max_norm=clip_norm)
@@ -449,7 +432,7 @@ class DirectELDREstimator4(ELDREstimator):
                 print(f"  [Epoch {epoch+1}] loss_eta={loss_eta.item():.4f}")
 
         if self.verbose:
-            print(f"[DirectELDREstimator4] Training complete")
+            print(f"[DirectELDREstimator5] Training complete")
 
         self.net_eta.eval()
 
@@ -576,14 +559,14 @@ if __name__ == '__main__':
     print("=" * 80)
 
     # === CONFIGS TO TRY ===
-    # eps_train: training epsilon for t sampling and grad clipping (default 9e-4)
+    # eps_train: training epsilon for grad clipping / loss weighting (default 0.1)
     # eps_eval: integration bounds (default 0.01)
     CONFIGS = [
-        {'name': 'default', 'k': 24, 'eps_train': 9e-4, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '2', 'seed': 0},
-        {'name': 'k=20', 'k': 20, 'eps_train': 9e-4, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '2', 'seed': 0},
-        {'name': 'k=28', 'k': 28, 'eps_train': 9e-4, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '2', 'seed': 0},
-        {'name': 'no_antithetic', 'k': 24, 'eps_train': 9e-4, 'eps_eval': 0.01, 'antithetic': False, 'integration_type': '2', 'seed': 0},
-        {'name': 'simpson', 'k': 24, 'eps_train': 9e-4, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '3', 'seed': 0},
+        {'name': 'default', 'k': 24, 'eps_train': 0.1, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '2', 'seed': 0},
+        {'name': 'k=20', 'k': 20, 'eps_train': 0.1, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '2', 'seed': 0},
+        {'name': 'k=28', 'k': 28, 'eps_train': 0.1, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '2', 'seed': 0},
+        {'name': 'no_antithetic', 'k': 24, 'eps_train': 0.1, 'eps_eval': 0.01, 'antithetic': False, 'integration_type': '2', 'seed': 0},
+        {'name': 'simpson', 'k': 24, 'eps_train': 0.1, 'eps_eval': 0.01, 'antithetic': True, 'integration_type': '3', 'seed': 0},
     ]
 
     all_results = {}
@@ -596,7 +579,7 @@ if __name__ == '__main__':
             torch.manual_seed(cfg['seed'])
             np.random.seed(cfg['seed'])
 
-        estimator = DirectELDREstimator4(
+        estimator = DirectELDREstimator5(
             input_dim=DIM,
             hidden_dim=256,
             n_epochs=600,
@@ -667,7 +650,7 @@ if __name__ == '__main__':
     ax.legend()
 
     plt.tight_layout()
-    plt.savefig('direct4_hpo.png', dpi=150)
+    plt.savefig('direct5_hpo.png', dpi=150)
     plt.show()
 
     # === PRINT SUMMARY ===
@@ -684,4 +667,4 @@ if __name__ == '__main__':
     print(f"Mean estimate: {np.mean(estimates):.4f} (std={np.std(estimates):.4f})")
     print(f"Mean error: {np.mean(errors):.4f} (std={np.std(errors):.4f})")
     print(f"Best error: {min(errors):.4f}, Worst error: {max(errors):.4f}")
-    print("Saved plot to direct4_hpo.png")
+    print("Saved plot to direct5_hpo.png")

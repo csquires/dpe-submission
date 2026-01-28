@@ -13,7 +13,7 @@ Key differences from direct2.py:
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Optional
+from typing import Optional, Literal
 
 from src.eldr_estimation.base import ELDREstimator
 
@@ -136,8 +136,8 @@ class DirectELDREstimator3(ELDREstimator):
         time_embed_scale: float = 10.0,
         # Interpolant hyperparameters
         k: float = 16.0,
-        eps: float = 0.1,
-        eps_eval: float = 0.01,  # Separate eps for evaluation/integration
+        eps_train: float = 0.1,  # Training eps for clamping gamma in grad norm clipping / loss weighting
+        eps_eval: float = 0.01,  # Integration eps for bounds [eps_eval, 1-eps_eval]
         # Training hyperparameters
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
@@ -145,6 +145,7 @@ class DirectELDREstimator3(ELDREstimator):
         batch_size: int = 256,
         # Integration hyperparameters
         integration_steps: int = 100,
+        integration_type: Literal['1', '2', '3'] = '1',  # '1': MC, '2': trapz, '3': Simpson
         # Convergence hyperparameters
         convergence_threshold: float = 1e-4,
         patience: int = 200,
@@ -161,12 +162,14 @@ class DirectELDREstimator3(ELDREstimator):
             time_embed_size: Size of Fourier time embedding (output will be 2*time_embed_size)
             time_embed_scale: Scale parameter for random Fourier frequencies
             k: Parameter for g(t) = (1 - exp(-k*t)) * (1 - exp(-k*(1-t)))
-            eps: Boundary epsilon (t in [eps, 1-eps])
+            eps_train: Training epsilon for clamping gamma in grad norm clipping / loss weighting
+            eps_eval: Integration epsilon for bounds [eps_eval, 1-eps_eval]
             learning_rate: Learning rate for optimizer
             weight_decay: Weight decay for regularization
             num_epochs: Maximum training epochs
             batch_size: Batch size for training
             integration_steps: Number of points for numerical integration
+            integration_type: '1' for MC, '2' for trapz, '3' for Simpson
             convergence_threshold: Stop if loss change < threshold for patience steps
             patience: Number of steps to wait for convergence
             verbose: Print training progress
@@ -184,8 +187,9 @@ class DirectELDREstimator3(ELDREstimator):
         self.device = device
 
         self.k = k
-        self.eps = eps
+        self.eps_train = eps_train
         self.eps_eval = eps_eval
+        self.integration_type = integration_type
 
         self.noiser_network = NoiserNetwork(
             hidden_dim=hidden_dim,
@@ -336,10 +340,11 @@ class DirectELDREstimator3(ELDREstimator):
         Returns:
             (mean, std) tuple with interpolated values matching input shape
         """
-        t_clamped = torch.clamp(t, self.eps, 1 - self.eps)
+        t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
 
-        grid_range = 1 - 2 * self.eps
-        idx_float = (t_clamped - self.eps) / grid_range * (len(self._v_grid_t) - 1)
+        # grid_range = 1 - 2 * self.eps_train
+        grid_range = 1
+        idx_float = (t_clamped) / grid_range * (len(self._v_grid_t) - 1)
         idx_low = torch.floor(idx_float).long()
         idx_high = torch.clamp(idx_low + 1, max=len(self._v_grid_t) - 1)
         frac = idx_float - idx_low.float()
@@ -493,7 +498,7 @@ class DirectELDREstimator3(ELDREstimator):
 
         # Precompute mean(t) and std(t) on a grid for normalization
         n_v_grid = 100
-        self._v_grid_t = torch.linspace(self.eps, 1 - self.eps, n_v_grid, device=self.device)
+        self._v_grid_t = torch.linspace(0, 1, n_v_grid, device=self.device)
         self._mean_grid_vals = []
         self._std_grid_vals = []
         with torch.no_grad():
@@ -556,7 +561,7 @@ class DirectELDREstimator3(ELDREstimator):
                 self._sanity_eldr = true_eldr  # Store for later access
                 print(f'Sanity Check: ELDR {true_eldr}')
 
-                weight_eval = 1.0 / (self.g(t_eval) + self.eps)**2
+                weight_eval = 1.0 / (self.g(t_eval) + self.eps_train)**2
 
         best_loss = float('inf')
         patience_counter = 0
@@ -607,7 +612,8 @@ class DirectELDREstimator3(ELDREstimator):
                 avg_estimands = self.noiser(t, x_base, x0, x1)  # [B]
 
                 # Standard normalization: (target - mean) / std
-                mean_t, std_t = self._interpolate_stats(t)
+                t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
+                mean_t, std_t = self._interpolate_stats(t_clamped)
                 scaled_targets = (avg_estimands - mean_t) / std_t
 
                 predictions = self.noiser_network(t)
@@ -615,15 +621,14 @@ class DirectELDREstimator3(ELDREstimator):
                 mse_per_sample = (predictions - scaled_targets.detach()) ** 2
 
                 # Compute weights - use global config if available
-                # Clamp t to [eps, 1-eps] ONLY for gamma computation in weighting/clipping
-                t_clamped = torch.clamp(t, self.eps, 1 - self.eps)
+                # t_clamped is already clamped to [eps_train, 1-eps_train] above
                 g_t = self.g(t_clamped)
                 import builtins
                 WEIGHT_EXP = getattr(builtins, '_CFG_WEIGHT_EXP', 0)
                 if WEIGHT_EXP == 0:
                     weights = torch.ones_like(mse_per_sample)
                 else:
-                    weights = std_t**2 / (g_t + self.eps)**WEIGHT_EXP
+                    weights = std_t**2 / (g_t + self.eps_train)**WEIGHT_EXP
 
                 loss = (mse_per_sample * weights).mean()
 
@@ -633,7 +638,7 @@ class DirectELDREstimator3(ELDREstimator):
                 CLIP_BASE = 10.0
                 CLIP_GAMMA_EXP = getattr(builtins, '_CFG_CLIP_GAMMA_EXP', -2)
                 gamma_min = g_t.min().item()  # Now uses clamped gamma
-                clip_norm = CLIP_BASE * (gamma_min + self.eps)**CLIP_GAMMA_EXP
+                clip_norm = CLIP_BASE * (gamma_min + self.eps_train)**CLIP_GAMMA_EXP
                 torch.nn.utils.clip_grad_norm_(self.noiser_network.parameters(), max_norm=clip_norm)
                 optimizer.step()
                 scheduler.step()  # Step per iteration for warmup
@@ -772,9 +777,7 @@ class DirectELDREstimator3(ELDREstimator):
 
             # LR scheduler is stepped per iteration (see above)
 
-        # Restore best ELDR model (not best loss model)
-        if best_eldr_model_state is not None:
-            self.noiser_network.load_state_dict(best_eldr_model_state)
+        # Don't restore - use final model state
         self._best_stats = best_stats
 
     def _integrate_noiser(self, dim: int) -> float:
@@ -784,7 +787,10 @@ class DirectELDREstimator3(ELDREstimator):
         The full integrand is:
             (mean + std * NN(t)) / gamma^3
 
-        Uses simple Monte Carlo integration with uniform grid.
+        Uses integration method specified by self.integration_type:
+            '1': Monte Carlo (mean * range)
+            '2': Trapezoidal (torch.trapz)
+            '3': Simpson's rule
 
         Args:
             dim: Dimensionality of the data
@@ -795,6 +801,9 @@ class DirectELDREstimator3(ELDREstimator):
         self.noiser_network.eval()
 
         n_points = self.integration_steps
+        # Ensure odd number of points for Simpson's rule
+        if self.integration_type == '3' and n_points % 2 == 0:
+            n_points += 1
         t_vals = torch.linspace(self.eps_eval, 1 - self.eps_eval, n_points, device=self.device)
 
         with torch.no_grad():
@@ -808,9 +817,24 @@ class DirectELDREstimator3(ELDREstimator):
             noiser_term = (mean_vals + std_vals * nn_predictions) / (gamma_vals ** 3)
             integrand = -noiser_term  # Negate to fix sign
 
-        # Monte Carlo integration: integral ≈ (b - a) * mean(f)
-        integration_range = (1 - self.eps_eval) - self.eps_eval  # = 1 - 2*eps_eval
-        integral = integration_range * integrand.mean().item()
+        # Integration based on type
+        if self.integration_type == '3':
+            # Simpson's rule integration
+            h = (t_vals[-1] - t_vals[0]) / (n_points - 1)
+            integral_val = integrand[0] + integrand[-1]
+            for i in range(1, n_points - 1):
+                if i % 2 == 0:
+                    integral_val = integral_val + 2 * integrand[i]
+                else:
+                    integral_val = integral_val + 4 * integrand[i]
+            integral = float((h / 3 * integral_val).item())
+        elif self.integration_type == '2':
+            # Trapezoidal integration
+            integral = float(torch.trapz(integrand, t_vals).item())
+        else:  # '1' - Monte Carlo
+            # Monte Carlo integration: integral ≈ (b - a) * mean(f)
+            integration_range = (1 - self.eps_eval) - self.eps_eval  # = 1 - 2*eps_eval
+            integral = float(integration_range * integrand.mean().item())
 
         # Debug prints
         if hasattr(self, '_debug_integrate') and self._debug_integrate:
@@ -821,7 +845,7 @@ class DirectELDREstimator3(ELDREstimator):
             print(f"  [integrate] nn_predictions range: [{nn_predictions.min().item():.4f}, {nn_predictions.max().item():.4f}]")
             print(f"  [integrate] noiser_term range: [{noiser_term.min().item():.4f}, {noiser_term.max().item():.4f}]")
             print(f"  [integrate] integrand mean: {integrand.mean().item():.4f}")
-            print(f"  [integrate] integration_range: {integration_range:.4f}, integral: {integral:.4f}")
+            print(f"  [integrate] integration_type: {self.integration_type}, integral: {integral:.4f}")
 
         return float(integral)
 
@@ -893,11 +917,21 @@ if __name__ == '__main__':
     # === CONFIGS TO TRY (update based on analysis) ===
     # Test best config with more seeds
     # Best configuration found through HPO:
-    # eps=0.03, lr=2e-6, k=16, epochs=100, NSAMPLES=8192
+    # eps_train=0.03, lr=2e-6, k=16, epochs=100, NSAMPLES=8192
     # Mean error: ~0.9 (across 5 seeds), Best error: ~0.17
     # Final run: Use seed 0 which showed good results
     CONFIGS = [
-        {'name': 'best_config', 'eps': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 0}
+        # {'name': 'k=16, eps 0.003/0.02', 'eps_train': 0.003, 'eps_eval': 0.02, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 0},
+        # {'name': 'k=16, eps 0.006/0.02', 'eps_train': 0.006, 'eps_eval': 0.02, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 0},
+        {'name': 'seed=0, eps 0.009/0.02', 'eps_train': 0.009, 'eps_eval': 0.02, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 0},
+        # {'name': 'seed=0, eps 0.001/0.01', 'eps_train': 0.001, 'eps_eval': 0.01, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 0},
+        {'name': 'seed=1, eps 0.009/0.02', 'eps_train': 0.009, 'eps_eval': 0.02, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 1},
+        {'name': 'seed=2, eps 0.009/0.02', 'eps_train': 0.009, 'eps_eval': 0.02, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 2},
+        {'name': 'seed=3, eps 0.009/0.02', 'eps_train': 0.009, 'eps_eval': 0.02, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 3},
+        # {'name': 'seed=1, eps 0.001/0.01', 'eps_train': 0.001, 'eps_eval': 0.01, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 1},
+        # {'name': 'k=16, eps 0.001/0.02', 'eps_train': 0.001, 'eps_eval': 0.02, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 0},
+        # {'name': 'k=16, eps 0.03/0.03', 'eps_train': 0.03, 'eps_eval': 0.05, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 16, 'seed': 0},
+        # {'name': 'k=24, eps 0.03/0.05', 'eps_train': 0.03, 'eps_eval': 0.05, 'lr': 2e-6, 'weight_exp': 0, 'clip_exp': -2, 'k': 24, 'seed': 0},
     ]
 
     all_results = {}
@@ -917,13 +951,13 @@ if __name__ == '__main__':
             num_layers=3,
             time_embed_size=128,
             k=cfg.get('k', 16.0),
-            eps=cfg['eps'],
+            eps_train=cfg['eps_train'],
             eps_eval=cfg['eps_eval'],
             learning_rate=cfg['lr'],
             weight_decay=1e-4,
-            num_epochs=100,
+            num_epochs=1000,
             batch_size=256,
-            patience=1000,
+            patience=100000,
             verbose=False,  # Use plots instead
             integration_steps=100,
             convergence_threshold=1e-8
@@ -1009,7 +1043,7 @@ if __name__ == '__main__':
         ax.set_xlabel('t' if ax in axes[1] else 'Iteration')
 
     plt.tight_layout()
-    plt.savefig('hpo_curves.png', dpi=150)
+    plt.savefig('hpo_curvesA.png', dpi=150)
     plt.show()
     # Print summary statistics
     errors = [r['final_err'] for r in all_results.values()]
