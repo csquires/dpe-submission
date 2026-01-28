@@ -13,7 +13,7 @@ args = parser.parse_args()
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM
+from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 from src.eldr_estimation.direct_adapters import make_direct3_estimator, make_direct4_estimator, make_direct5_estimator
 
@@ -55,6 +55,8 @@ mdre = MDRE(mdre_classifier, device=DEVICE)
 
 tsm = TSM(DATA_DIM + 1, device=DEVICE)
 
+triangular_tsm = TriangularTSM(DATA_DIM + 1, device=DEVICE)
+
 # instantiate spatial velo denoiser
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM+1, device=DEVICE)
 
@@ -69,7 +71,8 @@ dre_algorithms = [
     ("TDRE_5", tdre),
     ("MDRE_15", mdre),
     ("TSM", tsm),
-    ("Spatial", spatial),
+    ("TriangularTSM", triangular_tsm),
+    ("VFM", spatial),
 ]
 
 # Direct ELDR algorithms (use estimate_eldr directly)
@@ -83,9 +86,12 @@ direct_algorithms = [
 algorithms = dre_algorithms + direct_algorithms
 
 
-def estimate_eldr_from_dre(dre, samples_pstar, samples_p0, samples_p1):
+def estimate_eldr_from_dre(dre, samples_pstar, samples_p0, samples_p1, alg_name=""):
     """Estimate ELDR using a density ratio estimator (fit/predict pattern)."""
-    dre.fit(samples_p0, samples_p1)
+    if alg_name == "TriangularTSM":
+        dre.fit(samples_p0, samples_p1, samples_pstar)  # 3-arg fit
+    else:
+        dre.fit(samples_p0, samples_p1)  # 2-arg fit
     est_ldrs = dre.predict_ldr(samples_pstar)
     return torch.mean(est_ldrs)
 
@@ -120,7 +126,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             samples_p1 = torch.cat([theta1, y1], dim=1)  # (NSAMPLES, DATA_DIM+1)
 
             # estimate ELDR using fit/predict pattern
-            est_eldr = estimate_eldr_from_dre(alg, samples_pstar, samples_p0, samples_p1)
+            est_eldr = estimate_eldr_from_dre(alg, samples_pstar, samples_p0, samples_p1, alg_name=alg_name)
             est_eldrs_arr[idx] = est_eldr.item() if isinstance(est_eldr, torch.Tensor) else est_eldr
 
         with h5py.File(results_filename, 'a') as f:

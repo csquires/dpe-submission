@@ -23,7 +23,7 @@ colors = {
     "MDRE_15": "#2ca02c",
     "TSM": "#d62728",
     "TriangularTSM": "#17becf",
-    "Spatial": "#9467bd",
+    "VFM": "#9467bd",
     "Direct3": "#8c564b",
 }
 
@@ -33,7 +33,7 @@ plt.style.use('half-width.mplstyle')
 label_map = {
     "TDRE_5": "TDRE(5)",
     "MDRE_15": "MDRE(15)",
-    "Spatial": "Spatial",
+    "VFM": "VFM",
     "Direct3": "Direct3",
 }
 

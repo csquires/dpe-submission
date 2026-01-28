@@ -136,7 +136,7 @@ algorithms = [
     ("TriangularTDRE", triangular_tdre),
     ("TriangularTDRE_Gauss", triangular_tdre_gauss),
     ("TriangularMDRE", triangular_mdre),
-    ("Spatial", spatial),
+    ("VFM", spatial),
 ]
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)

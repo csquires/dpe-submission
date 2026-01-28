@@ -1,3 +1,10 @@
+"""
+Step 2a: Run DRE Algorithms for Plugin DRE Experiment (Parallel Version)
+
+Trains density ratio estimation algorithms on the training samples
+and evaluates them on the uniform grid. Processes a subset of datasets
+for parallel execution.
+"""
 import argparse
 import json
 import math
@@ -37,27 +44,28 @@ config = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
 # directories
 DATA_DIR = config['data_dir']
-RAW_RESULTS_DIR = config['raw_results_dir']
+RESULTS_DIR = config['results_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
 NSAMPLES_TRAIN = config['nsamples_train']
-NSAMPLES_TEST = config['nsamples_test']
-NTEST_SETS = config['ntest_sets']
+# algorithm parameters
+TDRE_WAYPOINTS = config['tdre_waypoints']
+MDRE_WAYPOINTS = config['mdre_waypoints']
 # random seed
 SEED = config['seed']
 np.random.seed(SEED + task_id)  # Different seed per task for reproducibility
 torch.manual_seed(SEED + task_id)
 
-dataset_filename = f'{DATA_DIR}/dataset_newpstar.h5'
-results_filename = f'{RAW_RESULTS_DIR}/new_pstar_task_{task_id}.h5'
+dataset_filename = f'{DATA_DIR}/dataset.h5'
+results_filename = f'{RESULTS_DIR}/raw_results_task_{task_id}.h5'
 
-# instantiate bdre
+# Instantiate BDRE
 bdre_classifier = make_binary_classifier(name="default", input_dim=DATA_DIM)
 bdre = BDRE(bdre_classifier, device=DEVICE)
-# instantiate tdre variants
-tdre_waypoints = [5]
+
+# Instantiate TDRE variants
 tdre_variants = []
-for num_waypoints_tdre in tdre_waypoints:
+for num_waypoints_tdre in TDRE_WAYPOINTS:
     tdre_classifiers = make_pairwise_binary_classifiers(
         name="default",
         num_classes=num_waypoints_tdre,
@@ -65,10 +73,9 @@ for num_waypoints_tdre in tdre_waypoints:
     )
     tdre_variants.append((f"TDRE_{num_waypoints_tdre}", TDRE(tdre_classifiers, num_waypoints=num_waypoints_tdre, device=DEVICE)))
 
-# instantiate mdre variants
-mdre_waypoints = [15]
+# Instantiate MDRE variants
 mdre_variants = []
-for num_waypoints_mdre in mdre_waypoints:
+for num_waypoints_mdre in MDRE_WAYPOINTS:
     mdre_classifier = make_multiclass_classifier(
         name="default",
         input_dim=DATA_DIM,
@@ -76,27 +83,32 @@ for num_waypoints_mdre in mdre_waypoints:
     )
     mdre_variants.append((f"MDRE_{num_waypoints_mdre}", MDRE(mdre_classifier, device=DEVICE)))
 
-# instantiate tsm
-tsm = TSM(DATA_DIM, device=DEVICE)
-# instantiate triangular tsm
-triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
-# instantiate spatial velo denoiser
+# Instantiate Spatial
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
+# Instantiate TSM
+tsm = TSM(DATA_DIM, device=DEVICE)
+
+# Instantiate TriangularTSM
+triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
+
+# List of all algorithms to run
 algorithms = [
     ("BDRE", bdre),
+    *tdre_variants,
+    *mdre_variants,
+    ("VFM", spatial),
     ("TSM", tsm),
     ("TriangularTSM", triangular_tsm),
-    *tdre_variants,  # TDRE_5
-    *mdre_variants,  # MDRE_15
-    ("VFM", spatial),
 ]
 
-os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
+# Create results directory
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # Open dataset file in read-only mode (safe for concurrent access)
 with h5py.File(dataset_filename, 'r') as dataset_file:
     nrows = dataset_file['kl_distance_arr'].shape[0]
+    num_grid_points = dataset_file['grid_points_arr'].shape[1]
 
     # Compute dataset range for this task
     datasets_per_task = math.ceil(nrows / args.num_tasks)
@@ -118,32 +130,37 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             print(f"Task {task_id}: Existing results for: {list(results_file.keys())}")
 
     for alg_name, alg in algorithms:
-        dataset_name = f'est_ldrs_arr_{alg_name}'
+        dataset_name = f'est_ldrs_grid_{alg_name}'
         if dataset_name in existing_results and not args.force:
             print(f"Task {task_id}: Skipping {alg_name} (results exist, use --force to overwrite)")
             continue
 
-        est_ldrs_arr = np.zeros((job_nrows, NTEST_SETS, NSAMPLES_TEST))
+        print(f"\nTask {task_id}: Running {alg_name}...")
+        est_ldrs_arr = np.zeros((job_nrows, num_grid_points))
 
         for local_idx, global_idx in enumerate(trange(start_idx, end_idx, desc=f"Task {task_id} - {alg_name}")):
+            # Load training samples
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][global_idx]).to(DEVICE)
             samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][global_idx]).to(DEVICE)
-            if alg_name in {"TriangularTSM", "TriangularTDRE"}:
-                pstar_train = torch.from_numpy(dataset_file['samples_pstar_train_arr'][global_idx]).to(DEVICE)
-                alg.fit(samples_p0, samples_p1, pstar_train)
+
+            # Train algorithm (special handling for TriangularTSM)
+            if alg_name == "TriangularTSM":
+                alg.fit(samples_p0, samples_p1, samples_p0)  # use p0 as pstar
             else:
                 alg.fit(samples_p0, samples_p1)
 
-            samples_pstar = torch.from_numpy(dataset_file['samples_pstar_arr'][global_idx]).to(DEVICE)
-            for test_set_idx in range(NTEST_SETS):
-                est_ldrs = alg.predict_ldr(samples_pstar[test_set_idx])
-                est_ldrs_arr[local_idx, test_set_idx] = est_ldrs.cpu().numpy()
+            # Evaluate on grid
+            grid_points = torch.from_numpy(dataset_file['grid_points_arr'][global_idx]).to(DEVICE)
+            est_ldrs = alg.predict_ldr(grid_points)
+            est_ldrs_arr[local_idx] = est_ldrs.cpu().numpy()
 
-        # Write to task-specific file
-        with h5py.File(results_filename, 'a') as f:
-            if dataset_name in f:
-                del f[dataset_name]
-            f.create_dataset(dataset_name, data=est_ldrs_arr)
+        # Save results
+        with h5py.File(results_filename, 'a') as results_file:
+            if dataset_name in results_file:
+                del results_file[dataset_name]
+            results_file.create_dataset(dataset_name, data=est_ldrs_arr)
+
+        print(f"  Task {task_id}: Results saved for {alg_name}")
 
     # Store metadata for step2b
     alg_names = [name for name, _ in algorithms]
@@ -153,6 +170,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         f.attrs['end_idx'] = end_idx
         f.attrs['num_tasks'] = args.num_tasks
         f.attrs['nrows_total'] = nrows
+        f.attrs['num_grid_points'] = num_grid_points
         f.attrs['algorithm_names'] = json.dumps(alg_names)
 
-print(f"Task {task_id}: Completed. Results saved to {results_filename}")
+print(f"\nTask {task_id}: Completed. Results saved to {results_filename}")

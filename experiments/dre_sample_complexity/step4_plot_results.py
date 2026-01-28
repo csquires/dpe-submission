@@ -56,7 +56,7 @@ colors = {
     "MDRE_15": "#2ca02c",
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
-    "Spatial": "#9467bd",
+    "VFM": "#9467bd",
 }
 
 tdre_order = ["TDRE_5"]
@@ -80,8 +80,8 @@ def get_algorithms_to_plot(data_dict):
     for mdre_name in mdre_order:
         if mdre_name in data_dict:
             algs.append((mdre_name, "MDRE"))
-    if "Spatial" in data_dict:
-        algs.append(("Spatial", "Spatial"))
+    if "VFM" in data_dict:
+        algs.append(("VFM", "VFM"))
     return algs
 
 

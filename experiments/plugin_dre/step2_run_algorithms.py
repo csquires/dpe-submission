@@ -22,6 +22,8 @@ from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.tdre import TDRE
 from src.density_ratio_estimation.mdre import MDRE
+from src.density_ratio_estimation.tsm import TSM
+from src.density_ratio_estimation.triangular_tsm import TriangularTSM
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
 
@@ -78,12 +80,20 @@ for num_waypoints_mdre in MDRE_WAYPOINTS:
 # Instantiate Spatial
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
+# Instantiate TSM
+tsm = TSM(DATA_DIM, device=DEVICE)
+
+# Instantiate TriangularTSM
+triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
+
 # List of all algorithms to run
 algorithms = [
     ("BDRE", bdre),
     *tdre_variants,
     *mdre_variants,
-    ("Spatial", spatial),
+    ("VFM", spatial),
+    ("TSM", tsm),
+    ("TriangularTSM", triangular_tsm),
 ]
 
 # Create results directory
@@ -107,8 +117,11 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][idx]).to(DEVICE)
             samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][idx]).to(DEVICE)
 
-            # Train algorithm
-            alg.fit(samples_p0, samples_p1)
+            # Train algorithm (special handling for TriangularTSM)
+            if alg_name == "TriangularTSM":
+                alg.fit(samples_p0, samples_p1, samples_p0)  # use p0 as pstar
+            else:
+                alg.fit(samples_p0, samples_p1)
 
             # Evaluate on grid
             grid_points = torch.from_numpy(dataset_file['grid_points_arr'][idx]).to(DEVICE)
