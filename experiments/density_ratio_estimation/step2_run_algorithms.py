@@ -12,6 +12,7 @@ parser.add_argument('--force', action='store_true', help='Force re-run of all al
 args = parser.parse_args()
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
+from src.models.binary_classification.gaussian_binary_classifier import make_gaussian_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.tdre import TDRE
@@ -19,6 +20,7 @@ from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_tsm import TriangularTSM
 from src.density_ratio_estimation.triangular_tdre import TriangularTDRE
+from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
 
@@ -41,7 +43,7 @@ torch.manual_seed(SEED)
 # dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 dataset_filename = f'{DATA_DIR}/dataset_newpstar.h5'
 # results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-results_filename = f'{RAW_RESULTS_DIR}/new_pstar.h5'
+results_filename = f'{RAW_RESULTS_DIR}/new_pstar2.h5'
 
 existing_results = set()
 if os.path.exists(results_filename):
@@ -62,6 +64,14 @@ for num_waypoints_tdre in tdre_waypoints:
         input_dim=DATA_DIM,
     )
     tdre_variants.append((f"TDRE_{num_waypoints_tdre}", TDRE(tdre_classifiers, num_waypoints=num_waypoints_tdre, device=DEVICE)))
+
+# instantiate gaussian-tdre variants
+tdre_gauss_variants = []
+for num_waypoints_tdre in tdre_waypoints:
+    tdre_gauss_classifiers = [make_gaussian_binary_classifier(input_dim=DATA_DIM) for _ in range(num_waypoints_tdre - 1)]
+    tdre_gauss_variants.append(
+        (f"TDRE_{num_waypoints_tdre}_Gauss", TDRE(tdre_gauss_classifiers, num_waypoints=num_waypoints_tdre, device=DEVICE))
+    )
 
 # instantiate mdre variants
 mdre_waypoints = [15]
@@ -89,6 +99,30 @@ triangular_tdre = TriangularTDRE(
     triangular_tdre_classifiers,
     num_waypoints=triangular_tdre_waypoints,
     device=DEVICE,
+    midpoint_oversample=7,
+    gamma_power=3.0,
+)
+# instantiate triangular tdre with gaussian classifiers
+triangular_tdre_gauss_classifiers = [make_gaussian_binary_classifier(input_dim=DATA_DIM) for _ in range(triangular_tdre_waypoints - 1)]
+triangular_tdre_gauss = TriangularTDRE(
+    triangular_tdre_gauss_classifiers,
+    num_waypoints=triangular_tdre_waypoints,
+    device=DEVICE,
+    midpoint_oversample=7,
+    gamma_power=3.0,
+)
+# instantiate triangular mdre
+triangular_mdre_waypoints = 15
+triangular_mdre_classifier = make_multiclass_classifier(
+    name="default",
+    input_dim=DATA_DIM,
+    num_classes=triangular_mdre_waypoints,
+)
+triangular_mdre = TriangularMDRE(
+    triangular_mdre_classifier,
+    device=DEVICE,
+    midpoint_oversample=7,
+    gamma_power=3.0,
 )
 # instantiate spatial velo denoiser
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
@@ -99,9 +133,12 @@ algorithms = [
     # ("MDRE", mdre),
     # ("TriangularTSM", triangular_tsm),
     ("TriangularTDRE", triangular_tdre),
+    ("TriangularTDRE_Gauss", triangular_tdre_gauss),
+    ("TriangularMDRE", triangular_mdre),
     # ("TSM", tsm),
     *tdre_variants,
-    #*mdre_variants,
+    *tdre_gauss_variants,
+    *mdre_variants,
     #("Spatial", spatial),
 ]
 
@@ -119,7 +156,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         for idx in trange(nrows):
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
             samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
-            if alg_name in {"TriangularTSM", "TriangularTDRE"}:
+            if alg_name in {"TriangularTSM", "TriangularTDRE", "TriangularMDRE"}:
                 pstar_train = torch.from_numpy(dataset_file['samples_pstar_train_arr'][idx]).to(DEVICE)
                 alg.fit(samples_p0, samples_p1, pstar_train)
             else:
