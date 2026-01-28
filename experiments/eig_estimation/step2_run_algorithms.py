@@ -106,7 +106,7 @@ algorithms = [
     ("MDRE_15", mdre_plugin),
     ("TSM", tsm_plugin),
     ("TriangularTSM", triangular_tsm_plugin),
-    ("SpatialDenoiser", spatial_denoiser_plugin),
+    ("VFM"", spatial_denoiser_plugin),
     ("SpatialScore", spatial_score_plugin),
     ("Direct3", direct3_plugin),
     ("Direct4", direct4_plugin),

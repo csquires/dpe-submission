@@ -38,6 +38,8 @@ label_map = {
 }
 
 for alg_name, maes in mae_by_beta.items():
+    if alg_name in ['Direct3', 'VFM']:
+        continue
     color = colors.get(alg_name, None)
     label = label_map.get(alg_name, alg_name)
     plt.plot(design_eig_percentages, maes, label=label, color=color)
