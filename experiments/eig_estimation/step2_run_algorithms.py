@@ -116,7 +116,8 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         for idx in trange(nrows):
             theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, DATA_DIM)
             y_samples = torch.from_numpy(dataset_file['y_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, 1)
-            est_eigs_arr[idx] = alg.estimate_eig(theta_samples, y_samples).item()
+            result = alg.estimate_eig(theta_samples, y_samples)
+            est_eigs_arr[idx] = result.item() if hasattr(result, 'item') else result
 
         with h5py.File(results_filename, 'a') as results_file:
             if dataset_name in results_file:

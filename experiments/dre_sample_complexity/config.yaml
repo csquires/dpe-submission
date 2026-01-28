@@ -1,0 +1,12 @@
+data_dir: "experiments/dre_sample_complexity/data"
+raw_results_dir: "experiments/dre_sample_complexity/raw_results"
+processed_results_dir: "experiments/dre_sample_complexity/processed_results"
+figures_dir: "experiments/dre_sample_complexity/figures"
+data_dim: 3
+gamma: 0.05
+kl_distances: [0.6, 5.4, 32.4]
+num_instances_per_kl: 20
+nsamples_train_values: [100, 300, 900, 1800, 3600, 5400, 8100]
+nsamples_test: 1024
+device: "cuda"
+seed: 1729

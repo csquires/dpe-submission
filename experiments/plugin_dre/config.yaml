@@ -1,0 +1,24 @@
+data_dir: "experiments/plugin_dre/data"
+results_dir: "experiments/plugin_dre/results"
+figures_dir: "experiments/plugin_dre/figures"
+
+data_dim: 2
+kl_distances: [0.5, 2.0, 4.0, 8.0]
+num_instances_per_kl: 1        # Single instance per KL (simpler visualization)
+nsamples_train: 10000          # Large training set
+
+# Grid parameters
+grid_size: 30                  # 30x30 grid = 900 evaluation points
+n_std_padding: 3.0             # 3-sigma region around modes
+
+# Visualization
+rgb_resolution: 300            # Background density image resolution
+marker_size_min: 0.5
+marker_size_max: 15
+
+# Algorithms
+tdre_waypoints: [5]
+mdre_waypoints: [15]
+
+device: "cuda"
+seed: 1729
