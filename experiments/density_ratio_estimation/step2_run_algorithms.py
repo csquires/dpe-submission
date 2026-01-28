@@ -18,6 +18,7 @@ from src.density_ratio_estimation.tdre import TDRE
 from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_tsm import TriangularTSM
+from src.density_ratio_estimation.triangular_tdre import TriangularTDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
 
@@ -37,10 +38,10 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-#dataset_filename = f'{DATA_DIR}/dataset.h5'
-results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-#results_filename = f'{RAW_RESULTS_DIR}/added_cauchy_01.h5'
+# dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+dataset_filename = f'{DATA_DIR}/dataset_newpstar.h5'
+# results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+results_filename = f'{RAW_RESULTS_DIR}/new_pstar.h5'
 
 existing_results = set()
 if os.path.exists(results_filename):
@@ -77,18 +78,31 @@ for num_waypoints_mdre in mdre_waypoints:
 tsm = TSM(DATA_DIM, device=DEVICE)
 # instantiate triangular tsm
 triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
+# instantiate triangular tdre
+triangular_tdre_waypoints = 5
+triangular_tdre_classifiers = make_pairwise_binary_classifiers(
+    name="default",
+    num_classes=triangular_tdre_waypoints,
+    input_dim=DATA_DIM,
+)
+triangular_tdre = TriangularTDRE(
+    triangular_tdre_classifiers,
+    num_waypoints=triangular_tdre_waypoints,
+    device=DEVICE,
+)
 # instantiate spatial velo denoiser
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
 algorithms = [
-    ("BDRE", bdre),
+    # ("BDRE", bdre),
     # ("TDRE", tdre),
     # ("MDRE", mdre),
-    ("TriangularTSM", triangular_tsm),
-    ("TSM", tsm),
+    # ("TriangularTSM", triangular_tsm),
+    ("TriangularTDRE", triangular_tdre),
+    # ("TSM", tsm),
     *tdre_variants,
-    *mdre_variants,
-    ("Spatial", spatial),
+    #*mdre_variants,
+    #("Spatial", spatial),
 ]
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
@@ -105,7 +119,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         for idx in trange(nrows):
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
             samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
-            if alg_name == "TriangularTSM":
+            if alg_name in {"TriangularTSM", "TriangularTDRE"}:
                 pstar_train = torch.from_numpy(dataset_file['samples_pstar_train_arr'][idx]).to(DEVICE)
                 alg.fit(samples_p0, samples_p1, pstar_train)
             else:
