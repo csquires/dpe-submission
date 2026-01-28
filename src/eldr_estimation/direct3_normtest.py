@@ -1,11 +1,14 @@
 """
-Direct ELDR Estimation using Stochastic Interpolants (Version 3)
+Direct ELDR Estimation using Stochastic Interpolants (Version 3) - Normalization Mode Test
 
-Estimates E_{p_*}[log(p_0(x)/p_1(x))] by learning the expected time-derivative
-of log p_t along a stochastic interpolant path, then integrating over [0, 1].
+Copy of direct3.py with modifications to test 4 normalization modes:
+- 'default': Original behavior
+- 'sym_mean_asym_std': Symmetric mean (mean(t) - mean(1-t))/2, asymmetric std
+- 'sym_mean_sym_std': Symmetric mean and std (std(t) + std(1-t))/2
+- 'no_mean_asym_std': Zero mean, asymmetric std
+- 'no_mean_no_std': Zero mean, unit std (no normalization)
 """
 
-import builtins
 import torch
 import torch.nn as nn
 import numpy as np
@@ -83,12 +86,12 @@ class NoiserNetwork(nn.Module):
         layers = []
         layers.append(nn.Linear(2 * time_embed_size, hidden_dim))
         layers.append(nn.LayerNorm(hidden_dim))
-        layers.append(nn.GELU())
+        layers.append(nn.ReLU())
 
         for _ in range(num_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
             layers.append(nn.LayerNorm(hidden_dim))
-            layers.append(nn.GELU())
+            layers.append(nn.ReLU())
             layers.append(nn.Dropout(dropout_p))
 
         layers.append(nn.Linear(hidden_dim, 1))
@@ -120,7 +123,7 @@ class NoiserNetwork(nn.Module):
                     nn.init.zeros_(module.bias)
 
 
-class DirectELDREstimator3(ELDREstimator):
+class DirectELDREstimator3NormTest(ELDREstimator):
     def __init__(
         self,
         input_dim: int,
@@ -139,13 +142,14 @@ class DirectELDREstimator3(ELDREstimator):
         weight_decay: float = 1e-4,
         num_epochs: int = 1000,
         batch_size: int = 256,
-        gamma_weight_exp: float = 0.0,  # Loss weighting exponent: 0 = uniform, 3 = match integration importance
         # Integration hyperparameters
         integration_steps: int = 100,
         integration_type: Literal['1', '2', '3'] = '1',  # '1': MC, '2': trapz, '3': Simpson
         # Convergence hyperparameters
         convergence_threshold: float = 1e-4,
         patience: int = 200,
+        # Normalization mode
+        norm_mode: str = 'default',  # 'default', 'sym_mean_asym_std', 'sym_mean_sym_std', 'no_mean_asym_std', 'no_mean_no_std'
         # Misc
         verbose: bool = False,
         device: Optional[str] = None,
@@ -165,11 +169,11 @@ class DirectELDREstimator3(ELDREstimator):
             weight_decay: Weight decay for regularization
             num_epochs: Maximum training epochs
             batch_size: Batch size for training
-            gamma_weight_exp: Loss weighting exponent for importance sampling (0 = uniform, 3 = match integration)
             integration_steps: Number of points for numerical integration
             integration_type: '1' for MC, '2' for trapz, '3' for Simpson
             convergence_threshold: Stop if loss change < threshold for patience steps
             patience: Number of steps to wait for convergence
+            norm_mode: Normalization mode - 'default', 'sym_mean_asym_std', 'sym_mean_sym_std', 'no_mean_asym_std', 'no_mean_no_std'
             verbose: Print training progress
             device: Device to use ('cuda', 'cpu', or None for auto)
         """
@@ -188,6 +192,7 @@ class DirectELDREstimator3(ELDREstimator):
         self.eps_train = eps_train
         self.eps_eval = eps_eval
         self.integration_type = integration_type
+        self.norm_mode = norm_mode
 
         self.noiser_network = NoiserNetwork(
             hidden_dim=hidden_dim,
@@ -201,7 +206,6 @@ class DirectELDREstimator3(ELDREstimator):
         self.weight_decay = weight_decay
         self.num_epochs = num_epochs
         self.batch_size = batch_size
-        self.gamma_weight_exp = gamma_weight_exp
         self.integration_steps = integration_steps
         self.convergence_threshold = convergence_threshold
         self.patience = patience
@@ -329,11 +333,11 @@ class DirectELDREstimator3(ELDREstimator):
         std_Y = Y.std() + 1e-8
         return mean_Y, std_Y
 
-    def _interpolate_E_eta(self, t: torch.Tensor) -> torch.Tensor:
+    def _interpolate_mean(self, t: torch.Tensor) -> torch.Tensor:
         """
-        Interpolate E[η](t) (expected estimand) from precomputed grid.
+        Interpolate mean(t) from precomputed grid.
 
-        NOTE: E[η](t) should NEVER use clamped t.
+        NOTE: mean(t) should NEVER use clamped t.
 
         Args:
             t: Time values [batch] or scalar (NOT clamped)
@@ -347,8 +351,8 @@ class DirectELDREstimator3(ELDREstimator):
         idx_high = torch.clamp(idx_low + 1, max=len(self._v_grid_t) - 1)
         frac = idx_float - idx_low.float()
 
-        mean_low = self._E_eta_grid_vals[idx_low]
-        mean_high = self._E_eta_grid_vals[idx_high]
+        mean_low = self._mean_grid_vals[idx_low]
+        mean_high = self._mean_grid_vals[idx_high]
         return mean_low + frac * (mean_high - mean_low)
 
     def _interpolate_std(self, t: torch.Tensor) -> torch.Tensor:
@@ -377,6 +381,54 @@ class DirectELDREstimator3(ELDREstimator):
         std_low = self._std_grid_vals[idx_low]
         std_high = self._std_grid_vals[idx_high]
         return std_low + frac * (std_high - std_low)
+
+    def _get_mean(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Get mean(t) according to normalization mode.
+
+        Modes:
+        - 'default': Original mean(t)
+        - 'sym_mean_*': (mean(t) - mean(1-t)) / 2 (antisymmetric)
+        - 'no_mean_*': Zero
+
+        Args:
+            t: Time values [batch] or scalar
+
+        Returns:
+            Mean values matching input shape
+        """
+        if self.norm_mode in ('no_mean_asym_std', 'no_mean_no_std'):
+            return torch.zeros_like(t)
+        elif self.norm_mode in ('sym_mean_asym_std', 'sym_mean_sym_std'):
+            mean_t = self._interpolate_mean(t)
+            mean_1_minus_t = self._interpolate_mean(1 - t)
+            return (mean_t - mean_1_minus_t) / 2
+        else:  # 'default'
+            return self._interpolate_mean(t)
+
+    def _get_std(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Get std(t) according to normalization mode.
+
+        Modes:
+        - 'default', 'sym_mean_asym_std', 'no_mean_asym_std': Original std(t)
+        - 'sym_mean_sym_std': (std(t) + std(1-t)) / 2 (symmetric)
+        - 'no_mean_no_std': 1 (no normalization)
+
+        Args:
+            t: Time values [batch] or scalar
+
+        Returns:
+            Std values matching input shape
+        """
+        if self.norm_mode == 'no_mean_no_std':
+            return torch.ones_like(t)
+        elif self.norm_mode == 'sym_mean_sym_std':
+            std_t = self._interpolate_std(t)
+            std_1_minus_t = self._interpolate_std(1 - t)
+            return (std_t + std_1_minus_t) / 2
+        else:  # 'default', 'sym_mean_asym_std', 'no_mean_asym_std'
+            return self._interpolate_std(t)
 
     def _compute_marginal_score(
         self,
@@ -515,21 +567,21 @@ class DirectELDREstimator3(ELDREstimator):
         n_p1 = samples_p1.shape[0]
         dim = samples_base.shape[-1]
 
-        # Precompute E[η](t) and std(t) on a grid for normalization
+        # Precompute mean(t) and std(t) on a grid for normalization
         n_v_grid = 100
         self._v_grid_t = torch.linspace(0, 1, n_v_grid, device=self.device)
-        self._E_eta_grid_vals = []
+        self._mean_grid_vals = []
         self._std_grid_vals = []
         with torch.no_grad():
             for t_val in self._v_grid_t:
-                E_eta_t, std_t = self._compute_estimand_stats(t_val, samples_p0, samples_p1)
-                self._E_eta_grid_vals.append(E_eta_t)
+                mean_t, std_t = self._compute_estimand_stats(t_val, samples_p0, samples_p1)
+                self._mean_grid_vals.append(mean_t)
                 self._std_grid_vals.append(std_t)
-        self._E_eta_grid_vals = torch.stack(self._E_eta_grid_vals)
+        self._mean_grid_vals = torch.stack(self._mean_grid_vals)
         self._std_grid_vals = torch.stack(self._std_grid_vals)
 
         if self.verbose:
-            print(f"E[η](t) range: [{self._E_eta_grid_vals.min().item():.4f}, {self._E_eta_grid_vals.max().item():.4f}]")
+            print(f"mean(t) range: [{self._mean_grid_vals.min().item():.4f}, {self._mean_grid_vals.max().item():.4f}]")
             print(f"std(t) range: [{self._std_grid_vals.min().item():.4f}, {self._std_grid_vals.max().item():.4f}]")
 
         optimizer = torch.optim.AdamW(
@@ -576,21 +628,12 @@ class DirectELDREstimator3(ELDREstimator):
 
                 sanity_check_targets = torch.stack(sanity_check_targets)
                 decentered_targets = torch.stack(decentered_targets)
-                # MC integration: ∫_ε^{1-ε} f dt ≈ (1-2ε) * mean(f)
-                integration_range = (1 - self.eps_eval) - self.eps_eval
-                true_eldr = -integration_range * sanity_check_targets.mean().item()
-                true_eldr_no_range = -sanity_check_targets.mean().item()  # For comparison
+                true_eldr = -sanity_check_targets.mean().item()
                 self._sanity_eldr = true_eldr  # Store for later access
-                self._sanity_eldr_no_range = true_eldr_no_range
-                print(f'Sanity Check: ELDR {true_eldr:.4f} (w/o range factor: {true_eldr_no_range:.4f})')
+                if self.verbose:
+                    print(f'Sanity Check: ELDR {true_eldr}')
 
                 weight_eval = 1.0 / (self.g(t_eval) + self.eps_train)**2
-
-                # Baseline ELDR: Riemann sum of Monte Carlo decentered scores
-                dt = t_eval[1] - t_eval[0]
-                baseline_eldr = -(decentered_targets.sum() * dt).item()
-                self._baseline_eldr = baseline_eldr
-                print(f'Baseline ELDR (MC Riemann): {baseline_eldr:.4f}')
 
         best_loss = float('inf')
         patience_counter = 0
@@ -613,8 +656,6 @@ class DirectELDREstimator3(ELDREstimator):
             'eldr_rel_err': float('inf'),
             'best_eldr_est': None,  # Track the estimate with lowest ELDR error
         }
-
-        baseline_eldr = None
 
         num_iters = max(1, min(n_p0, n_p1) // self.batch_size)
 
@@ -642,10 +683,10 @@ class DirectELDREstimator3(ELDREstimator):
                 # Compute estimands in one batched call
                 avg_estimands = self.noiser(t, x_base, x0, x1)  # [B]
 
-                # Standard normalization: target / std (no mean centering)
-                # std(t) ALWAYS clamped internally
-                std_t = self._interpolate_std(t)  # clamps internally with eps_train
-                scaled_targets = avg_estimands / std_t
+                # Standard normalization using _get_mean and _get_std
+                mean_t = self._get_mean(t)
+                std_t = self._get_std(t)
+                scaled_targets = (avg_estimands - mean_t) / std_t
 
                 # Clamp t for gamma computation in weighting/clipping only
                 t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
@@ -654,16 +695,15 @@ class DirectELDREstimator3(ELDREstimator):
 
                 mse_per_sample = (predictions - scaled_targets.detach()) ** 2
 
-                # Compute importance weights to emphasize boundary regions
+                # Compute weights - use global config if available
                 # t_clamped is already clamped to [eps_train, 1-eps_train] above
                 g_t = self.g(t_clamped)
-                if self.gamma_weight_exp == 0:
+                import builtins
+                WEIGHT_EXP = getattr(builtins, '_CFG_WEIGHT_EXP', 0)
+                if WEIGHT_EXP == 0:
                     weights = torch.ones_like(mse_per_sample)
                 else:
-                    # Weight by 1/γ^p to match integration importance (which has 1/γ³ in denominator)
-                    weights = 1.0 / (g_t + self.eps_train)**self.gamma_weight_exp
-                    # Normalize to prevent loss scale issues
-                    weights = weights / weights.mean()
+                    weights = std_t**2 / (g_t + self.eps_train)**WEIGHT_EXP
 
                 loss = (mse_per_sample * weights).mean()
 
@@ -685,9 +725,6 @@ class DirectELDREstimator3(ELDREstimator):
                 if is_best:
                     best_loss = loss_val
                     patience_counter = 0
-                    # Save best model checkpoint
-                    # import copy
-                    # best_model_state = copy.deepcopy(self.noiser_network.state_dict())
                 elif loss_val >= best_loss - self.convergence_threshold:
                     patience_counter += 1
 
@@ -697,14 +734,15 @@ class DirectELDREstimator3(ELDREstimator):
                     with torch.no_grad():
                         nn_predictions = self.noiser_network(t_eval)
 
-                        # std(t) ALWAYS clamped internally
-                        std_eval = self._interpolate_std(t_eval)  # clamps internally
+                        # Use _get_mean and _get_std for consistent normalization
+                        mean_eval = self._get_mean(t_eval)
+                        std_eval = self._get_std(t_eval)
                         gamma_log = self.g(t_eval)
                         gamma_prime_log = self.dgdt(t_eval)
 
-                        # Full integrand: (std * NN(t)) / gamma^3
+                        # Full integrand: (mean + std * NN(t)) / gamma^3
                         # NOTE: centering term -d*gamma'/gamma is antisymmetric on [0,1], integrates to 0
-                        noiser_term = (std_eval * nn_predictions) / (gamma_log ** 3)
+                        noiser_term = (mean_eval + std_eval * nn_predictions) / (gamma_log ** 3)
                         full_integrand = -(noiser_term)  # Negate to fix sign
 
                         weighted_error = None
@@ -780,7 +818,6 @@ class DirectELDREstimator3(ELDREstimator):
                             'eldr_err': eldr_err if eldr_err is not None else float('nan'),
                             'eldr_est': avg_nn,
                             'dec_err': decentered_err if decentered_err is not None else float('nan'),
-                            'baseline_eldr': baseline_eldr if baseline_eldr is not None else float('nan'),
                         })
 
                     if self.verbose:
@@ -804,11 +841,6 @@ class DirectELDREstimator3(ELDREstimator):
                 if patience_counter >= self.patience:
                     if self.verbose:
                         print(f"Converged at iteration {global_iter}")
-                    # Restore best ELDR model (not best loss model)
-                    # if best_eldr_model_state is not None:
-                    #     self.noiser_network.load_state_dict(best_eldr_model_state)
-                    # elif best_model_state is not None:
-                    #     self.noiser_network.load_state_dict(best_model_state)
                     self._best_stats = best_stats
                     return
 
@@ -845,14 +877,15 @@ class DirectELDREstimator3(ELDREstimator):
 
         with torch.no_grad():
             nn_predictions = self.noiser_network(t_vals)
-            # std(t) ALWAYS clamped internally
-            std_vals = self._interpolate_std(t_vals)  # clamps internally
+            # Use _get_mean and _get_std for consistent normalization
+            mean_vals = self._get_mean(t_vals)
+            std_vals = self._get_std(t_vals)
 
             gamma_vals = self.g(t_vals)
 
-            # Full integrand: (std * NN(t)) / gamma^3
+            # Full integrand: (mean + std * NN(t)) / gamma^3
             # NOTE: centering term -d*gamma'/gamma is antisymmetric on [0,1], integrates to 0
-            noiser_term = (std_vals * nn_predictions) / (gamma_vals ** 3)
+            noiser_term = (mean_vals + std_vals * nn_predictions) / (gamma_vals ** 3)
             integrand = -noiser_term  # Negate to fix sign
 
         # Integration based on type
@@ -931,6 +964,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from torch.distributions import MultivariateNormal, kl_divergence
     from experiments.utils.prescribed_kls import create_two_gaussians_kl
+    import builtins
 
     DIM = 1
     NSAMPLES = 8192
@@ -951,223 +985,194 @@ if __name__ == '__main__':
     print(f"True ELDR (KL): {true_eldr:.4f}")
     print("="*80)
 
-    # === CONFIGS TO TRY (update based on analysis) ===
-    # Test uniform weighting (gamma_weight_exp=0) vs importance weighting (gamma_weight_exp=3)
-    # The importance weighting should help NN learn better near boundaries where 1/γ³ is large
-    CONFIGS = [
-        # Baseline: uniform weighting
-        {'name': 'k=16 uniform', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 0, 'k': 16, 'seed': 0},
-        {'name': 'k=25 uniform', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 0, 'k': 25, 'seed': 0},
-        # Importance weighted: gamma_weight_exp=3 matches the 1/γ³ in the integrand
-        {'name': 'k=16 weighted', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 3, 'k': 16, 'seed': 0},
-        {'name': 'k=25 weighted', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 3, 'k': 25, 'seed': 0},
+    # === NORMALIZATION MODES TO TEST ===
+    NORM_MODES = ['default', 'sym_mean_asym_std', 'sym_mean_sym_std', 'no_mean_asym_std', 'no_mean_no_std']
+
+    # === BASE CONFIGS (representative set) ===
+    BASE_CONFIGS = [
+        {'eps_train': 0.01, 'eps_eval': 0.025, 'k': 16},
+        {'eps_train': 0.01, 'eps_eval': 0.03, 'k': 16},
+        {'eps_train': 0.03, 'eps_eval': 0.03, 'k': 16},
     ]
+
+    # Default training settings
+    builtins._CFG_WEIGHT_EXP = 0
+    builtins._CFG_CLIP_GAMMA_EXP = -2
 
     all_results = {}
 
-    for cfg in CONFIGS:
-        print(f"Running config: {cfg['name']}")
-        # Reset seed for reproducibility
-        if 'seed' in cfg:
-            torch.manual_seed(cfg['seed'])
-            np.random.seed(cfg['seed'])
+    for base_cfg in BASE_CONFIGS:
+        for norm_mode in NORM_MODES:
+            cfg_name = f"{norm_mode}, eps {base_cfg['eps_train']}/{base_cfg['eps_eval']}, k={base_cfg['k']}"
+            print(f"\nRunning config: {cfg_name}")
 
-        estimator = DirectELDREstimator3(
-            input_dim=DIM,
-            hidden_dim=256,
-            num_layers=3,
-            time_embed_size=128,
-            k=cfg.get('k', 16.0),
-            eps_train=cfg['eps_train'],
-            eps_eval=cfg['eps_eval'],
-            learning_rate=cfg['lr'],
-            weight_decay=1e-4,
-            num_epochs=1000,
-            batch_size=256,
-            gamma_weight_exp=cfg.get('gamma_weight_exp', 0),
-            patience=100000,
-            verbose=False,  # Use plots instead
-            integration_steps=100,
-            convergence_threshold=1e-8
-        )
+            # Reset seed for reproducibility
+            torch.manual_seed(0)
+            np.random.seed(0)
 
-        estimator._debug_integrate = False
-        eldr_estimate = estimator.estimate_eldr(
-            samples_base, samples_p0, samples_p1,
-            mu0=mu0, Sigma0=Sigma0, mu1=mu1, Sigma1=Sigma1
-        )
+            estimator = DirectELDREstimator3NormTest(
+                input_dim=DIM,
+                hidden_dim=256,
+                num_layers=3,
+                time_embed_size=128,
+                k=base_cfg['k'],
+                eps_train=base_cfg['eps_train'],
+                eps_eval=base_cfg['eps_eval'],
+                learning_rate=2e-6,
+                weight_decay=1e-4,
+                num_epochs=1000,
+                batch_size=256,
+                patience=100000,
+                verbose=False,
+                integration_steps=100,
+                convergence_threshold=1e-8,
+                norm_mode=norm_mode,
+            )
 
-        # Get diagnostic info about the integrand
-        with torch.no_grad():
-            t_diag = torch.linspace(cfg['eps_eval'], 1 - cfg['eps_eval'], 100, device=estimator.device)
-            nn_pred = estimator.noiser_network(t_diag)
-            std_diag = estimator._interpolate_std(t_diag)
-            E_eta_diag = estimator._interpolate_E_eta(t_diag)
-            gamma_diag = estimator.g(t_diag)
+            estimator._debug_integrate = False
+            eldr_estimate = estimator.estimate_eldr(
+                samples_base, samples_p0, samples_p1,
+                mu0=mu0, Sigma0=Sigma0, mu1=mu1, Sigma1=Sigma1
+            )
 
-            # Our integrand
-            noiser_term = (std_diag * nn_pred) / (gamma_diag ** 3)
-            our_integrand = -noiser_term
+            # Get diagnostic info about the integrand
+            with torch.no_grad():
+                t_diag = torch.linspace(base_cfg['eps_eval'], 1 - base_cfg['eps_eval'], 100, device=estimator.device)
+                nn_pred = estimator.noiser_network(t_diag)
+                mean_diag = estimator._get_mean(t_diag)
+                std_diag = estimator._get_std(t_diag)
+                gamma_diag = estimator.g(t_diag)
 
-            # True NN target: E[η](t) / std(t)
-            # The NN learns h(t) = E[η](t) / std(t)
-            true_nn_target = E_eta_diag / std_diag
+                # Our integrand
+                noiser_term = (mean_diag + std_diag * nn_pred) / (gamma_diag ** 3)
+                our_integrand = -noiser_term
 
-            # Compute various targets for comparison
-            marginal_scores = []
-            decentered_scores = []
-            E_eta_over_gamma3 = []  # Direct computation of E[η]/gamma^3
-            for t_val in t_diag:
-                # Full marginal score
-                scores = estimator._compute_marginal_score(
-                    t_val.item(), torch.from_numpy(samples_base).float().to(estimator.device),
-                    mu0.to(estimator.device), Sigma0.to(estimator.device),
-                    mu1.to(estimator.device), Sigma1.to(estimator.device)
-                )
-                marginal_scores.append(scores.mean())
+                # True targets (decentered)
+                true_targets = []
+                for t_val in t_diag:
+                    scores = estimator._compute_decentered_marginal_score(
+                        t_val.item(), torch.from_numpy(samples_base).float().to(estimator.device),
+                        mu0.to(estimator.device), Sigma0.to(estimator.device),
+                        mu1.to(estimator.device), Sigma1.to(estimator.device)
+                    )
+                    true_targets.append(scores.mean())
+                true_targets = torch.stack(true_targets)
 
-                # Decentered marginal score (without the 2*gamma*gamma'*I term in Sigma')
-                dec_scores = estimator._compute_decentered_marginal_score(
-                    t_val.item(), torch.from_numpy(samples_base).float().to(estimator.device),
-                    mu0.to(estimator.device), Sigma0.to(estimator.device),
-                    mu1.to(estimator.device), Sigma1.to(estimator.device)
-                )
-                decentered_scores.append(dec_scores.mean())
-
-                # Direct computation of E[η](t) / gamma^3
-                gamma_val = estimator.g(t_val)
-                E_eta_t = estimator._interpolate_E_eta(t_val)
-                E_eta_over_gamma3.append(E_eta_t / (gamma_val ** 3))
-
-            marginal_scores = torch.stack(marginal_scores)
-            decentered_scores = torch.stack(decentered_scores)
-            E_eta_over_gamma3 = torch.stack(E_eta_over_gamma3)
-
-            # NN reconstruction: std(t) * NN(t) / gamma^3
-            nn_reconstruction = (std_diag * nn_pred) / (gamma_diag ** 3)
-
-            # Get baseline ELDR if available
-            baseline_eldr = getattr(estimator, '_baseline_eldr', None)
-
-        all_results[cfg['name']] = {
-            'stats': estimator._stats_history,
-            'final_est': eldr_estimate,
-            'final_err': abs(eldr_estimate - true_eldr),
-            'sanity_eldr': estimator._sanity_eldr,  # Store sanity check ELDR (with range factor)
-            'sanity_eldr_no_range': estimator._sanity_eldr_no_range,  # Without range factor
-            't_diag': t_diag.cpu().numpy(),
-            'our_integrand': our_integrand.cpu().numpy(),
-            'marginal_scores': marginal_scores.cpu().numpy(),
-            'decentered_scores': decentered_scores.cpu().numpy(),
-            'E_eta_over_gamma3': E_eta_over_gamma3.cpu().numpy(),  # Direct E[η]/gamma^3
-            'nn_reconstruction': nn_reconstruction.cpu().numpy(),  # std*NN/gamma^3
-            'nn_pred': nn_pred.cpu().numpy(),
-            'true_nn_target': true_nn_target.cpu().numpy(),  # Add true NN target
-            'E_eta_diag': E_eta_diag.cpu().numpy(),  # E[η](t) for analysis
-            'std_diag': std_diag.cpu().numpy(),
-            'gamma_diag': gamma_diag.cpu().numpy(),
-            'baseline_eldr': baseline_eldr,
-            'eldr_evolution': [s['eldr_est'] for s in estimator._stats_history],
-        }
-        print(f"  Final: {eldr_estimate:.4f} (err={abs(eldr_estimate - true_eldr):.4f})")
-        if baseline_eldr is not None:
-            print(f"  Baseline ELDR (MC Riemann): {baseline_eldr:.4f}")
+            all_results[cfg_name] = {
+                'norm_mode': norm_mode,
+                'base_cfg': base_cfg,
+                'stats': estimator._stats_history,
+                'final_est': eldr_estimate,
+                'final_err': abs(eldr_estimate - true_eldr),
+                't_diag': t_diag.cpu().numpy(),
+                'our_integrand': our_integrand.cpu().numpy(),
+                'true_targets': true_targets.cpu().numpy(),
+                'nn_pred': nn_pred.cpu().numpy(),
+                'mean_diag': mean_diag.cpu().numpy(),
+                'std_diag': std_diag.cpu().numpy(),
+                'gamma_diag': gamma_diag.cpu().numpy(),
+            }
+            print(f"  Final: {eldr_estimate:.4f} (err={abs(eldr_estimate - true_eldr):.4f})")
 
     # === PLOT RESULTS ===
-    fig, axes = plt.subplots(2, 4, figsize=(22, 10))
+    # Create a subplot grid: rows = base configs, cols = metrics
+    n_base_cfgs = len(BASE_CONFIGS)
+    fig, axes = plt.subplots(n_base_cfgs, 4, figsize=(20, 5 * n_base_cfgs))
+    if n_base_cfgs == 1:
+        axes = axes.reshape(1, -1)
 
-    for name, result in all_results.items():
-        stats = result['stats']
-        iters = [s['iter'] for s in stats]
-        losses = [s['loss'] for s in stats]
-        eldr_errs = [s['eldr_err'] for s in stats]
-        eldr_ests = [s['eldr_est'] for s in stats]
+    colors = plt.cm.tab10(np.linspace(0, 1, len(NORM_MODES)))
+    color_map = {mode: colors[i] for i, mode in enumerate(NORM_MODES)}
 
-        axes[0, 0].plot(iters, losses, label=name)
-        axes[0, 1].plot(iters, eldr_errs, label=name)
-        axes[0, 2].plot(iters, eldr_ests, label=name)
+    for row_idx, base_cfg in enumerate(BASE_CONFIGS):
+        cfg_label = f"eps {base_cfg['eps_train']}/{base_cfg['eps_eval']}, k={base_cfg['k']}"
 
-        # Plot NN learning error: NN(t) - E[η](t)/std(t)
-        t_diag = result['t_diag']
-        nn_error = result['nn_pred'] - result['true_nn_target']
-        axes[0, 3].plot(t_diag, nn_error, label=name)
+        for norm_mode in NORM_MODES:
+            cfg_name = f"{norm_mode}, {cfg_label}"
+            result = all_results[cfg_name]
+            color = color_map[norm_mode]
 
-        # KEY PLOT: NN(t) vs true target (mean/std)
-        axes[1, 0].plot(t_diag, result['nn_pred'], label=f'{name} NN(t)')
-        axes[1, 0].plot(t_diag, result['true_nn_target'], '--', label=f'{name} target')
+            stats = result['stats']
+            iters = [s['iter'] for s in stats]
+            losses = [s['loss'] for s in stats]
+            eldr_errs = [s['eldr_err'] for s in stats]
+            eldr_ests = [s['eldr_est'] for s in stats]
 
-        # KEY PLOT: NN reconstruction (std*NN/γ³) vs MC decentered score
-        axes[1, 1].plot(t_diag, result['nn_reconstruction'], label=f'{name} std·NN/γ³')
-        axes[1, 1].plot(t_diag, result['decentered_scores'], '--', label=f'{name} MC dec')
+            # Col 0: Loss
+            axes[row_idx, 0].plot(iters, losses, label=norm_mode, color=color)
+            axes[row_idx, 0].set_title(f'Loss ({cfg_label})')
+            axes[row_idx, 0].set_ylabel('Loss')
+            axes[row_idx, 0].set_xlabel('Iteration')
 
-        # Plot gamma(t) and std(t) for context
-        axes[1, 2].plot(t_diag, result['gamma_diag'], label=f'{name} γ(t)')
-        axes[1, 2].plot(t_diag, result['std_diag'], '--', label=f'{name} std(t)')
+            # Col 1: ELDR Error
+            axes[row_idx, 1].plot(iters, eldr_errs, label=norm_mode, color=color)
+            axes[row_idx, 1].set_title(f'ELDR Error ({cfg_label})')
+            axes[row_idx, 1].set_ylabel('|est - true|')
+            axes[row_idx, 1].set_xlabel('Iteration')
 
-        # Integration cumsum showing convergence
-        dt = t_diag[1] - t_diag[0]
-        nn_cumsum = np.cumsum(-result['nn_reconstruction']) * dt
-        mc_cumsum = np.cumsum(-result['decentered_scores']) * dt
-        axes[1, 3].plot(t_diag, nn_cumsum, label=f'{name} NN cumsum')
-        axes[1, 3].plot(t_diag, mc_cumsum, '--', label=f'{name} MC cumsum')
+            # Col 2: ELDR Estimate
+            axes[row_idx, 2].plot(iters, eldr_ests, label=norm_mode, color=color)
+            axes[row_idx, 2].set_title(f'ELDR Estimate ({cfg_label})')
+            axes[row_idx, 2].set_ylabel('Estimate')
+            axes[row_idx, 2].set_xlabel('Iteration')
 
-    axes[0, 0].set_title('Loss'); axes[0, 0].set_ylabel('Loss')
-    axes[0, 1].set_title('ELDR Error'); axes[0, 1].set_ylabel('|est - true|')
-    axes[0, 2].set_title('ELDR Estimate'); axes[0, 2].set_ylabel('Estimate')
-    axes[0, 2].axhline(y=true_eldr, color='k', linestyle='--', label='True ELDR')
-    axes[0, 3].set_title('NN Learning Error: NN(t) - E[η]/std'); axes[0, 3].set_ylabel('Error')
-    axes[0, 3].axhline(y=0, color='k', linestyle='--', alpha=0.5)
+            # Col 3: Integrand
+            t_diag = result['t_diag']
+            axes[row_idx, 3].plot(t_diag, result['our_integrand'], label=f'{norm_mode}', color=color)
 
-    axes[1, 0].set_title('NN(t) vs Target E[η](t)/std(t)'); axes[1, 0].set_ylabel('Value')
-    axes[1, 1].set_title('NN Recon (std·NN/γ³) vs MC Decentered'); axes[1, 1].set_ylabel('Value')
-    axes[1, 2].set_title('γ(t) and std(t)'); axes[1, 2].set_ylabel('Value')
-    axes[1, 3].set_title('Integration Cumsum'); axes[1, 3].set_ylabel('Cumulative Integral')
-    axes[1, 3].axhline(y=true_eldr, color='k', linestyle='--', label='True ELDR')
+        # Add true ELDR line to col 2
+        axes[row_idx, 2].axhline(y=true_eldr, color='k', linestyle='--', label='True ELDR')
 
-    for ax in axes.flat:
-        ax.legend(fontsize=8)
-        ax.set_xlabel('t' if ax in axes[1] else 'Iteration')
+        # Add true integrand to col 3 (same for all norm modes)
+        first_cfg = f"{NORM_MODES[0]}, {cfg_label}"
+        axes[row_idx, 3].plot(
+            all_results[first_cfg]['t_diag'],
+            all_results[first_cfg]['true_targets'],
+            'k--', label='True', linewidth=2
+        )
+        axes[row_idx, 3].set_title(f'Integrand ({cfg_label})')
+        axes[row_idx, 3].set_ylabel('Integrand')
+        axes[row_idx, 3].set_xlabel('t')
+
+        # Add legends
+        for col in range(4):
+            axes[row_idx, col].legend(fontsize=8)
 
     plt.tight_layout()
-    plt.savefig('hpo_curvesC.png', dpi=150)
-    plt.show()
-    # Print summary statistics
-    errors = [r['final_err'] for r in all_results.values()]
-    estimates = [r['final_est'] for r in all_results.values()]
-    print(f"\n=== Summary ===")
-    print(f"True ELDR: {true_eldr:.4f}")
-    print(f"Mean estimate: {np.mean(estimates):.4f} (std={np.std(estimates):.4f})")
-    print(f"Mean error: {np.mean(errors):.4f} (std={np.std(errors):.4f})")
-    print(f"Best error: {min(errors):.4f}, Worst error: {max(errors):.4f}")
+    plt.savefig('hpo_curves_normtest.png', dpi=150)
+    print(f"\nSaved plot to hpo_curves_normtest.png")
 
-    # Diagnostic: Compare NN estimates to sanity check ELDR
-    print(f"\n=== NN Learning Diagnostics ===")
-    for name, result in all_results.items():
-        nn_target_err = np.abs(result['nn_pred'] - result['true_nn_target']).mean()
-        nn_target_max_err = np.abs(result['nn_pred'] - result['true_nn_target']).max()
-        sanity_eldr = result['sanity_eldr']
-        sanity_no_range = result['sanity_eldr_no_range']
-        est = result['final_est']
+    # === SUMMARY TABLE ===
+    print("\n" + "="*80)
+    print("SUMMARY TABLE")
+    print("="*80)
+    print(f"{'Norm Mode':<25} {'Config':<30} {'Final Est':>12} {'Error':>12}")
+    print("-"*80)
 
-        # Compare NN reconstruction to MC decentered score
-        nn_recon = result['nn_reconstruction']
-        dec_scores = result['decentered_scores']
-        recon_vs_decentered = np.abs(nn_recon - dec_scores).mean()
+    for base_cfg in BASE_CONFIGS:
+        cfg_label = f"eps {base_cfg['eps_train']}/{base_cfg['eps_eval']}, k={base_cfg['k']}"
+        for norm_mode in NORM_MODES:
+            cfg_name = f"{norm_mode}, {cfg_label}"
+            result = all_results[cfg_name]
+            print(f"{norm_mode:<25} {cfg_label:<30} {result['final_est']:>12.4f} {result['final_err']:>12.4f}")
+        print("-"*80)
 
-        # Compare mean/gamma^3 to decentered score (what we expect to match)
-        E_eta_g3 = result['E_eta_over_gamma3']
-        E_eta_g3_vs_dec = np.abs(E_eta_g3 - dec_scores).mean()
+    # Find best mode per config
+    print("\nBest norm mode per config:")
+    for base_cfg in BASE_CONFIGS:
+        cfg_label = f"eps {base_cfg['eps_train']}/{base_cfg['eps_eval']}, k={base_cfg['k']}"
+        best_mode = None
+        best_err = float('inf')
+        for norm_mode in NORM_MODES:
+            cfg_name = f"{norm_mode}, {cfg_label}"
+            if all_results[cfg_name]['final_err'] < best_err:
+                best_err = all_results[cfg_name]['final_err']
+                best_mode = norm_mode
+        print(f"  {cfg_label}: {best_mode} (err={best_err:.4f})")
 
-        print(f"{name}:")
-        print(f"  NN target MAE: {nn_target_err:.4f}, Max: {nn_target_max_err:.4f}")
-        print(f"  E[η]/γ³ vs MC decentered MAE: {E_eta_g3_vs_dec:.4f}")
-        print(f"  NN recon (std*NN/γ³) vs MC decentered MAE: {recon_vs_decentered:.4f}")
-
-        baseline = result['baseline_eldr']
-        if baseline is not None:
-            print(f"  Baseline ELDR (MC Riemann): {baseline:.4f}, err={abs(baseline - true_eldr):.4f}")
-
-        print(f"  Estimate: {est:.4f}, Sanity(w/range): {sanity_eldr:.4f}, Sanity(w/o): {sanity_no_range:.4f}")
-        print(f"  True ELDR: {true_eldr:.4f}, Est-True: {est - true_eldr:.4f}, Sanity-True: {sanity_eldr - true_eldr:.4f}")
-
-    print("\nSaved plot to hpo_curvesC.png")
+    # Overall best
+    print("\nOverall stats by norm mode:")
+    for norm_mode in NORM_MODES:
+        errors = [all_results[f"{norm_mode}, eps {cfg['eps_train']}/{cfg['eps_eval']}, k={cfg['k']}"]['final_err']
+                  for cfg in BASE_CONFIGS]
+        print(f"  {norm_mode:<25}: mean={np.mean(errors):.4f}, min={min(errors):.4f}, max={max(errors):.4f}")
