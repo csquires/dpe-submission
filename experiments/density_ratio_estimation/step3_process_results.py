@@ -20,13 +20,13 @@ NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
 NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
 
-raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+# raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+# dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
+# processed_results_filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 
-#dataset_filename = f'{DATA_DIR}/dataset.h5'
-#raw_results_filename = f'{RAW_RESULTS_DIR}/added_cauchy_01.h5'   
-#processed_results_filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
+dataset_filename = f'{DATA_DIR}/dataset_newpstar.h5'
+raw_results_filename = f'{RAW_RESULTS_DIR}/new_pstar.h5'   
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/new_pstar.h5'
 
 with h5py.File(raw_results_filename, 'r') as f:
     result_keys = [key for key in f.keys() if key.startswith('est_ldrs_arr_')]

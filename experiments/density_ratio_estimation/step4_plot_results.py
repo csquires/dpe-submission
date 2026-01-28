@@ -41,6 +41,7 @@ colors = {
     "MDRE": "#2ca02c",
     "TSM": "#d62728",
     "TriangularTSM": "#17becf",
+    "TriangularTDRE": "#ff9896",
     "TDRE_5": "#ff7f0e",
     "TDRE_10": "#8c564b", # default TDRE
     "TDRE_15": "#9467bd",

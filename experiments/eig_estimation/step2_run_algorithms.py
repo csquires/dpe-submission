@@ -16,7 +16,7 @@ from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM
 from src.eig_estimation.plugin import EIGPlugin
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.eig_estimation.direct3_plugin import EIGDirect3Plugin
+from src.density_ratio_estimation.spatial_velo_score import SpatialVeloScore
 
 
 config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -70,20 +70,19 @@ mdre_plugin = EIGPlugin(density_ratio_estimator=mdre)
 tsm = TSM(DATA_DIM + 1, device=DEVICE)
 tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
 
-# instantiate spatial-based EIG plugin
-spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM + 1, device=DEVICE)
-spatial_plugin = EIGPlugin(density_ratio_estimator=spatial)
-
-# instantiate direct3-based EIG plugin
-direct3_plugin = EIGDirect3Plugin(input_dim=DATA_DIM + 1, device=DEVICE)
+# instantiate spatial-based EIG plugins
+spatial_denoiser = make_spatial_velo_denoiser(input_dim=DATA_DIM + 1, device=DEVICE)
+spatial_denoiser_plugin = EIGPlugin(density_ratio_estimator=spatial_denoiser)
+spatial_score = SpatialVeloScore(input_dim=DATA_DIM + 1, device=DEVICE)
+spatial_score_plugin = EIGPlugin(density_ratio_estimator=spatial_score)
 
 algorithms = [
-    ("BDRE", bdre_plugin),
-    ("TDRE_5", tdre_plugin),
-    ("MDRE_15", mdre_plugin),
-    ("TSM", tsm_plugin),
-    ("Spatial", spatial_plugin),
-    ("Direct3", direct3_plugin),
+    # ("BDRE", bdre_plugin),
+    # ("TDRE_5", tdre_plugin),
+    # ("MDRE_15", mdre_plugin),
+    # ("TSM", tsm_plugin),
+    # ("SpatialDenoiser", spatial_denoiser_plugin),
+    # ("SpatialScore", spatial_score_plugin),
 ]
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:
