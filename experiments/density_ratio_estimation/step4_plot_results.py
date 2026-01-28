@@ -66,7 +66,7 @@ colors = {
 }
 
 tdre_order = ["TDRE_5"]
-# mdre_order = ["MDRE_15"]
+mdre_order = ["MDRE_15"]
 
 TEST_SET_TITLES = [r'$p_* = p_0$', r'$p_* = p_1$', r'$p_* = q_0$', r'$p_* = q_1$']
 
