@@ -4,8 +4,8 @@ processed_results_dir: "experiments/density_ratio_estimation/processed_results"
 figures_dir: "experiments/density_ratio_estimation/figures"
 data_dim: 3
 gamma: 0.05
-kl_distances: [0.6, 1.8, 5.4, 16.2, 32.4, 64.8]
-num_instances_per_kl: 20
+kl_distances: [0.3, 1, 3, 9, 18, 36, 54]
+num_instances_per_kl: 10
 nsamples_train: 2048
 ntest_sets: 4
 nsamples_test: 1024

@@ -86,8 +86,9 @@ spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 algorithms = [
     ("BDRE", bdre),
     ("TSM", tsm),
-    *tdre_variants,
-    *mdre_variants,
+    ("TriangularTSM", triangular_tsm),
+    *tdre_variants,  # TDRE_5
+    *mdre_variants,  # MDRE_15
     ("Spatial", spatial),
 ]
 

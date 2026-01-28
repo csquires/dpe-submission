@@ -18,7 +18,6 @@ from src.density_ratio_estimation.tdre import TDRE
 from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_tsm import TriangularTSM
-from src.density_ratio_estimation.triangular_tdre import TriangularTDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
 
@@ -78,31 +77,16 @@ for num_waypoints_mdre in mdre_waypoints:
 tsm = TSM(DATA_DIM, device=DEVICE)
 # instantiate triangular tsm
 triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
-# instantiate triangular tdre
-triangular_tdre_waypoints = 5
-triangular_tdre_classifiers = make_pairwise_binary_classifiers(
-    name="default",
-    num_classes=triangular_tdre_waypoints,
-    input_dim=DATA_DIM,
-)
-triangular_tdre = TriangularTDRE(
-    triangular_tdre_classifiers,
-    num_waypoints=triangular_tdre_waypoints,
-    device=DEVICE,
-)
 # instantiate spatial velo denoiser
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
 algorithms = [
-    # ("BDRE", bdre),
-    # ("TDRE", tdre),
-    # ("MDRE", mdre),
-    # ("TriangularTSM", triangular_tsm),
-    ("TriangularTDRE", triangular_tdre),
-    # ("TSM", tsm),
-    *tdre_variants,
-    #*mdre_variants,
-    #("Spatial", spatial),
+    ("BDRE", bdre),
+    ("TSM", tsm),
+    ("TriangularTSM", triangular_tsm),
+    *tdre_variants,  # TDRE_5
+    *mdre_variants,  # MDRE_15
+    ("Spatial", spatial),
 ]
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
