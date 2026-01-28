@@ -18,10 +18,10 @@ class WaypointBuilder2D(ABC):
 class DefaultWaypointBuilder2D(WaypointBuilder2D):
     def _generate_alphas(self, num_waypoints: int) -> torch.Tensor:
         alphas = torch.linspace(0, 1, num_waypoints)
-        alpha_primes_rising = torch.linspace(1, 0, num_waypoints // 2)
-        alpha_primes_falling = torch.linspace(0, 1, num_waypoints // 2)
+        half = num_waypoints // 2
+        alpha_primes_rising = torch.linspace(1, 0, half + 1)
+        alpha_primes_falling = torch.linspace(0, 1, half + 1)[1:]
         alpha_primes = torch.cat([alpha_primes_rising, alpha_primes_falling])
-        breakpoint()
         return alphas, alpha_primes
 
     def build_waypoints(
