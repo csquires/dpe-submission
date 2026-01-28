@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import h5py
@@ -5,6 +6,10 @@ import numpy as np
 import torch
 from tqdm import trange
 import yaml
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--force', action='store_true', help='Force re-run of all algorithms, overwriting existing results')
+args = parser.parse_args()
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
@@ -27,8 +32,14 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
-results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM}.h5'
+dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+
+existing_results = set()
+if os.path.exists(results_filename):
+    with h5py.File(results_filename, 'r') as f:
+        existing_results = set(f.keys())
+        print("Existing results for:", list(f.keys()))
 
 # instantiate bdre plugin
 bdre_classifier = make_binary_classifier(name="default", input_dim=DATA_DIM + 1)
@@ -83,20 +94,32 @@ os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
 with h5py.File(dataset_filename, 'r') as dataset_file:
     nrows = dataset_file['design_arr'].shape[0]
 
-    true_eigs_arr = np.zeros(nrows, dtype=np.float32)
-    for idx in trange(nrows):
-        design = torch.from_numpy(dataset_file['design_arr'][idx]).to(DEVICE)  # (DATA_DIM, 1)
-        Sigma_pi = torch.from_numpy(dataset_file['prior_covariance_arr'][idx]).to(DEVICE)  # (DATA_DIM, DATA_DIM)
-        true_eigs_arr[idx] = compute_true_eig(Sigma_pi, design).item()
+    # Compute and save true_eigs if not present or --force
+    if 'true_eigs_arr' not in existing_results or args.force:
+        true_eigs_arr = np.zeros(nrows, dtype=np.float32)
+        for idx in trange(nrows):
+            design = torch.from_numpy(dataset_file['design_arr'][idx]).to(DEVICE)  # (DATA_DIM, 1)
+            Sigma_pi = torch.from_numpy(dataset_file['prior_covariance_arr'][idx]).to(DEVICE)  # (DATA_DIM, DATA_DIM)
+            true_eigs_arr[idx] = compute_true_eig(Sigma_pi, design).item()
 
-    with h5py.File(results_filename, 'w') as results_file:
-        results_file.create_dataset('true_eigs_arr', data=true_eigs_arr)
+        with h5py.File(results_filename, 'a') as results_file:
+            if 'true_eigs_arr' in results_file:
+                del results_file['true_eigs_arr']
+            results_file.create_dataset('true_eigs_arr', data=true_eigs_arr)
 
-        for alg_name, alg in algorithms:
-            est_eigs_arr = np.zeros(nrows, dtype=np.float32)
-            for idx in trange(nrows):
-                theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, DATA_DIM)
-                y_samples = torch.from_numpy(dataset_file['y_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, 1)
-                est_eigs_arr[idx] = alg.estimate_eig(theta_samples, y_samples).item()
+    for alg_name, alg in algorithms:
+        dataset_name = f'est_eigs_arr_{alg_name}'
+        if dataset_name in existing_results and not args.force:
+            print(f"Skipping {alg_name} (results exist, use --force to overwrite)")
+            continue
 
-            results_file.create_dataset(f'est_eigs_arr_{alg_name}', data=est_eigs_arr)
+        est_eigs_arr = np.zeros(nrows, dtype=np.float32)
+        for idx in trange(nrows):
+            theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, DATA_DIM)
+            y_samples = torch.from_numpy(dataset_file['y_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, 1)
+            est_eigs_arr[idx] = alg.estimate_eig(theta_samples, y_samples).item()
+
+        with h5py.File(results_filename, 'a') as results_file:
+            if dataset_name in results_file:
+                del results_file[dataset_name]
+            results_file.create_dataset(dataset_name, data=est_eigs_arr)

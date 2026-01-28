@@ -37,7 +37,6 @@ with h5py.File(dataset_filename, 'r') as f:
 
 maes_by_kl = {}
 for alg_name, est_ldrs_arr in est_ldrs_by_alg.items():
-    breakpoint()
     absolute_errors = np.abs(est_ldrs_arr - true_ldrs_arr)  # (nrows, NTEST_SETS, NSAMPLES_TEST)
     maes = reduce(absolute_errors, 'n t d -> n t', 'mean')  # (nrows, NTEST_SETS)
     maes_by_kl[alg_name] = maes.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)

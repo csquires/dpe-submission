@@ -21,5 +21,6 @@ experiments/elbo_estimation/figures/*
 CLAUDE.md
 .*/
 *.txt
-*.pdf
 *.png
+*.sbatch
+/logs/*

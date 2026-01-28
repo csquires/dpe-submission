@@ -12,12 +12,13 @@ plt.style.use('full-width.mplstyle')
 
 config = yaml.load(open('experiments/elbo_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
 DATA_DIM = config['data_dim']
+NSAMPLES = config['nsamples']
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']
 ALPHAS = config['alphas']
 DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM}.h5'
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 
 # Load processed results
 with h5py.File(processed_results_filename, 'r') as f:
