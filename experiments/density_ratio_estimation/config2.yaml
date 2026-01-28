@@ -1,0 +1,13 @@
+data_dir: "experiments/density_ratio_estimation/samples/data"
+raw_results_dir: "experiments/density_ratio_estimation/samples/raw_results"
+processed_results_dir: "experiments/density_ratio_estimation/samples/processed_results"
+figures_dir: "experiments/density_ratio_estimation/samples/figures"
+data_dim: 3
+gamma: 0.05
+kl_distances: [0.6, 5.4, 32.4]
+num_instances_per_kl: 20
+nsamples_train: [100, 300, 900, 1800, 3600, 5400, 8100]
+ntest_sets: 1
+nsamples_test: 1024
+device: "cuda"
+seed: 1729
