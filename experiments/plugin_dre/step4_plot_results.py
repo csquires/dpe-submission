@@ -29,6 +29,8 @@ GRID_SIZE = config['grid_size']
 RGB_RESOLUTION = config['rgb_resolution']
 MARKER_SIZE_MIN = config['marker_size_min']
 MARKER_SIZE_MAX = config['marker_size_max']
+MARKER_ALPHA_MIN = config['marker_alpha_min']
+MARKER_ALPHA_MAX = config['marker_alpha_max']
 
 dataset_filename = f'{DATA_DIR}/dataset.h5'
 metrics_filename = f'{RESULTS_DIR}/metrics.h5'
@@ -214,7 +216,7 @@ for alg_idx, alg_name in enumerate(alg_names):
 
         # Scale alpha using global raw error bounds
         alphas = scale_alpha_global(errors, global_raw_min, global_raw_max,
-                                    min_alpha=0.15, max_alpha=0.85)
+                                    min_alpha=MARKER_ALPHA_MIN, max_alpha=MARKER_ALPHA_MAX)
 
         # Create RGBA colors with per-point alpha (green with varying transparency)
         colors = np.zeros((len(xs), 4))
@@ -319,7 +321,7 @@ for alg_idx, alg_name in enumerate(alg_names):
 
         # Scale alpha using global raw error bounds
         alphas = scale_alpha_global(errors, global_raw_min, global_raw_max,
-                                    min_alpha=0.5, max_alpha=0.9)
+                                    min_alpha=MARKER_ALPHA_MIN, max_alpha=MARKER_ALPHA_MAX)
 
         # Create RGBA colors (green squares)
         colors = np.zeros((len(xs), 4))
@@ -341,7 +343,11 @@ for idx in range(num_algorithms, nrows_alg * ncols_alg):
     col_alg = idx % ncols_alg
     subfigs2[row_alg, col_alg].set_visible(False)
 
-plt.tight_layout()
+# Leave space on right for colorbar, then add it
+fig2.subplots_adjust(right=0.88)
+cbar_ax = fig2.add_axes([0.90, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
+cbar = fig2.colorbar(im, cax=cbar_ax)
+cbar.set_label('Log Density Ratio (log p₀/p₁)', fontsize=12)
 output_path2 = f'{FIGURES_DIR}/plugin_dre_ldr.pdf'
 plt.savefig(output_path2, bbox_inches='tight', dpi=150)
 print(f"LDR figure saved to: {output_path2}")
