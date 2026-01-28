@@ -15,7 +15,7 @@ from src.models.binary_classification import make_binary_classifier, make_pairwi
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.eldr_estimation.direct3_adapter import make_direct3_estimator
+from src.eldr_estimation.direct_adapters import make_direct3_estimator, make_direct4_estimator, make_direct5_estimator
 
 
 config = yaml.load(open('experiments/elbo_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -58,8 +58,10 @@ tsm = TSM(DATA_DIM + 1, device=DEVICE)
 # instantiate spatial velo denoiser
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM+1, device=DEVICE)
 
-# instantiate direct3 estimator
+# instantiate direct ELDR estimators
 direct3 = make_direct3_estimator(input_dim=DATA_DIM+1, device=DEVICE)
+direct4 = make_direct4_estimator(input_dim=DATA_DIM+1, device=DEVICE)
+direct5 = make_direct5_estimator(input_dim=DATA_DIM+1, device=DEVICE)
 
 # DRE-based algorithms (use fit/predict pattern)
 dre_algorithms = [
@@ -73,6 +75,8 @@ dre_algorithms = [
 # Direct ELDR algorithms (use estimate_eldr directly)
 direct_algorithms = [
     ("Direct3", direct3),
+    ("Direct4", direct4),
+    ("Direct5", direct5),
 ]
 
 # Combined list for result tracking

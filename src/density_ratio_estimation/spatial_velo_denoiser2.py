@@ -385,15 +385,15 @@ if __name__ == '__main__':
         'k': [], 'steps': [],'type':[], 'mae': []
     }
     param_grid = {
-        'eps': [2.1e-3, 2.2e-3, 2.3e-3],
-        'epochs': [300],
+        'eps': [2.2e-4, 2.2e-3, 2.2e-2], #[2.1e-3, 2.2e-3, 2.3e-3],
+        'epochs': [300, 3000, 6000],
         'antithetic': [True],
-        'lr': [1.3e-3, 1.4e-3, 1.5e-3],
+        'lr': [1.4e-3, 9e-4, 5e-3, 1e-2], #[1.3e-3, 1.4e-3, 1.5e-3],
         'k': [20],
-        'steps': [5000],
-        'type': ['2']
+        'steps': [3000, 15000],
+        'type': ['2', '3']
     }
-    for r in range(10):
+    for r in range(1):
         for this_eps in param_grid['eps']:
             for this_epochs in param_grid['epochs']:
                 for this_antithetic in param_grid['antithetic']:
