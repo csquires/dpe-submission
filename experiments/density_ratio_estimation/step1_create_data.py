@@ -58,8 +58,8 @@ for kl_distance in tqdm(KL_DISTANCES):
         Sigma_star3 = torch.sqrt(Sigma0)  # in our setup, this is "halfway" between Sigma0 and Sigma1
         pstar3 = MultivariateNormal(mu_star3, covariance_matrix=Sigma_star3)
         # add a distant Gaussian distribution for more distinct data
-        mu_star4 = -mu1
-        Sigma_star4 = Sigma0 @ Sigma0
+        mu_star4 = -2 * mu1
+        Sigma_star4 = 2 * Sigma0
         pstar4 = MultivariateNormal(mu_star4, covariance_matrix=Sigma_star4)
 
         # store parameters

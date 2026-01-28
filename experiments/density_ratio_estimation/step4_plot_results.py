@@ -47,7 +47,10 @@ colors = {
     "MDRE": "#2ca02c",
     "TSM": "#d62728",
     "TriangularTSM": "#17becf",
-    "TriangularTDRE": "#ff9896",
+    "TriangularTDRE": "#c3d922",
+    "TriangularTDRE_Gauss": "#000000",
+    "TriangularMDRE": "#aec7e8",
+    "TriangularMDRE_Gauss": "#9edae5",
     "TDRE_5": "#ff7f0e",
     "TDRE_10": "#8c564b",  # default TDRE
     "TDRE_15": "#9467bd",
@@ -56,13 +59,14 @@ colors = {
     "MDRE_5": "#17becf",
     "MDRE_10": "#7f7f7f",  # default MDRE
     "MDRE_15": "#2ca02c",
+    "MDRE_15_Gauss": "#98df8a",
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
     "Spatial": "#9467bd",
 }
 
 tdre_order = ["TDRE_5"]
-mdre_order = ["MDRE_15"]
+# mdre_order = ["MDRE_15"]
 
 TEST_SET_TITLES = [r'$p_* = p_0$', r'$p_* = p_1$', r'$p_* = q_0$', r'$p_* = q_1$']
 
