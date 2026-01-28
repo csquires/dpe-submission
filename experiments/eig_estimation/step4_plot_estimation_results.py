@@ -22,6 +22,9 @@ colors = {
     "MDRE_15": "#2ca02c",
     "TSM": "#d62728",
     "TriangularTSM": "#17becf",
+    "SpatialDenoiser": "#9467bd",
+    "SpatialScore": "#8c564b",
+    "Direct": "#050000",
 }
 
 plt.clf()

@@ -11,7 +11,7 @@ from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM
 from src.eig_estimation.plugin import EIGPlugin
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.eig_estimation.direct3_plugin import EIGDirect3Plugin
+from src.density_ratio_estimation.spatial_velo_score import SpatialVeloScore
 
 
 config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -28,7 +28,8 @@ np.random.seed(SEED)
 torch.manual_seed(SEED)
 
 dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
-results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM}.h5'
+# results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM}.h5'
+results_filename = f'{RAW_RESULTS_DIR}/direct.h5'
 
 # instantiate bdre plugin
 bdre_classifier = make_binary_classifier(name="default", input_dim=DATA_DIM + 1)
@@ -59,20 +60,19 @@ mdre_plugin = EIGPlugin(density_ratio_estimator=mdre)
 tsm = TSM(DATA_DIM + 1, device=DEVICE)
 tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
 
-# instantiate spatial-based EIG plugin
-spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM + 1, device=DEVICE)
-spatial_plugin = EIGPlugin(density_ratio_estimator=spatial)
-
-# instantiate direct3-based EIG plugin
-direct3_plugin = EIGDirect3Plugin(input_dim=DATA_DIM + 1, device=DEVICE)
+# instantiate spatial-based EIG plugins
+spatial_denoiser = make_spatial_velo_denoiser(input_dim=DATA_DIM + 1, device=DEVICE)
+spatial_denoiser_plugin = EIGPlugin(density_ratio_estimator=spatial_denoiser)
+spatial_score = SpatialVeloScore(input_dim=DATA_DIM + 1, device=DEVICE)
+spatial_score_plugin = EIGPlugin(density_ratio_estimator=spatial_score)
 
 algorithms = [
-    ("BDRE", bdre_plugin),
-    ("TDRE_5", tdre_plugin),
-    ("MDRE_15", mdre_plugin),
-    ("TSM", tsm_plugin),
-    ("Spatial", spatial_plugin),
-    ("Direct3", direct3_plugin),
+    # ("BDRE", bdre_plugin),
+    # ("TDRE_5", tdre_plugin),
+    # ("MDRE_15", mdre_plugin),
+    # ("TSM", tsm_plugin),
+    # ("SpatialDenoiser", spatial_denoiser_plugin),
+    # ("SpatialScore", spatial_score_plugin),
 ]
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:
@@ -97,6 +97,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             for idx in trange(nrows):
                 theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, DATA_DIM)
                 y_samples = torch.from_numpy(dataset_file['y_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, 1)
-                est_eigs_arr[idx] = alg.estimate_eig(theta_samples, y_samples).item()
+                est = alg.estimate_eig(theta_samples, y_samples)
+                est_eigs_arr[idx] = est.item() if isinstance(est, torch.Tensor) else float(est)
 
             results_file.create_dataset(f'est_eigs_arr_{alg_name}', data=est_eigs_arr)

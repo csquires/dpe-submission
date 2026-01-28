@@ -15,8 +15,10 @@ DATA_DIM = config['data_dim']
 DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 
 dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM}.h5'
-raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM}.h5'
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/mae_by_beta_d={DATA_DIM}.h5'
+# raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM}.h5'
+raw_results_filename = f'{RAW_RESULTS_DIR}/direct.h5'
+# processed_results_filename = f'{PROCESSED_RESULTS_DIR}/mae_by_beta_d={DATA_DIM}.h5'
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/direct.h5'
 
 with h5py.File(dataset_filename, 'r') as dataset_file:
     design_eig_percentages = dataset_file['design_eig_percentage_arr'][:].squeeze()
