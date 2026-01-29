@@ -141,7 +141,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
     ) -> torch.Tensor:
         """
         Compute partial_t log rho(t, x) using:
-        dt_log_rho = -div(b) - b.score 
+        dt_log_rho = -div(b) - b.score
                    = -div(b) + b.eta/gamma
         """
         x = x.clone().requires_grad_(True)
@@ -157,6 +157,38 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         b_dot_eta = (b_pred * eta_pred).sum(dim=-1, keepdim=True)
 
         return -div_b.view(-1, 1) + b_dot_eta / gamma_t
+
+    def _compute_time_score_single(self, t_scalar: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        """Compute time score for a single time value across all samples.
+
+        Args:
+            t_scalar: Single time value (scalar tensor)
+            x: Sample points [n_samples, dim]
+        Returns:
+            Time scores [n_samples]
+        """
+        n_samples = x.shape[0]
+        t_batch = t_scalar.expand(n_samples, 1)
+
+        gamma_t = self.gamma(t_scalar)
+
+        # Compute b and eta
+        b_pred = self.net_b(t_batch, x)
+        eta_pred = self.net_eta(t_batch, x)
+
+        # Compute divergence using jacrev + vmap over samples
+        def b_single(x_single):
+            return self.net_b(t_scalar.view(1, 1), x_single.unsqueeze(0)).squeeze(0)
+
+        def jac_trace(x_single):
+            jac = torch.func.jacrev(b_single)(x_single)  # [dim, dim]
+            return torch.trace(jac)
+
+        div_b = torch.vmap(jac_trace)(x)  # [n_samples]
+
+        b_dot_eta = (b_pred * eta_pred).sum(dim=-1)
+
+        return -div_b + b_dot_eta / gamma_t  # [n_samples]
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         self.init_model()
@@ -299,18 +331,13 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             n_points += 1
         t_vals = torch.linspace(self.eps, 1 - self.eps, n_points, device=self.device)
 
-        # Compute time scores at each t for all samples
-        time_scores = []
-        for t_val in t_vals:
-            t_batch = torch.full((n_samples, 1), t_val.item(), device=self.device)
-            gamma_t = self.gamma(t_val)
-            gamma_dot_t = self.dgamma_dt(t_val)
-
-            time_score = self.compute_time_score(t_batch, samples, gamma_t, gamma_dot_t)
-            time_scores.append(time_score.detach())
-
-        time_scores = torch.stack(time_scores, dim=0)  # [n_points, n_samples, 1]
-        time_scores = time_scores.squeeze(-1)  # [n_points, n_samples]
+        # Compute time scores at each t for all samples using vmap
+        compute_vmapped = torch.vmap(
+            self._compute_time_score_single,
+            in_dims=(0, None),  # batch over t, broadcast samples
+            out_dims=0
+        )
+        time_scores = compute_vmapped(t_vals, samples).detach()  # [n_points, n_samples]
 
         if self.integration_type == '3':
             # Simpson's rule integration
