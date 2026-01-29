@@ -63,6 +63,7 @@ colors = {
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
     "VFM": "#9467bd",
+    "Spatial": "#9467bd",
 }
 
 tdre_order = ["TDRE_5"]
@@ -88,8 +89,8 @@ def get_algorithms_to_plot(data_dict):
     for mdre_name in mdre_order:
         if mdre_name in data_dict:
             algs.append((mdre_name, "MDRE"))
-    if "VFM" in data_dict:
-        algs.append(("VFM", "VFM"))
+    if "Spatial" in data_dict:
+        algs.append(("Spatial", "VFM"))
     return algs
 
 
@@ -239,7 +240,7 @@ with open(stats_filename, 'w') as stats_file:
 
     # Plot 1: MAE (original)
     if maes_by_kl:
-        plot_metric(maes_by_kl, 'Mean Absolute Error\n(Test Set)', 'final_result_2', stats_file)
+        plot_metric(maes_by_kl, 'Mean Absolute Error\n(Test Set)', 'Completed', stats_file)
 
     # Other plots disabled for paper-ready output
     # if median_aes_by_kl:
