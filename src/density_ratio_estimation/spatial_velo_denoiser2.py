@@ -332,12 +332,19 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         t_vals = torch.linspace(self.eps, 1 - self.eps, n_points, device=self.device)
 
         # Compute time scores at each t for all samples using vmap
+        # Process in chunks to avoid OOM with large n_points * n_samples
         compute_vmapped = torch.vmap(
             self._compute_time_score_single,
             in_dims=(0, None),  # batch over t, broadcast samples
             out_dims=0
         )
-        time_scores = compute_vmapped(t_vals, samples).detach()  # [n_points, n_samples]
+        chunk_size = max(1, 100000 // n_samples)
+        time_score_chunks = []
+        for i in range(0, n_points, chunk_size):
+            t_chunk = t_vals[i:i + chunk_size]
+            chunk_scores = compute_vmapped(t_chunk, samples).detach()
+            time_score_chunks.append(chunk_scores)
+        time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
 
         if self.integration_type == '3':
             # Simpson's rule integration

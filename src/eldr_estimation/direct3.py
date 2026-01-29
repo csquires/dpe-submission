@@ -954,13 +954,22 @@ if __name__ == '__main__':
     # === CONFIGS TO TRY (update based on analysis) ===
     # Test uniform weighting (gamma_weight_exp=0) vs importance weighting (gamma_weight_exp=3)
     # The importance weighting should help NN learn better near boundaries where 1/γ³ is large
+    # CONFIGS = [
+    #     # Baseline: uniform weighting
+    #     {'name': 'k=16 uniform', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 0, 'k': 16, 'seed': 0},
+    #     {'name': 'k=25 uniform', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 0, 'k': 25, 'seed': 0},
+    #     # Importance weighted: gamma_weight_exp=3 matches the 1/γ³ in the integrand
+    #     {'name': 'k=16 weighted', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 3, 'k': 16, 'seed': 0},
+    #     {'name': 'k=25 weighted', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 3, 'k': 25, 'seed': 0},
+    # ]
     CONFIGS = [
-        # Baseline: uniform weighting
-        {'name': 'k=16 uniform', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 0, 'k': 16, 'seed': 0},
-        {'name': 'k=25 uniform', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 0, 'k': 25, 'seed': 0},
-        # Importance weighted: gamma_weight_exp=3 matches the 1/γ³ in the integrand
-        {'name': 'k=16 weighted', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 3, 'k': 16, 'seed': 0},
-        {'name': 'k=25 weighted', 'eps_train': 0.03, 'eps_eval': 0.03, 'lr': 2e-6, 'gamma_weight_exp': 3, 'k': 25, 'seed': 0},
+        {'name': f's{s}k{k}et{et}ee{ee}lr{elar}e{expo}', 'eps_train': et, 'eps_eval': ee, 'lr': elar, 'gamma_weight_exp': expo, 'k': k, 'seed': s} for
+        et in [0.01] for
+        ee in [0.03] for
+        elar in [3e-7, 9e-7, 3e-6] for
+        expo in [0] for
+        k in [30] for
+        s in [2, 0, 1]
     ]
 
     all_results = {}
@@ -985,7 +994,7 @@ if __name__ == '__main__':
             num_epochs=1000,
             batch_size=256,
             gamma_weight_exp=cfg.get('gamma_weight_exp', 0),
-            patience=100000,
+            patience=10000,
             verbose=False,  # Use plots instead
             integration_steps=100,
             convergence_threshold=1e-8

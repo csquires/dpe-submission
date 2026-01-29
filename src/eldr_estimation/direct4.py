@@ -88,11 +88,11 @@ class MLP(nn.Module):
         # Input: 2 * time_embed_size (from Fourier) + input_dim (spatial)
         self.net = nn.Sequential(
             nn.Linear(2 * time_embed_size + input_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, output_dim),
         )
 
@@ -256,6 +256,9 @@ class DirectELDREstimator4(ELDREstimator):
         Compute partial_t log rho(t, x) using:
         dt_log_rho = -div(b) + b.eta/gamma
 
+        The network predicts scaled eta (eta / v(t)), so we need to de-scale:
+        eta = eta_pred * v(t)
+
         Args:
             t: Time tensor [batch, 1]
             x: Data tensor [batch, dim]
@@ -266,9 +269,16 @@ class DirectELDREstimator4(ELDREstimator):
         """
         x = x.clone().requires_grad_(True)
 
+        # Get v(t) for de-scaling (uses clamped t internally)
+        t_flat = t.squeeze(-1) if t.dim() > 1 else t
+        v_t = self._interpolate_v(t_flat).unsqueeze(-1)  # [batch, 1]
+
         # Run separate forward passes
         b_pred = self.net_b(t, x)
-        eta_pred = self.net_eta(t, x)
+        eta_scaled_pred = self.net_eta(t, x)
+
+        # De-scale: eta = eta_scaled * v(t)
+        eta_pred = eta_scaled_pred * v_t
 
         # Exact divergence (trace of Jacobian)
         div_b = compute_divergence(b_pred, x)
@@ -278,29 +288,141 @@ class DirectELDREstimator4(ELDREstimator):
 
         return -div_b.view(-1, 1) + b_dot_eta / gamma_t
 
+    def _compute_time_score_single(self, t_scalar: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        """Compute time score for a single time value across all samples.
+
+        Time score: dt_log_rho = -div(b) + b.eta/gamma
+
+        Args:
+            t_scalar: Single time value (scalar tensor)
+            x: Sample points [n_samples, dim]
+        Returns:
+            Time scores [n_samples]
+        """
+        n_samples = x.shape[0]
+        t_batch = t_scalar.expand(n_samples, 1)
+
+        gamma_t = self.gamma(t_scalar)
+
+        # Compute b and eta
+        b_pred = self.net_b(t_batch, x)
+        eta_pred = self.net_eta(t_batch, x)
+
+        # Compute divergence using jacrev + vmap over samples
+        def b_single(x_single):
+            return self.net_b(t_scalar.view(1, 1), x_single.unsqueeze(0)).squeeze(0)
+
+        def jac_trace(x_single):
+            jac = torch.func.jacrev(b_single)(x_single)  # [dim, dim]
+            return torch.trace(jac)
+
+        div_b = torch.vmap(jac_trace)(x)  # [n_samples]
+
+        b_dot_eta = (b_pred * eta_pred).sum(dim=-1)
+
+        return -div_b + b_dot_eta / gamma_t  # [n_samples]
+
+    def _precompute_std_grid(
+        self,
+        samples_base: torch.Tensor,
+        samples_p0: torch.Tensor,
+        samples_p1: torch.Tensor,
+        n_grid: int = 100,
+    ) -> None:
+        """
+        Precompute std of denoiser target at grid of t values.
+
+        Target = (x - I_t) / gamma_t where x ~ p_*, x0 ~ p0, x1 ~ p1
+        We compute std of this target for each t in the grid.
+        """
+        self._v_grid_t = torch.linspace(0, 1, n_grid, device=self.device)
+        self._std_grid_vals = []
+
+        n_base = samples_base.shape[0]
+        n_p0 = samples_p0.shape[0]
+        n_p1 = samples_p1.shape[0]
+        n_samples = min(1000, n_base, n_p0, n_p1)  # Use subset for efficiency
+
+        with torch.no_grad():
+            for t_val in self._v_grid_t:
+                # Sample x from p_*, x0 from p0, x1 from p1
+                base_idx = torch.randint(0, n_base, (n_samples,), device=self.device)
+                p0_idx = torch.randint(0, n_p0, (n_samples,), device=self.device)
+                p1_idx = torch.randint(0, n_p1, (n_samples,), device=self.device)
+
+                x = samples_base[base_idx]
+                x0 = samples_p0[p0_idx]
+                x1 = samples_p1[p1_idx]
+
+                # Compute I_t and gamma_t
+                I_t = (1 - t_val) * x0 + t_val * x1
+                gamma_t = self.gamma(t_val)
+
+                # Target = (x - I_t) / gamma_t
+                # Use clamped gamma for numerical stability
+                gamma_clamped = max(gamma_t.item(), 1e-6)
+                target = (x - I_t) / gamma_clamped
+
+                # Compute std across samples (per dimension, then mean)
+                std_t = target.std(dim=0).mean()
+                self._std_grid_vals.append(std_t)
+
+        self._std_grid_vals = torch.stack(self._std_grid_vals)
+
+    def _interpolate_v(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Interpolate v(t) (std scaling) using clamped t.
+
+        Args:
+            t: Time values [batch] or scalar
+
+        Returns:
+            Interpolated std values matching input shape
+        """
+        # Always clamp t for v(t) to ensure training/eval consistency
+        t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
+
+        grid_range = 1
+        idx_float = t_clamped / grid_range * (len(self._v_grid_t) - 1)
+        idx_low = torch.floor(idx_float).long().clamp(0, len(self._v_grid_t) - 1)
+        idx_high = torch.clamp(idx_low + 1, max=len(self._v_grid_t) - 1)
+        frac = idx_float - idx_low.float()
+
+        std_low = self._std_grid_vals[idx_low]
+        std_high = self._std_grid_vals[idx_high]
+        return std_low + frac * (std_high - std_low)
+
     def fit(
         self,
+        samples_base: torch.Tensor,
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
     ) -> None:
         """
         Train the velocity and denoiser networks.
 
-        Training follows spatial_velo_denoiser2.py exactly:
-        - Sample z ~ N(0, I) fresh noise
-        - Compute noisy interpolant x_t = I_t + gamma_t * z
-        - Train networks on x_t (not raw x from base distribution)
+        Training uses samples from p_* for denoiser (like direct3):
+        - Sample x from p_* (samples_base)
+        - Sample x0 from p0, x1 from p1
+        - Compute I_t = (1-t)*x0 + t*x1
+        - Denoiser target: (x - I_t) / gamma_t
 
         Args:
+            samples_base: Samples from base distribution p_* [n_base, dim]
             samples_p0: Samples from p_0 [n_p0, dim]
             samples_p1: Samples from p_1 [n_p1, dim]
         """
         self.init_model()
 
-        samples_p0 = samples_p0.float()
-        samples_p1 = samples_p1.float()
+        samples_base = samples_base.float().to(self.device)
+        samples_p0 = samples_p0.float().to(self.device)
+        samples_p1 = samples_p1.float().to(self.device)
+        n_base = samples_base.shape[0]
         n_p0 = samples_p0.shape[0]
         n_p1 = samples_p1.shape[0]
+
+        # Precompute std grid for v(t) scaling
+        self._precompute_std_grid(samples_base, samples_p0, samples_p1)
 
         if self.verbose:
             print(f"[DirectELDREstimator4] Starting Sequential Training")
@@ -318,19 +440,19 @@ class DirectELDREstimator4(ELDREstimator):
 
         for epoch in range(self.n_epochs):
             # Sample batches
-            p0_idx = torch.randint(0, n_p0, (self.batch_size,))
-            p1_idx = torch.randint(0, n_p1, (self.batch_size,))
-            x0 = samples_p0[p0_idx].to(self.device)
-            x1 = samples_p1[p1_idx].to(self.device)
+            p0_idx = torch.randint(0, n_p0, (self.batch_size,), device=self.device)
+            p1_idx = torch.randint(0, n_p1, (self.batch_size,), device=self.device)
+            x0 = samples_p0[p0_idx]
+            x1 = samples_p1[p1_idx]
 
-            # Sample time uniformly from [eps_train, 1-eps_train] per sample
-            t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps_train) + self.eps_train
+            # Sample time uniformly from [0, 1] (full range, like direct3)
+            t = torch.rand(self.batch_size, device=self.device)
             t_batch = t.unsqueeze(-1)  # [B, 1]
 
             # Sample noise (independent per sample)
             z = torch.randn_like(x0)
 
-            # Compute gamma and gamma' for each t
+            # Compute gamma and gamma' for each t (unclamped for interpolant)
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
             gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
@@ -389,42 +511,52 @@ class DirectELDREstimator4(ELDREstimator):
 
         # ==========================================
         # PHASE 2: Train Denoiser Network (eta)
+        # Uses samples from p_* with v(t) scaling (like direct3)
         # ==========================================
         if self.verbose:
             print(f"\n[Phase 2/2] Training Denoiser Network (eta) for {self.n_epochs} epochs...")
+            print(f"  v(t) range: [{self._std_grid_vals.min().item():.4f}, {self._std_grid_vals.max().item():.4f}]")
 
         self.net_b.eval()
         self.net_eta.train()
         optimizer_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
         for epoch in range(self.n_epochs):
-            p0_idx = torch.randint(0, n_p0, (self.batch_size,))
-            p1_idx = torch.randint(0, n_p1, (self.batch_size,))
-            x0 = samples_p0[p0_idx].to(self.device)
-            x1 = samples_p1[p1_idx].to(self.device)
+            # Sample from all three distributions
+            base_idx = torch.randint(0, n_base, (self.batch_size,), device=self.device)
+            p0_idx = torch.randint(0, n_p0, (self.batch_size,), device=self.device)
+            p1_idx = torch.randint(0, n_p1, (self.batch_size,), device=self.device)
+            x = samples_base[base_idx]  # Sample from p_*
+            x0 = samples_p0[p0_idx]
+            x1 = samples_p1[p1_idx]
 
-            # Sample time uniformly from [eps_train, 1-eps_train] per sample
-            t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps_train) + self.eps_train
+            # Sample time uniformly from [0, 1] (full range, like direct3)
+            t = torch.rand(self.batch_size, device=self.device)
             t_batch = t.unsqueeze(-1)  # [B, 1]
 
-            # Sample noise (independent per sample)
-            z = torch.randn_like(x0)
-
-            # Compute gamma for each t
+            # Compute gamma for each t (unclamped for interpolant)
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
 
-            # Interpolant
-            x_t = (1 - t_batch) * x0 + t_batch * x1 + gamma_t * z
+            # Interpolant mean I_t = (1-t)*x0 + t*x1
+            I_t = (1 - t_batch) * x0 + t_batch * x1
 
-            # Predict eta
-            eta_pred = self.net_eta(t_batch, x_t)
+            # Target = (x - I_t) / gamma_t
+            # This is the denoiser target when using samples from p_*
+            target_eta = (x - I_t) / (gamma_t + 1e-8)
 
-            # Denoiser loss: 0.5*||d||² - z·d
+            # Scale target by v(t) for stability
+            v_t = self._interpolate_v(t).unsqueeze(-1)  # [B, 1]
+            scaled_target = target_eta / (v_t + 1e-8)
+
+            # Network predicts scaled eta
+            eta_pred = self.net_eta(t_batch, x)
+
+            # Denoiser loss: 0.5*||eta||² - scaled_target·eta
             eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
-            z_dot_eta = (z * eta_pred).sum(dim=-1)
-            per_sample_loss_eta = (0.5 * eta_norm_sq - z_dot_eta)
+            target_dot_eta = (scaled_target * eta_pred).sum(dim=-1)
+            per_sample_loss_eta = (0.5 * eta_norm_sq - target_dot_eta)
 
-            # Apply loss weighting if enabled
+            # Apply loss weighting if enabled (uses clamped gamma)
             if self.loss_weight_exp != 0:
                 t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
                 gamma_clamped = self.gamma(t_clamped)
@@ -436,7 +568,7 @@ class DirectELDREstimator4(ELDREstimator):
             optimizer_eta.zero_grad()
             loss_eta.backward()
 
-            # Gamma-based gradient clipping
+            # Gamma-based gradient clipping (uses clamped gamma)
             t_clamped = torch.clamp(t, self.eps_train, 1 - self.eps_train)
             gamma_clamped = self.gamma(t_clamped)
             gamma_min = gamma_clamped.min().item()
@@ -474,17 +606,20 @@ class DirectELDREstimator4(ELDREstimator):
             n_points += 1
         t_vals = torch.linspace(self.eps_eval, 1 - self.eps_eval, n_points, device=self.device)
 
-        # Compute time scores at each t for all samples
-        time_scores = []
-        for t_val in t_vals:
-            t_batch = torch.full((n_samples, 1), t_val.item(), device=self.device)
-            gamma_t = self.gamma(t_val)
-
-            time_score = self.compute_time_score(t_batch, samples, gamma_t)
-            time_scores.append(time_score.detach())
-
-        time_scores = torch.stack(time_scores, dim=0)  # [n_points, n_samples, 1]
-        time_scores = time_scores.squeeze(-1)  # [n_points, n_samples]
+        # Compute time scores at each t for all samples using vmap
+        # Process in chunks to avoid OOM with large n_points * n_samples
+        compute_vmapped = torch.vmap(
+            self._compute_time_score_single,
+            in_dims=(0, None),  # batch over t, broadcast samples
+            out_dims=0
+        )
+        chunk_size = max(1, 100000 // n_samples)  # Aim for ~100k total evaluations per chunk
+        time_score_chunks = []
+        for i in range(0, n_points, chunk_size):
+            t_chunk = t_vals[i:i + chunk_size]
+            chunk_scores = compute_vmapped(t_chunk, samples).detach()
+            time_score_chunks.append(chunk_scores)
+        time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
 
         if self.integration_type == '3':
             # Simpson's rule integration
@@ -530,8 +665,8 @@ class DirectELDREstimator4(ELDREstimator):
         if isinstance(samples_p1, np.ndarray):
             samples_p1 = torch.from_numpy(samples_p1).float()
 
-        # Train the model (only uses samples_p0 and samples_p1)
-        self.fit(samples_p0, samples_p1)
+        # Train the model (uses samples_pstar, samples_p0, and samples_p1)
+        self.fit(samples_pstar, samples_p0, samples_p1)
 
         # Compute time_score integral for each x in samples_pstar
         samples_pstar = samples_pstar.float().to(self.device)
