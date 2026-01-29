@@ -21,7 +21,7 @@ NTEST_SETS = config['ntest_sets']
 # filename = f'{PROCESSED_RESULTS_DIR}/metrics_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 # filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 # filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
-filename = f'{PROCESSED_RESULTS_DIR}/new_pstar.h5'
+filename = f'{PROCESSED_RESULTS_DIR}/final_complete_prelim.h5'
 
 # Load all metrics from file
 with h5py.File(filename, 'r') as f:
@@ -63,6 +63,7 @@ colors = {
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
     "VFM": "#9467bd",
+    "Spatial": "#9467bd",
 }
 
 tdre_order = ["TDRE_5"]
@@ -78,16 +79,18 @@ def get_algorithms_to_plot(data_dict):
         algs.append(("BDRE", "BDRE"))
     if "TSM" in data_dict:
         algs.append(("TSM", "TSM"))
-    if "TriangularTSM" in data_dict:
-        algs.append(("TriangularTSM", "TriangularTSM"))
+    # if "TriangularTSM" in data_dict:
+    #     algs.append(("TriangularTSM", "TriangularTSM"))
+    if "TriangularMDRE" in data_dict:
+        algs.append(("TriangularMDRE", "TriangularMDRE"))    
     for tdre_name in tdre_order:
         if tdre_name in data_dict:
             algs.append((tdre_name, "TDRE"))
     for mdre_name in mdre_order:
         if mdre_name in data_dict:
             algs.append((mdre_name, "MDRE"))
-    if "VFM" in data_dict:
-        algs.append(("VFM", "VFM"))
+    if "Spatial" in data_dict:
+        algs.append(("Spatial", "VFM"))
     return algs
 
 
@@ -147,12 +150,18 @@ def plot_metric(data_by_kl, ylabel, figure_name, stats_file, use_log_y=True, hig
         axes[i].set_xscale('log')
         axes[i].set_xlabel(r'KL$(p_0 \| p_1)$')
         axes[i].set_title(TEST_SET_TITLES[i])
+        if i != 0:
+            axes[i].set_ylabel("")
+            axes[i].tick_params(axis="y", labelleft=False)
 
     axes[0].set_ylabel(ylabel)
     handles, labels = axes[0].get_legend_handles_labels()
-    # Remove duplicate labels
+    # Remove duplicate labels and enforce order
     by_label = dict(zip(labels, handles))
-    plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
+    legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE"]
+    ordered_labels = [lbl for lbl in legend_order if lbl in by_label]
+    ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
+    plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     plt.savefig(f'{FIGURES_DIR}/{figure_name}.pdf')
 
@@ -231,23 +240,17 @@ with open(stats_filename, 'w') as stats_file:
 
     # Plot 1: MAE (original)
     if maes_by_kl:
-        plot_metric(maes_by_kl, 'Mean Absolute Error\n(Test Set)', 'mae', stats_file)
+        plot_metric(maes_by_kl, 'Mean Absolute Error\n(Test Set)', 'Completed', stats_file)
 
-    # Plot 2: Median AE
-    if median_aes_by_kl:
-        plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
-
-    # Plot 3: Spearman Correlation
-    if spearman_by_kl:
-        plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
-                    use_log_y=False, higher_is_better=True)
-
-    # Plot 4: Trimmed MAE (IQR)
-    if trimmed_mae_iqr_by_kl:
-        plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
-
-    # Plot 5: Stratified MAE by quartiles
-    if stratified_mae_by_kl:
-        plot_stratified_mae(stratified_mae_by_kl, stats_file)
+    # Other plots disabled for paper-ready output
+    # if median_aes_by_kl:
+    #     plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
+    # if spearman_by_kl:
+    #     plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
+    #                 use_log_y=False, higher_is_better=True)
+    # if trimmed_mae_iqr_by_kl:
+    #     plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
+    # if stratified_mae_by_kl:
+    #     plot_stratified_mae(stratified_mae_by_kl, stats_file)
 
 print(f"Stats written to: {stats_filename}")
