@@ -14,6 +14,7 @@ args = parser.parse_args()
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
+from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.eig_estimation.plugin import EIGPlugin
 from src.eig_estimation.direct_plugin import make_eig_direct3_plugin, make_eig_direct4_plugin, make_eig_direct5_plugin
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
@@ -33,6 +34,18 @@ class TriangularTSMEIGAdapter:
         return self.triangular_tsm.predict_ldr(xs)
 
 
+class TriangularMDREEIGAdapter:
+    """Adapter for TriangularMDRE that uses p0 samples as pstar during fit."""
+    def __init__(self, triangular_mdre):
+        self.triangular_mdre = triangular_mdre
+
+    def fit(self, samples_p0, samples_p1):
+        self.triangular_mdre.fit(samples_p0, samples_p1, samples_p0)
+
+    def predict_ldr(self, xs):
+        return self.triangular_mdre.predict_ldr(xs)
+
+
 config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
 # directories
@@ -46,8 +59,10 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+# dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+dataset_filename = f'{DATA_DIR}/updated.h5'
+#results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+results_filename = f'{RAW_RESULTS_DIR}/updated.h5'
 
 existing_results = set()
 if os.path.exists(results_filename):
@@ -80,6 +95,16 @@ mdre_classifier = make_multiclass_classifier(
 mdre = MDRE(mdre_classifier, device=DEVICE)
 mdre_plugin = EIGPlugin(density_ratio_estimator=mdre)
 
+# instantiate triangular mdre plugin (15 waypoints)
+triangular_mdre_classifier = make_multiclass_classifier(
+    name="default",
+    input_dim=DATA_DIM + 1,
+    num_classes=mdre_waypoints,
+)
+triangular_mdre = TriangularMDRE(triangular_mdre_classifier, device=DEVICE)
+triangular_mdre_adapter = TriangularMDREEIGAdapter(triangular_mdre)
+triangular_mdre_plugin = EIGPlugin(density_ratio_estimator=triangular_mdre_adapter)
+
 # instantiate tsm plugin
 tsm = TSM(DATA_DIM + 1, device=DEVICE)
 tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
@@ -102,15 +127,16 @@ direct5_plugin = make_eig_direct5_plugin(input_dim=DATA_DIM + 1, device=DEVICE)
 
 algorithms = [
     ("BDRE", bdre_plugin),
-    ("TDRE_5", tdre_plugin),
-    ("MDRE_15", mdre_plugin),
+    ("TDRE", tdre_plugin),
+    ("MDRE", mdre_plugin),
+    ("TriangularMDRE", triangular_mdre_plugin),
     ("TSM", tsm_plugin),
-    ("TriangularTSM", triangular_tsm_plugin),
-    ("VFM"", spatial_denoiser_plugin),
-    ("SpatialScore", spatial_score_plugin),
-    ("Direct3", direct3_plugin),
-    ("Direct4", direct4_plugin),
-    ("Direct5", direct5_plugin),
+    #("TriangularTSM", triangular_tsm_plugin),
+    #("VFM"", spatial_denoiser_plugin),
+    #("SpatialScore", spatial_score_plugin),
+    # ("Direct3", direct3_plugin),
+    # ("Direct4", direct4_plugin),
+    # ("Direct5", direct5_plugin),
 ]
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:
