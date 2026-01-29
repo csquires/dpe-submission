@@ -12,7 +12,8 @@ class TriangularTDRE(DensityRatioEstimator):
     def __init__(
         self,
         classifiers: list[BinaryClassifier],
-        waypoint_builder: TriangularWaypointBuilder1D | None = None,
+        waypoint_builder: TriangularWaypointBuilder1D = None,
+        # waypoint_builder: TriangularWaypointBuilder1D | None = None,
         num_waypoints: int = 5,
         device: str = "cuda",
         midpoint_oversample: int = 0,
