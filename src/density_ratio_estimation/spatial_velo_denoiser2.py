@@ -59,8 +59,8 @@ def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Ten
         grad_i = torch.autograd.grad(
             outputs=output[:, i].sum(),
             inputs=x,
-            create_graph=True,
-            retain_graph=True,
+            create_graph=False,
+            retain_graph=False,
         )[0]
         divergence = divergence + grad_i[:, i]
 
@@ -375,8 +375,8 @@ if __name__ == '__main__':
     from src.models.binary_classification import make_binary_classifier
 
     DIM = 2
-    NSAMPLES_TRAIN = 10000
-    NSAMPLES_TEST = 100
+    NSAMPLES_TRAIN = 1000
+    NSAMPLES_TEST = 1000
     KL_DISTANCE = 5
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -419,13 +419,13 @@ if __name__ == '__main__':
         'k': [], 'steps': [],'type':[], 'mae': []
     }
     param_grid = {
-        'eps': [2.2e-4, 2.2e-3, 2.2e-2], #[2.1e-3, 2.2e-3, 2.3e-3],
-        'epochs': [300, 3000, 6000], #[300],
+        'eps': [2.1e-3, 2.2e-3, 2.3e-3],
+        'epochs': [300],
         'antithetic': [True],
-        'lr': [1.4e-3, 9e-4, 5e-3, 1e-2], #[1.3e-3, 1.4e-3, 1.5e-3],
+        'lr': [1.3e-3, 1.4e-3, 1.5e-3],
         'k': [20],
-        'steps': [3000, 15000], #[3000],
-        'type': ['2', '3'], #['2']
+        'steps': [3000],
+        'type': ['2']
     }
     for r in range(1):
         for this_eps in param_grid['eps']:
