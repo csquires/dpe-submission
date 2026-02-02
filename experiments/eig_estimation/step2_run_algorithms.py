@@ -13,11 +13,23 @@ args = parser.parse_args()
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation import BDRE, MDRE, TDRE
-from src.density_ratio_estimation.tsm import TSM
+from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.eig_estimation.plugin import EIGPlugin
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+
+
+class TriangularTSMEIGAdapter:
+    """Adapter for TriangularTSM that uses p0 samples as pstar during fit."""
+    def __init__(self, triangular_tsm):
+        self.triangular_tsm = triangular_tsm
+
+    def fit(self, samples_p0, samples_p1):
+        # Use samples_p0 as pstar (joint distribution samples)
+        self.triangular_tsm.fit(samples_p0, samples_p1, samples_p0)
+
+    def predict_ldr(self, xs):
+        return self.triangular_tsm.predict_ldr(xs)
 
 
 class TriangularMDREEIGAdapter:
@@ -33,7 +45,7 @@ class TriangularMDREEIGAdapter:
         return self.triangular_mdre.predict_ldr(xs)
 
 
-config = yaml.load(open('experiments/eig_estimation/config2.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
 # directories
 DATA_DIR = config['data_dir']
@@ -106,8 +118,8 @@ tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
 
 algorithms = [
     ("BDRE", bdre_plugin),
-    ("TDRE_5", tdre_plugin),
-    ("MDRE_15", mdre_plugin),
+    ("TDRE", tdre_plugin),
+    ("MDRE", mdre_plugin),
     ("TriangularMDRE", triangular_mdre_plugin),
     ("TSM", tsm_plugin),
     ("VFM", spatial_denoiser_plugin),

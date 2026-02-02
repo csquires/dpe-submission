@@ -44,14 +44,30 @@ with h5py.File(filename, 'r') as f:
 # colors - consistent across all experiments
 colors = {
     "BDRE": "#1f77b4",
-    "TDRE": "#ff7f0e",
-    "TDRE_5": "#ff7f0e",
     "MDRE": "#2ca02c",
-    "MDRE_15": "#2ca02c",
     "TSM": "#d62728",
+    "TriangularTSM": "#17becf",
+    "TriangularTDRE": "#c3d922",
+    "TriangularTDRE_Gauss": "#000000",
     "TriangularMDRE": "#aec7e8",
+    "TriangularMDRE_Gauss": "#9edae5",
+    "TDRE_5": "#ff7f0e",
+    "TDRE_10": "#8c564b",  # default TDRE
+    "TDRE_15": "#9467bd",
+    "TDRE_20": "#e377c2",
+    "TDRE_30": "#7f7f7f",
+    "MDRE_5": "#17becf",
+    "MDRE_10": "#7f7f7f",  # default MDRE
+    "MDRE_15": "#2ca02c",
+    "MDRE_15_Gauss": "#98df8a",
+    "MDRE_20": "#8c564b",
+    "MDRE_30": "#e377c2",
     "VFM": "#9467bd",
+    # "Spatial": "#9467bd",
 }
+
+tdre_order = ["TDRE_5"]
+mdre_order = ["MDRE_15"]
 
 TEST_SET_TITLES = [r'$p_* = p_0$', r'$p_* = p_1$', r'$p_* = q_0$', r'$p_* = q_1$']
 
@@ -61,14 +77,18 @@ def get_algorithms_to_plot(data_dict):
     algs = []
     if "BDRE" in data_dict:
         algs.append(("BDRE", "BDRE"))
-    if "TDRE_5" in data_dict:
-        algs.append(("TDRE_5", "TDRE"))
-    if "MDRE_15" in data_dict:
-        algs.append(("MDRE_15", "MDRE"))
     if "TSM" in data_dict:
         algs.append(("TSM", "TSM"))
     if "TriangularMDRE" in data_dict:
         algs.append(("TriangularMDRE", "TriangularMDRE"))
+    for tdre_name in tdre_order:
+        if tdre_name in data_dict:
+            algs.append((tdre_name, "TDRE"))
+    for mdre_name in mdre_order:
+        if mdre_name in data_dict:
+            algs.append((mdre_name, "MDRE"))
+    if "Spatial" in data_dict:
+        algs.append(("Spatial", "VFM"))
     if "VFM" in data_dict:
         algs.append(("VFM", "VFM"))
     return algs
@@ -133,9 +153,12 @@ def plot_metric(data_by_kl, ylabel, figure_name, stats_file, use_log_y=True, hig
 
     axes[0].set_ylabel(ylabel)
     handles, labels = axes[0].get_legend_handles_labels()
-    # Remove duplicate labels
+    # Remove duplicate labels and enforce order
     by_label = dict(zip(labels, handles))
-    plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
+    legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
+    ordered_labels = [lbl for lbl in legend_order if lbl in by_label]
+    ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
+    plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     plt.savefig(f'{FIGURES_DIR}/{figure_name}.pdf')
 
@@ -194,7 +217,10 @@ def plot_stratified_mae(stratified_data, stats_file):
         fig.suptitle(f'Stratified MAE by True LDR Quartile - {TEST_SET_TITLES[test_idx]}', y=1.02)
         handles, labels = axes[0].get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
+        legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
+        ordered_labels = [lbl for lbl in legend_order if lbl in by_label]
+        ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
+        plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.tight_layout()
         plt.savefig(f'{FIGURES_DIR}/stratified_mae_test{test_idx}.pdf')
 

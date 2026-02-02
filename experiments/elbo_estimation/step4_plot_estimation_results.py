@@ -20,20 +20,18 @@ DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 
 processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 
-# colors - consistent across all experiments
 colors = {
     "BDRE": "#1f77b4",
     "TDRE": "#ff7f0e",
-    "TDRE_5": "#ff7f0e",
     "MDRE": "#2ca02c",
-    "MDRE_15": "#2ca02c",
     "TSM": "#d62728",
     "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
+    "Direct3": "#8c564b",
+    "Direct4": "#e377c2",
+    "Direct5": "#7f7f7f",
 }
-
-# Standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM
-algorithm_order = ["BDRE", "TDRE_5", "MDRE_15", "TSM", "TriangularMDRE", "VFM"]
+legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM", "Direct3", "Direct4", "Direct5"]
 
 # Load processed results
 with h5py.File(processed_results_filename, 'r') as f:
@@ -44,21 +42,39 @@ with h5py.File(processed_results_filename, 'r') as f:
 # Plot
 plt.clf()
 fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=len(ALPHAS))
+all_vals = []
+for mae in mae_by_alg.values():
+    all_vals.extend(mae.flatten().tolist())
+if all_vals:
+    y_min, y_max = min(all_vals), max(all_vals)
+else:
+    y_min, y_max = 0.0, 1.0
+
 for i, alpha in enumerate(ALPHAS):
-    # Plot in standard order
-    for alg_name in algorithm_order:
-        if alg_name not in mae_by_alg:
-            continue
+    # stable legend order
+    alg_names = sorted(mae_by_alg.keys(), key=lambda n: legend_order.index(n) if n in legend_order else len(legend_order))
+    for alg_name in alg_names:
         mae = mae_by_alg[alg_name]
-        color = colors.get(alg_name, None)
-        # mae shape: (len(DESIGN_EIG_PERCENTAGES), len(ALPHAS))
-        axes[i].plot(DESIGN_EIG_PERCENTAGES, mae[:, i], label=alg_name, color=color)
+        axes[i].plot(
+            DESIGN_EIG_PERCENTAGES,
+            mae[:, i],
+            label=alg_name,
+            color=colors.get(alg_name, "#333333"),
+            linewidth=1.0,
+        )
     axes[i].set_title(fr"$\alpha = {alpha}$")
+    axes[i].set_ylim(y_min * 0.9, y_max * 1.1)
+    if i != 0:
+        axes[i].set_ylabel("")
+        axes[i].tick_params(axis="y", labelleft=False)
 
 fig.supxlabel(r"$\beta$ (Design Optimality Percentage)")
 fig.supylabel(r"ELBO Estimation Error")
 handles, labels = axes[0].get_legend_handles_labels()
-plt.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left')
+by_label = dict(zip(labels, handles))
+ordered_labels = [lbl for lbl in legend_order if lbl in by_label]
+ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
+plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
 # saving
 os.makedirs(FIGURES_DIR, exist_ok=True)

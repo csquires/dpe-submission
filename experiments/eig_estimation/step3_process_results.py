@@ -5,7 +5,7 @@ import numpy as np
 import yaml
 
 
-config = yaml.load(open('experiments/eig_estimation/config2.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 RAW_RESULTS_DIR = config['raw_results_dir']
