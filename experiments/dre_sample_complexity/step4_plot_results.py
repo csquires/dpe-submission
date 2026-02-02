@@ -39,47 +39,34 @@ with h5py.File(filename, 'r') as f:
                 stratified_mae_by_alg[alg_name] = {}
             stratified_mae_by_alg[alg_name][quartile] = f[key][:]
 
-# colors
+# colors - consistent across all experiments
 colors = {
     "BDRE": "#1f77b4",
-    "MDRE": "#2ca02c",
-    "TSM": "#d62728",
-    "TriangularTSM": "#17becf",
-    "TriangularTDRE": "#ff9896",
+    "TDRE": "#ff7f0e",
     "TDRE_5": "#ff7f0e",
-    "TDRE_10": "#8c564b",
-    "TDRE_15": "#9467bd",
-    "TDRE_20": "#e377c2",
-    "TDRE_30": "#7f7f7f",
-    "MDRE_5": "#17becf",
-    "MDRE_10": "#7f7f7f",
+    "MDRE": "#2ca02c",
     "MDRE_15": "#2ca02c",
-    "MDRE_20": "#8c564b",
-    "MDRE_30": "#e377c2",
+    "TSM": "#d62728",
+    "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
 }
-
-tdre_order = ["TDRE_5"]
-mdre_order = ["MDRE_15"]
 
 KL_TITLES = [rf'KL$(p_0 \| p_1) = {kl}$' for kl in KL_DISTANCES]
 
 
 def get_algorithms_to_plot(data_dict):
-    """Get list of algorithms that should be plotted."""
+    """Get list of algorithms in standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM."""
     algs = []
     if "BDRE" in data_dict:
         algs.append(("BDRE", "BDRE"))
+    if "TDRE_5" in data_dict:
+        algs.append(("TDRE_5", "TDRE"))
+    if "MDRE_15" in data_dict:
+        algs.append(("MDRE_15", "MDRE"))
     if "TSM" in data_dict:
         algs.append(("TSM", "TSM"))
-    if "TriangularTSM" in data_dict:
-        algs.append(("TriangularTSM", "TriangularTSM"))
-    for tdre_name in tdre_order:
-        if tdre_name in data_dict:
-            algs.append((tdre_name, "TDRE"))
-    for mdre_name in mdre_order:
-        if mdre_name in data_dict:
-            algs.append((mdre_name, "MDRE"))
+    if "TriangularMDRE" in data_dict:
+        algs.append(("TriangularMDRE", "TriangularMDRE"))
     if "VFM" in data_dict:
         algs.append(("VFM", "VFM"))
     return algs
@@ -131,7 +118,7 @@ def plot_metric(data_by_alg, ylabel, figure_name, stats_file, use_log_y=True, hi
         for alg_key, alg_label in algorithms:
             if alg_key in avg_by_alg:
                 y_vals = avg_by_alg[alg_key][kl_idx, :]
-                axes[kl_idx].plot(NSAMPLES_TRAIN_VALUES, y_vals, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0, marker='o', markersize=3)
+                axes[kl_idx].plot(NSAMPLES_TRAIN_VALUES, y_vals, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
                 stats_file.write(f"  {alg_label} ({alg_key}): {y_vals.tolist()}\n")
         stats_file.write("\n")
 
@@ -146,7 +133,6 @@ def plot_metric(data_by_alg, ylabel, figure_name, stats_file, use_log_y=True, hi
                 axes[kl_idx].set_ylim(y_min * 0.9, y_max * 1.1)
         axes[kl_idx].set_xscale('log')
         axes[kl_idx].set_xlabel(r'$n_{\mathrm{train}}$')
-        axes[kl_idx].set_title(KL_TITLES[kl_idx])
 
     axes[0].set_ylabel(ylabel)
     handles, labels = axes[0].get_legend_handles_labels()

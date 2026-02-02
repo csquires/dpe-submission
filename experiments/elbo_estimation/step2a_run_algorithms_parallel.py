@@ -26,9 +26,10 @@ task_id = args.task_id if args.task_id is not None else int(os.environ.get('SLUR
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
+from src.density_ratio_estimation import BDRE, MDRE, TDRE
+from src.density_ratio_estimation.tsm import TSM
+from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.eldr_estimation.direct_adapters import make_direct3_estimator, make_direct4_estimator, make_direct5_estimator
 
 config = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
@@ -59,42 +60,36 @@ tdre = TDRE(tdre_classifiers, num_waypoints=TDRE_WAYPOINTS, device=DEVICE)
 mdre_classifier = make_multiclass_classifier(name="default", input_dim=DATA_DIM+1, num_classes=MDRE_WAYPOINTS)
 mdre = MDRE(mdre_classifier, device=DEVICE)
 
-tsm = TSM(DATA_DIM + 1, device=DEVICE)
+# instantiate tsm
+tsm = TSM(DATA_DIM+1, device=DEVICE)
 
-triangular_tsm = TriangularTSM(DATA_DIM + 1, device=DEVICE)
+# instantiate triangular mdre
+triangular_mdre_waypoints = 15
+triangular_mdre_classifier = make_multiclass_classifier(name="default", input_dim=DATA_DIM+1, num_classes=triangular_mdre_waypoints)
+triangular_mdre = TriangularMDRE(
+    triangular_mdre_classifier,
+    device=DEVICE,
+    midpoint_oversample=7,
+    gamma_power=3.0,
+)
 
-# instantiate spatial velo denoiser
+# instantiate spatial velo denoiser (VFM)
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM+1, device=DEVICE)
 
-# instantiate direct ELDR estimators
-direct3 = make_direct3_estimator(input_dim=DATA_DIM+1, device=DEVICE)
-direct4 = make_direct4_estimator(input_dim=DATA_DIM+1, device=DEVICE)
-direct5 = make_direct5_estimator(input_dim=DATA_DIM+1, device=DEVICE)
-
 # DRE-based algorithms (use fit/predict pattern)
-dre_algorithms = [
+algorithms = [
     ("BDRE", bdre),
     ("TDRE_5", tdre),
     ("MDRE_15", mdre),
     ("TSM", tsm),
-    ("TriangularTSM", triangular_tsm),
+    ("TriangularMDRE", triangular_mdre),
     ("VFM", spatial),
 ]
-
-# Direct ELDR algorithms (use estimate_eldr directly)
-direct_algorithms = [
-    ("Direct3", direct3),
-    ("Direct4", direct4),
-    ("Direct5", direct5),
-]
-
-# Combined list for result tracking
-algorithms = dre_algorithms + direct_algorithms
 
 
 def estimate_eldr_from_dre(dre, samples_pstar, samples_p0, samples_p1, alg_name=""):
     """Estimate ELDR using a density ratio estimator (fit/predict pattern)."""
-    if alg_name == "TriangularTSM":
+    if alg_name in {"TriangularMDRE"}:
         dre.fit(samples_p0, samples_p1, samples_pstar)  # 3-arg fit
     else:
         dre.fit(samples_p0, samples_p1)  # 2-arg fit
@@ -127,8 +122,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             existing_results = set(results_file.keys())
             print(f"Task {task_id}: Existing results for: {list(results_file.keys())}")
 
-    # Run DRE-based algorithms (fit/predict pattern)
-    for alg_name, alg in dre_algorithms:
+    for alg_name, alg in algorithms:
         dataset_name = f'est_eldrs_arr_{alg_name}'
         if dataset_name in existing_results and not args.force:
             print(f"Task {task_id}: Skipping {alg_name} (results exist, use --force to overwrite)")
@@ -155,40 +149,6 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             # estimate ELDR using fit/predict pattern
             est_eldr = estimate_eldr_from_dre(alg, samples_pstar, samples_p0, samples_p1, alg_name=alg_name)
             est_eldrs_arr[local_idx] = est_eldr.item() if isinstance(est_eldr, torch.Tensor) else est_eldr
-
-        with h5py.File(results_filename, 'a') as f:
-            if dataset_name in f:
-                del f[dataset_name]
-            f.create_dataset(dataset_name, data=est_eldrs_arr)
-
-    # Run direct ELDR algorithms (estimate_eldr interface)
-    for alg_name, alg in direct_algorithms:
-        dataset_name = f'est_eldrs_arr_{alg_name}'
-        if dataset_name in existing_results and not args.force:
-            print(f"Task {task_id}: Skipping {alg_name} (results exist, use --force to overwrite)")
-            continue
-
-        print(f"Task {task_id}: Running {alg_name}...")
-        est_eldrs_arr = np.zeros(job_nrows)
-        for local_idx, global_idx in enumerate(trange(start_idx, end_idx, desc=f"Task {task_id} - {alg_name}")):
-            # p_star samples: (theta_star, y_star) from variational posterior
-            theta_star = torch.from_numpy(dataset_file['theta_star_samples_arr'][global_idx]).float().to(DEVICE)
-            y_star = torch.from_numpy(dataset_file['y_star_samples_arr'][global_idx]).float().to(DEVICE)
-            samples_pstar = torch.cat([theta_star, y_star], dim=1)
-
-            # p0 samples: prior-induced joint (theta0, y0)
-            theta0 = torch.from_numpy(dataset_file['theta0_samples_arr'][global_idx]).float().to(DEVICE)
-            y0 = torch.from_numpy(dataset_file['y0_samples_arr'][global_idx]).float().to(DEVICE)
-            samples_p0 = torch.cat([theta0, y0], dim=1)
-
-            # p1 samples: q(theta) x prior predictive (theta1, y1)
-            theta1 = torch.from_numpy(dataset_file['theta1_samples_arr'][global_idx]).float().to(DEVICE)
-            y1 = torch.from_numpy(dataset_file['y1_samples_arr'][global_idx]).float().to(DEVICE)
-            samples_p1 = torch.cat([theta1, y1], dim=1)
-
-            # estimate ELDR directly
-            est_eldr = alg.estimate_eldr(samples_pstar, samples_p0, samples_p1)
-            est_eldrs_arr[local_idx] = est_eldr if isinstance(est_eldr, (int, float)) else est_eldr.item()
 
         with h5py.File(results_filename, 'a') as f:
             if dataset_name in f:

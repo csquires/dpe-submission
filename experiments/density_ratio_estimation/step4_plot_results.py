@@ -41,51 +41,34 @@ with h5py.File(filename, 'r') as f:
                 stratified_mae_by_kl[alg_name] = {}
             stratified_mae_by_kl[alg_name][quartile] = f[key][:]
 
-# colors
+# colors - consistent across all experiments
 colors = {
     "BDRE": "#1f77b4",
-    "MDRE": "#2ca02c",
-    "TSM": "#d62728",
-    "TriangularTSM": "#17becf",
-    "TriangularTDRE": "#c3d922",
-    "TriangularTDRE_Gauss": "#000000",
-    "TriangularMDRE": "#aec7e8",
-    "TriangularMDRE_Gauss": "#9edae5",
+    "TDRE": "#ff7f0e",
     "TDRE_5": "#ff7f0e",
-    "TDRE_10": "#8c564b",  # default TDRE
-    "TDRE_15": "#9467bd",
-    "TDRE_20": "#e377c2",
-    "TDRE_30": "#7f7f7f",
-    "MDRE_5": "#17becf",
-    "MDRE_10": "#7f7f7f",  # default MDRE
+    "MDRE": "#2ca02c",
     "MDRE_15": "#2ca02c",
-    "MDRE_15_Gauss": "#98df8a",
-    "MDRE_20": "#8c564b",
-    "MDRE_30": "#e377c2",
+    "TSM": "#d62728",
+    "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
 }
-
-tdre_order = ["TDRE_5"]
-mdre_order = ["MDRE_15"]
 
 TEST_SET_TITLES = [r'$p_* = p_0$', r'$p_* = p_1$', r'$p_* = q_0$', r'$p_* = q_1$']
 
 
 def get_algorithms_to_plot(data_dict):
-    """Get list of algorithms that should be plotted."""
+    """Get list of algorithms in standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM."""
     algs = []
     if "BDRE" in data_dict:
         algs.append(("BDRE", "BDRE"))
+    if "TDRE_5" in data_dict:
+        algs.append(("TDRE_5", "TDRE"))
+    if "MDRE_15" in data_dict:
+        algs.append(("MDRE_15", "MDRE"))
     if "TSM" in data_dict:
         algs.append(("TSM", "TSM"))
-    if "TriangularTSM" in data_dict:
-        algs.append(("TriangularTSM", "TriangularTSM"))
-    for tdre_name in tdre_order:
-        if tdre_name in data_dict:
-            algs.append((tdre_name, "TDRE"))
-    for mdre_name in mdre_order:
-        if mdre_name in data_dict:
-            algs.append((mdre_name, "MDRE"))
+    if "TriangularMDRE" in data_dict:
+        algs.append(("TriangularMDRE", "TriangularMDRE"))
     if "VFM" in data_dict:
         algs.append(("VFM", "VFM"))
     return algs

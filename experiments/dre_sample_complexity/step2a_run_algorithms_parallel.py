@@ -36,7 +36,7 @@ from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.tdre import TDRE
 from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.triangular_tsm import TriangularTSM
+from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
 config = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
@@ -90,18 +90,29 @@ def make_algorithms():
     # instantiate tsm
     tsm = TSM(DATA_DIM, device=DEVICE)
 
-    # instantiate triangular tsm
-    triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
+    # instantiate triangular mdre
+    triangular_mdre_waypoints = 15
+    triangular_mdre_classifier = make_multiclass_classifier(
+        name="default",
+        input_dim=DATA_DIM,
+        num_classes=triangular_mdre_waypoints,
+    )
+    triangular_mdre = TriangularMDRE(
+        triangular_mdre_classifier,
+        device=DEVICE,
+        midpoint_oversample=7,
+        gamma_power=3.0,
+    )
 
-    # instantiate spatial velo denoiser
+    # instantiate spatial velo denoiser (VFM)
     spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
     algorithms = [
         ("BDRE", bdre),
-        ("TSM", tsm),
-        ("TriangularTSM", triangular_tsm),
         *tdre_variants,
         *mdre_variants,
+        ("TSM", tsm),
+        ("TriangularMDRE", triangular_mdre),
         ("VFM", spatial),
     ]
     return algorithms
@@ -159,8 +170,8 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
                 samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][global_idx][:nsamples_train]).to(DEVICE)
                 samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][global_idx][:nsamples_train]).to(DEVICE)
 
-                # Train algorithm (special handling for TriangularTSM)
-                if alg_name == "TriangularTSM":
+                # Train algorithm (special handling for TriangularMDRE)
+                if alg_name in {"TriangularMDRE"}:
                     samples_pstar = torch.from_numpy(dataset_file['samples_pstar_arr'][global_idx]).to(DEVICE)
                     alg.fit(samples_p0, samples_p1, samples_pstar)
                 else:

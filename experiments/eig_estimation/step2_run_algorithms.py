@@ -13,27 +13,27 @@ args = parser.parse_args()
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
+from src.density_ratio_estimation import BDRE, MDRE, TDRE
+from src.density_ratio_estimation.tsm import TSM
+from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.eig_estimation.plugin import EIGPlugin
-from src.eig_estimation.direct_plugin import make_eig_direct3_plugin, make_eig_direct4_plugin, make_eig_direct5_plugin
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.density_ratio_estimation.spatial_velo_score import SpatialVeloScore
 
 
-class TriangularTSMEIGAdapter:
-    """Adapter for TriangularTSM that uses p0 samples as pstar during fit."""
-    def __init__(self, triangular_tsm):
-        self.triangular_tsm = triangular_tsm
+class TriangularMDREEIGAdapter:
+    """Adapter for TriangularMDRE that uses p0 samples as pstar during fit."""
+    def __init__(self, triangular_mdre):
+        self.triangular_mdre = triangular_mdre
 
     def fit(self, samples_p0, samples_p1):
         # Use samples_p0 as pstar (joint distribution samples)
-        self.triangular_tsm.fit(samples_p0, samples_p1, samples_p0)
+        self.triangular_mdre.fit(samples_p0, samples_p1, samples_p0)
 
     def predict_ldr(self, xs):
-        return self.triangular_tsm.predict_ldr(xs)
+        return self.triangular_mdre.predict_ldr(xs)
 
 
-config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/eig_estimation/config2.yaml', 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
 # directories
 DATA_DIR = config['data_dir']
@@ -80,37 +80,37 @@ mdre_classifier = make_multiclass_classifier(
 mdre = MDRE(mdre_classifier, device=DEVICE)
 mdre_plugin = EIGPlugin(density_ratio_estimator=mdre)
 
-# instantiate tsm plugin
-tsm = TSM(DATA_DIM + 1, device=DEVICE)
-tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
+# instantiate triangular mdre plugin
+triangular_mdre_waypoints = 15
+triangular_mdre_classifier = make_multiclass_classifier(
+    name="default",
+    input_dim=DATA_DIM + 1,
+    num_classes=triangular_mdre_waypoints,
+)
+triangular_mdre = TriangularMDRE(
+    triangular_mdre_classifier,
+    device=DEVICE,
+    midpoint_oversample=7,
+    gamma_power=3.0,
+)
+triangular_mdre_adapter = TriangularMDREEIGAdapter(triangular_mdre)
+triangular_mdre_plugin = EIGPlugin(density_ratio_estimator=triangular_mdre_adapter)
 
-# instantiate triangular tsm plugin
-triangular_tsm = TriangularTSM(DATA_DIM + 1, device=DEVICE)
-triangular_tsm_adapter = TriangularTSMEIGAdapter(triangular_tsm)
-triangular_tsm_plugin = EIGPlugin(density_ratio_estimator=triangular_tsm_adapter)
-
-# instantiate spatial-based EIG plugins
+# instantiate spatial-based EIG plugin (VFM)
 spatial_denoiser = make_spatial_velo_denoiser(input_dim=DATA_DIM + 1, device=DEVICE)
 spatial_denoiser_plugin = EIGPlugin(density_ratio_estimator=spatial_denoiser)
-spatial_score = SpatialVeloScore(input_dim=DATA_DIM + 1, device=DEVICE)
-spatial_score_plugin = EIGPlugin(density_ratio_estimator=spatial_score)
 
-# instantiate direct EIG plugins
-direct3_plugin = make_eig_direct3_plugin(input_dim=DATA_DIM + 1, device=DEVICE)
-direct4_plugin = make_eig_direct4_plugin(input_dim=DATA_DIM + 1, device=DEVICE)
-direct5_plugin = make_eig_direct5_plugin(input_dim=DATA_DIM + 1, device=DEVICE)
+# instantiate TSM plugin
+tsm = TSM(input_dim=DATA_DIM + 1, device=DEVICE)
+tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
 
 algorithms = [
     ("BDRE", bdre_plugin),
     ("TDRE_5", tdre_plugin),
     ("MDRE_15", mdre_plugin),
+    ("TriangularMDRE", triangular_mdre_plugin),
     ("TSM", tsm_plugin),
-    ("TriangularTSM", triangular_tsm_plugin),
-    ("VFM"", spatial_denoiser_plugin),
-    ("SpatialScore", spatial_score_plugin),
-    ("Direct3", direct3_plugin),
-    ("Direct4", direct4_plugin),
-    ("Direct5", direct5_plugin),
+    ("VFM", spatial_denoiser_plugin),
 ]
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:
@@ -139,6 +139,8 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         if dataset_name in existing_results and not args.force:
             print(f"Skipping {alg_name} (results exist, use --force to overwrite)")
             continue
+        else:
+            print(f'Starting on {alg_name}.')
 
         est_eigs_arr = np.zeros(nrows, dtype=np.float32)
         for idx in trange(nrows):

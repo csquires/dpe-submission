@@ -26,7 +26,7 @@ with h5py.File(dataset_filename, 'r') as f:
 
 # Discover algorithms from raw results
 with h5py.File(raw_results_filename, 'r') as f:
-    alg_names = [key.replace('est_ldrs_grid_', '') for key in f.keys() if key.startswith('est_ldrs_grid_')]
+    alg_names = [key.replace('est_ldrs_grid_', '') for key in f.keys() if key.startswith('est_ldrs_grid_') and 'TriangularTDRE' not in key]
 
 print(f"Found algorithms: {alg_names}")
 print(f"True LDRs shape: {true_ldrs_grid.shape}")  # (nrows, num_grid_points)

@@ -6,7 +6,7 @@ import yaml
 import h5py
 
 
-config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/eig_estimation/config2.yaml', 'r'), Loader=yaml.FullLoader)
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']
 DATA_DIM = config['data_dim']
@@ -17,14 +17,16 @@ with h5py.File(processed_results_filename, 'r') as f:
     design_eig_percentages = f['design_eig_percentages'][:]
     mae_by_beta = {key.replace('mae_by_beta_', ''): f[key][:] for key in f.keys() if key.startswith('mae_by_beta_')}
 
+# colors - consistent across all experiments
 colors = {
     "BDRE": "#1f77b4",
+    "TDRE": "#ff7f0e",
     "TDRE_5": "#ff7f0e",
+    "MDRE": "#2ca02c",
     "MDRE_15": "#2ca02c",
     "TSM": "#d62728",
-    "TriangularTSM": "#17becf",
+    "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
-    "Direct3": "#8c564b",
 }
 
 plt.clf()
@@ -33,13 +35,20 @@ plt.style.use('half-width.mplstyle')
 label_map = {
     "TDRE_5": "TDRE(5)",
     "MDRE_15": "MDRE(15)",
+    "TriangularMDRE": "TriangularMDRE",
     "VFM": "VFM",
-    "Direct3": "Direct3",
+    "TSM": "TSM",
 }
 
-for alg_name, maes in mae_by_beta.items():
-    if alg_name in ['Direct3', 'VFM']:
+# Plot in standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM
+algorithm_order = ["BDRE", "TDRE_5", "MDRE_15", "TSM", "TriangularMDRE", "VFM"]
+skip_algorithms = ['SpatialDenoiser', 'Direct3', 'Direct4', 'Direct5', 'TriangularTSM', 'TriangularTDRE']
+
+for alg_name in algorithm_order:
+    if alg_name not in mae_by_beta or alg_name in skip_algorithms:
+        print(f'Skipping {alg_name} because {"forced to" if alg_name in skip_algorithms else "not present"}')
         continue
+    maes = mae_by_beta[alg_name]
     color = colors.get(alg_name, None)
     label = label_map.get(alg_name, alg_name)
     plt.plot(design_eig_percentages, maes, label=label, color=color)

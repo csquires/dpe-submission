@@ -20,6 +20,21 @@ DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 
 processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 
+# colors - consistent across all experiments
+colors = {
+    "BDRE": "#1f77b4",
+    "TDRE": "#ff7f0e",
+    "TDRE_5": "#ff7f0e",
+    "MDRE": "#2ca02c",
+    "MDRE_15": "#2ca02c",
+    "TSM": "#d62728",
+    "TriangularMDRE": "#aec7e8",
+    "VFM": "#9467bd",
+}
+
+# Standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM
+algorithm_order = ["BDRE", "TDRE_5", "MDRE_15", "TSM", "TriangularMDRE", "VFM"]
+
 # Load processed results
 with h5py.File(processed_results_filename, 'r') as f:
     # Find all algorithms
@@ -30,9 +45,14 @@ with h5py.File(processed_results_filename, 'r') as f:
 plt.clf()
 fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=len(ALPHAS))
 for i, alpha in enumerate(ALPHAS):
-    for alg_name, mae in mae_by_alg.items():
+    # Plot in standard order
+    for alg_name in algorithm_order:
+        if alg_name not in mae_by_alg:
+            continue
+        mae = mae_by_alg[alg_name]
+        color = colors.get(alg_name, None)
         # mae shape: (len(DESIGN_EIG_PERCENTAGES), len(ALPHAS))
-        axes[i].plot(DESIGN_EIG_PERCENTAGES, mae[:, i], label=alg_name)
+        axes[i].plot(DESIGN_EIG_PERCENTAGES, mae[:, i], label=alg_name, color=color)
     axes[i].set_title(fr"$\alpha = {alpha}$")
 
 fig.supxlabel(r"$\beta$ (Design Optimality Percentage)")

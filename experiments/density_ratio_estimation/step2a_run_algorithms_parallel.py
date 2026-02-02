@@ -86,7 +86,7 @@ spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 algorithms = [
     ("BDRE", bdre),
     ("TSM", tsm),
-    ("TriangularTSM", triangular_tsm),
+    # ("TriangularTSM", triangular_tsm),
     *tdre_variants,  # TDRE_5
     *mdre_variants,  # MDRE_15
     ("VFM", spatial),
@@ -128,7 +128,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         for local_idx, global_idx in enumerate(trange(start_idx, end_idx, desc=f"Task {task_id} - {alg_name}")):
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][global_idx]).to(DEVICE)
             samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][global_idx]).to(DEVICE)
-            if alg_name in {"TriangularTSM", "TriangularTDRE"}:
+            if alg_name in {"TriangularTSM"}:
                 pstar_train = torch.from_numpy(dataset_file['samples_pstar_train_arr'][global_idx]).to(DEVICE)
                 alg.fit(samples_p0, samples_p1, pstar_train)
             else:

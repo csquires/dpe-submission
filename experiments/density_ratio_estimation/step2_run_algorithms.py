@@ -19,7 +19,6 @@ from src.density_ratio_estimation.tdre import TDRE
 from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_tsm import TriangularTSM
-from src.density_ratio_estimation.triangular_tdre import TriangularTDRE
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
@@ -88,29 +87,6 @@ for num_waypoints_mdre in mdre_waypoints:
 tsm = TSM(DATA_DIM, device=DEVICE)
 # instantiate triangular tsm
 triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
-# instantiate triangular tdre
-triangular_tdre_waypoints = 5
-triangular_tdre_classifiers = make_pairwise_binary_classifiers(
-    name="default",
-    num_classes=triangular_tdre_waypoints,
-    input_dim=DATA_DIM,
-)
-triangular_tdre = TriangularTDRE(
-    triangular_tdre_classifiers,
-    num_waypoints=triangular_tdre_waypoints,
-    device=DEVICE,
-    midpoint_oversample=7,
-    gamma_power=3.0,
-)
-# instantiate triangular tdre with gaussian classifiers
-triangular_tdre_gauss_classifiers = [make_gaussian_binary_classifier(input_dim=DATA_DIM) for _ in range(triangular_tdre_waypoints - 1)]
-triangular_tdre_gauss = TriangularTDRE(
-    triangular_tdre_gauss_classifiers,
-    num_waypoints=triangular_tdre_waypoints,
-    device=DEVICE,
-    midpoint_oversample=7,
-    gamma_power=3.0,
-)
 # instantiate triangular mdre
 triangular_mdre_waypoints = 15
 triangular_mdre_classifier = make_multiclass_classifier(
@@ -128,13 +104,11 @@ triangular_mdre = TriangularMDRE(
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
 algorithms = [
-   ("BDRE", bdre),
+    ("BDRE", bdre),
     ("TSM", tsm),
-    ("TriangularTSM", triangular_tsm),
+    # ("TriangularTSM", triangular_tsm),
     *tdre_variants,  # TDRE_5
     *mdre_variants,  # MDRE_15
-    ("TriangularTDRE", triangular_tdre),
-    ("TriangularTDRE_Gauss", triangular_tdre_gauss),
     ("TriangularMDRE", triangular_mdre),
     ("VFM", spatial),
 ]
@@ -153,7 +127,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         for idx in trange(nrows):
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
             samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][idx]).to(DEVICE)  # (NSAMPLES_TRAIN, DATA_DIM)
-            if alg_name in {"TriangularTSM", "TriangularTDRE", "TriangularMDRE"}:
+            if alg_name in {"TriangularTSM", "TriangularMDRE"}:
                 pstar_train = torch.from_numpy(dataset_file['samples_pstar_train_arr'][idx]).to(DEVICE)
                 alg.fit(samples_p0, samples_p1, pstar_train)
             else:
