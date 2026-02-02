@@ -8,13 +8,13 @@ num_instances_per_kl: 1        # Single instance per KL (simpler visualization)
 nsamples_train: 10000          # Large training set
 
 # Grid parameters
-grid_size: 30                  # 30x30 grid = 900 evaluation points
-n_std_padding: 3.0             # 3-sigma region around modes
+grid_size: 50                  # 50x50 grid = 2500 evaluation points
+n_std_padding: 5.0             # 5-sigma region around modes
 
 # Visualization
 rgb_resolution: 300            # Background density image resolution
 marker_size_min: 0.1
-marker_size_max: 10
+marker_size_max: 5
 marker_alpha_min: 0.2          # Minimum opacity (for lowest errors)
 marker_alpha_max: 0.8          # Maximum opacity (for highest errors)
 
