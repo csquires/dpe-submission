@@ -247,15 +247,14 @@ with open(stats_filename, 'w') as stats_file:
     if maes_by_kl:
         plot_metric(maes_by_kl, 'Mean Absolute Error\n(Test Set)', 'Completed', stats_file)
 
-    # Other plots disabled for paper-ready output
-    # if median_aes_by_kl:
-    #     plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
-    # if spearman_by_kl:
-    #     plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
-    #                 use_log_y=False, higher_is_better=True)
-    # if trimmed_mae_iqr_by_kl:
-    #     plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
-    # if stratified_mae_by_kl:
-    #     plot_stratified_mae(stratified_mae_by_kl, stats_file)
+    if median_aes_by_kl:
+        plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
+    if spearman_by_kl:
+        plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
+                    use_log_y=False, higher_is_better=True)
+    if trimmed_mae_iqr_by_kl:
+        plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
+    if stratified_mae_by_kl:
+        plot_stratified_mae(stratified_mae_by_kl, stats_file)
 
 print(f"Stats written to: {stats_filename}")
