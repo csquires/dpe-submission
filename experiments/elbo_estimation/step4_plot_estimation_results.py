@@ -78,4 +78,4 @@ plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, bbox_to_an
 plt.tight_layout()
 # saving
 os.makedirs(FIGURES_DIR, exist_ok=True)
-plt.savefig(f'{FIGURES_DIR}/elbo_estimation.pdf')
+plt.savefig(f'{FIGURES_DIR}/elbo_estimation_complete.pdf')
