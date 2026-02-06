@@ -27,11 +27,8 @@ colors = {
     "TSM": "#d62728",
     "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
-    "Direct3": "#8c564b",
-    "Direct4": "#e377c2",
-    "Direct5": "#7f7f7f",
 }
-legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM", "Direct3", "Direct4", "Direct5"]
+legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
 
 # Load processed results
 with h5py.File(processed_results_filename, 'r') as f:
