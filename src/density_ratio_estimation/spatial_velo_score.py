@@ -1,3 +1,9 @@
+"""
+score-based stochastic interpolant density ratio estimator.
+
+estimates log p0(x)/p1(x) via velocity b and score s networks.
+time score formula: partial_t log rho = -div(b) - b.s
+"""
 from typing import Optional, Literal
 
 import numpy as np
@@ -44,7 +50,7 @@ class MLP(nn.Module):
 class SeparateNetworks(nn.Module):
     """
     sharing='none': Two completely separate networks with half width each.
-    Output is [v, s] concatenated (2 * input_dim).
+    Output is [b, s] concatenated (2 * input_dim).
     """
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
@@ -75,18 +81,18 @@ class SeparateNetworks(nn.Module):
             t: Time values [batch, 1]
             x: Spatial values [batch, dim]
         Returns:
-            [v, s] concatenated [batch, 2*dim]
+            [b, s] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
-        v = self.b_net(tx)
+        b = self.b_net(tx)
         s = self.s_net(tx)
-        return torch.cat([v, s], dim=-1)
+        return torch.cat([b, s], dim=-1)
 
 
 class SharedBackboneNetwork(nn.Module):
     """
     sharing='embeddings': Shared backbone with separate output heads.
-    Output is [v, s] concatenated (2 * input_dim).
+    Output is [b, s] concatenated (2 * input_dim).
     """
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
@@ -108,19 +114,19 @@ class SharedBackboneNetwork(nn.Module):
             t: Time values [batch, 1]
             x: Spatial values [batch, dim]
         Returns:
-            [v, s] concatenated [batch, 2*dim]
+            [b, s] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
         h = self.backbone(tx)
-        v = self.b_head(h)
+        b = self.b_head(h)
         s = self.s_head(h)
-        return torch.cat([v, s], dim=-1)
+        return torch.cat([b, s], dim=-1)
 
 
 class FullSharingNetwork(nn.Module):
     """
-    sharing='full': Single network with combined output split as [v, s].
-    Output is [v, s] concatenated (2 * input_dim).
+    sharing='full': Single network with combined output split as [b, s].
+    Output is [b, s] concatenated (2 * input_dim).
     """
     def __init__(self, input_dim: int, hidden_dim: int = 256):
         super().__init__()
@@ -141,7 +147,7 @@ class FullSharingNetwork(nn.Module):
             t: Time values [batch, 1]
             x: Spatial values [batch, dim]
         Returns:
-            [v, s] concatenated [batch, 2*dim]
+            [b, s] concatenated [batch, 2*dim]
         """
         tx = torch.cat([t, x], dim=-1)
         return self.net(tx)
@@ -180,11 +186,20 @@ class SpatialVeloScore(DensityRatioEstimator):
 
     The interpolant is: x_t = (1-t)*x0 + t*x1 + gamma(t)*z where z ~ N(0,I)
 
-    Score interpretation: The score network predicts the spatial score s = -z/gamma
+    Networks:
+        b: velocity field, predicts dx_t/dt
+        s: spatial score, predicts -z/gamma (i.e. nabla_x log rho)
 
-    Supports two training modes:
-    - 'sequential': Two-phase training (trains velocity first, then score) with separate MLPs
-    - 'simultaneous': Joint training with shared/separate networks (original approach)
+    Time score formula:
+        partial_t log rho = -div(b) - b.s
+
+    Training modes:
+        'sequential': trains b first (frozen s), then s (frozen b)
+        'simultaneous': joint training with shared/separate network architectures
+
+    Procedure:
+        fit() --> train b and s networks via mode dispatcher
+        predict_ldr() --> integrate time score over [eps, 1-eps] via numerical quadrature
     """
     def __init__(
         self,
@@ -294,16 +309,17 @@ class SpatialVeloScore(DensityRatioEstimator):
             outputs = self.model(t, x)
             b_pred, s_pred = torch.chunk(outputs, chunks=2, dim=1)
 
-        # Exact divergence (trace of Jacobian)
-        div_b = compute_divergence(b_pred, x)
+        div_b = compute_divergence(b_pred, x)  # [B]
+        b_dot_s = (b_pred * s_pred).sum(dim=-1, keepdim=True)  # [B, 1]
 
-        # Scalar terms
-        b_dot_s = (b_pred * s_pred).sum(dim=-1, keepdim=True)
-
-        # Assemble: time_score = -div(b) - b·s
-        return -div_b.view(-1, 1) - b_dot_s
+        return -div_b.view(-1, 1) - b_dot_s  # [B, 1]
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+        """
+        Train b and s networks on samples from p0 and p1.
+
+        Dispatches to _fit_sequential or _fit_simultaneous based on training_mode.
+        """
         if self.training_mode == 'sequential':
             self._fit_sequential(samples_p0, samples_p1)
         else:
@@ -444,58 +460,47 @@ class SpatialVeloScore(DensityRatioEstimator):
             x0 = samples_p0[p0_idx].to(self.device)
             x1 = samples_p1[p1_idx].to(self.device)
 
-            # Sample time uniformly from [eps, 1-eps] per sample
             t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
             t_batch = t.unsqueeze(-1)  # [B, 1]
-
-            # Sample noise (independent per sample)
             z = torch.randn_like(x0)
-
-            # Compute gamma and gamma' for each t
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
             gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
-            # Interpolant
             I_t = (1 - t_batch) * x0 + t_batch * x1
-            dtIt = x1 - x0  # derivative of I_t w.r.t. t
+            dtIt = x1 - x0
             eta_t = gamma_t * z
             x_t_plus = I_t + eta_t
 
-            # Forward pass
             outputs_plus = self.model(t_batch, x_t_plus)
             b_plus, s_plus = torch.chunk(outputs_plus, chunks=2, dim=1)
 
             if self.antithetic:
-                # Antithetic sampling: compute x_t+ and x_t-
+                # antithetic sampling: x_t+ and x_t-
                 x_t_minus = I_t - eta_t
                 outputs_minus = self.model(t_batch, x_t_minus)
                 b_minus, s_minus = torch.chunk(outputs_minus, chunks=2, dim=1)
 
-                # Velocity loss with antithetic sampling
-                # loss_b+ = 0.5*||b+||² - (dtIt + γ'z)·b+
-                # loss_b- = 0.5*||b-||² - (dtIt - γ'z)·b-
-                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)
-                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
-                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
-                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
+                # velocity loss: see _fit_sequential docstring
+                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)  # [B]
+                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)  # [B]
+                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)  # [B]
+                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)  # [B]
                 loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
                         + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
 
-                # Score loss with antithetic sampling
-                # loss_s+ = 0.5*||s+||² + (1/γ)*z·s+
-                # loss_s- = 0.5*||s-||² - (1/γ)*z·s-
-                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
-                s_norm_sq_minus = (s_minus ** 2).sum(dim=-1)
+                # score loss: see _fit_sequential docstring
+                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)  # [B]
+                s_norm_sq_minus = (s_minus ** 2).sum(dim=-1)  # [B]
                 loss_s = (0.25 * s_norm_sq_plus + 0.25 * s_norm_sq_minus
                         + 0.5 * (z * (s_plus - s_minus) / gamma_t).sum(dim=-1)).mean()
             else:
-                # Standard (non-antithetic) training
-                b_norm_sq = (b_plus ** 2).sum(dim=-1)
-                target_dot_b = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
+                # standard (non-antithetic) training
+                b_norm_sq = (b_plus ** 2).sum(dim=-1)  # [B]
+                target_dot_b = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)  # [B]
                 loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
-                z_dot_s = (z * s_plus).sum(dim=-1)
-                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)
+                z_dot_s = (z * s_plus).sum(dim=-1)  # [B]
+                s_norm_sq_plus = (s_plus ** 2).sum(dim=-1)  # [B]
                 loss_s = (0.5 * s_norm_sq_plus + (1.0 / gamma_t.squeeze(-1)) * z_dot_s).mean()
 
             total_loss = loss_b + loss_s
@@ -511,6 +516,14 @@ class SpatialVeloScore(DensityRatioEstimator):
             print(f"[SpatialVeloScore] Training complete")
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
+        """
+        Estimate log p0(x)/p1(x) by integrating time score over [eps, 1-eps].
+
+        Procedure:
+            1. evaluate time_score at n_points in [eps, 1-eps]
+            2. integrate via trapezoidal (type='2'), simpson (type='3'), or mean (type='1')
+            3. return negative integral (ldr = -int_0^1 partial_t log rho dt)
+        """
         if self.training_mode == 'sequential':
             if self.net_b is None or self.net_s is None:
                 raise RuntimeError("SpatialVeloScore model is not trained. Call fit() before predict_ldr().")
@@ -524,13 +537,11 @@ class SpatialVeloScore(DensityRatioEstimator):
         samples = xs.float().to(self.device)
         n_samples = samples.shape[0]
 
-        # Integration grid
         n_points = self.integration_steps
         if n_points % 2 == 0:
             n_points += 1
         t_vals = torch.linspace(self.eps, 1 - self.eps, n_points, device=self.device)
 
-        # Compute time scores at each t for all samples
         time_scores = []
         for t_val in t_vals:
             t_batch = torch.full((n_samples, 1), t_val.item(), device=self.device)

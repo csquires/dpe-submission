@@ -40,9 +40,9 @@ def make_spatial_velo_denoiser(input_dim: int, device: str = "cuda", **kwargs) -
             n_epochs: 300 - Training epochs per network (b and eta)
             hidden_dim: 256 - Hidden layer dimension for MLP networks
             batch_size: 512 - Training batch size
-            lr: 1.4e-3 - Learning rate for Adam optimizer
+            lr: 1.3e-3 - Learning rate for Adam optimizer
             n_t: 50 - Number of time points for batch sampling
-            integration_steps: 5000 - Grid points for time integration
+            integration_steps: 3000 - Grid points for time integration
             integration_type: '2' - Trapezoidal integration
             antithetic: True - Use antithetic sampling for variance reduction
             log_every: 101 - Log frequency (effectively disables logging)
