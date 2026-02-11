@@ -21,7 +21,7 @@ NTEST_SETS = config['ntest_sets']
 # filename = f'{PROCESSED_RESULTS_DIR}/metrics_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 # filename = f'{PROCESSED_RESULTS_DIR}/maes_by_kl_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 # filename = f'{PROCESSED_RESULTS_DIR}/added_cauchy_01.h5'
-filename = f'{PROCESSED_RESULTS_DIR}/final_complete_prelim.h5'
+filename = f'{PROCESSED_RESULTS_DIR}/new_pstar.h5'
 
 # Load all metrics from file
 with h5py.File(filename, 'r') as f:

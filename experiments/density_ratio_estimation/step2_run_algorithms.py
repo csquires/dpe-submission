@@ -42,7 +42,7 @@ torch.manual_seed(SEED)
 # dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
 dataset_filename = f'{DATA_DIR}/dataset_newpstar.h5'
 # results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-results_filename = f'{RAW_RESULTS_DIR}/new_pstar2.h5'
+results_filename = f'{RAW_RESULTS_DIR}/new_pstar.h5'
 
 existing_results = set()
 if os.path.exists(results_filename):
