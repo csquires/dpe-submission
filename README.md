@@ -87,7 +87,7 @@ device: "cuda"                                   # "cuda" or "cpu"
 seed: 1729                                       # random seed for reproducibility
 ```
 
-Experiment-specific parameters vary by task:
+Experiment-specific parameters vary by task. Example configs are:
 
 **density_ratio_estimation** ([config1.yaml](experiments/density_ratio_estimation/config1.yaml))
 ```yaml
