@@ -70,6 +70,8 @@ python -m experiments.density_ratio_estimation.step4_plot_results
 
 experiment configurations are in yaml files (e.g., `experiments/density_ratio_estimation/config1.yaml`).
 
+Assuming default configs (more on configuration in the next section), plots will appear in a subfolder within each experiment folder called `figures`. Raw and plotted data is stored in `.h5` files in subfolders `raw_results` and `processed_results` respectively.
+
 ## Configuration
 
 experiments are configured via yaml files. common parameters:
