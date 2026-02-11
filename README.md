@@ -17,15 +17,15 @@ dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipy
   - `models/` - NN models
     - `binary_classification/` - binary classifiers for bdre, tdre
     - `multiclass_classification/` - multiclass classifiers for mdre
-    - `regression/` - regression models for kl estimators
+    - `regression/` - template for regression models, may be used to extend TSM-like methods.
     - `time_score_matching/` - time score matching models
 
 - `experiments/` - experiment pipelines for reproduction
-  - `density_ratio_estimation/` - DRE method comparison
-  - `dre_sample_complexity/` - number of training samples vs DRE performance
+  - `density_ratio_estimation/` - DRE method comparison (Section 4.2)
+  - `dre_sample_complexity/` - number of training samples vs DRE performance (Section 4.2)
   - `plugin_dre/` - visualization of DRE performance over input space
-  - `elbo_estimation/` - ELBO estimation experiments
-  - `eig_estimation/` - EIG estimation experiments
+  - `elbo_estimation/` - ELBO estimation experiments (Section 6.1)
+  - `eig_estimation/` - EIG estimation experiments (Section 6.2)
 
 ## Core Abstractions
 
