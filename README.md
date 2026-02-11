@@ -32,7 +32,3 @@
 2. Run `experiments/experimental_design/step2_run_algorithms.py`
 3. Run `experiments/experimental_design/step3_process_results.py`
 4. Run `experiments/experimental_design/step4_plot_results.py`
-
-Other repos (remove prior to submission):
-- https://github.com/csquires/deep-preemptive-exploration
-- https://github.com/YizhouLu-Johnson/DRE_Eval
