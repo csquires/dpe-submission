@@ -13,7 +13,7 @@ PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
@@ -41,7 +41,7 @@ with h5py.File(filename, 'r') as f:
                 stratified_mae_by_kl[alg_name] = {}
             stratified_mae_by_kl[alg_name][quartile] = f[key][:]
 
-# colors
+# colors - consistent across all experiments
 colors = {
     "BDRE": "#1f77b4",
     "MDRE": "#2ca02c",
@@ -63,7 +63,7 @@ colors = {
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
     "VFM": "#9467bd",
-    "Spatial": "#9467bd",
+    # "Spatial": "#9467bd",
 }
 
 tdre_order = ["TDRE_5"]
@@ -73,7 +73,7 @@ TEST_SET_TITLES = [r'$p_* = p_0$', r'$p_* = p_1$', r'$p_* = q_0$', r'$p_* = q_1$
 
 
 def get_algorithms_to_plot(data_dict):
-    """Get list of algorithms that should be plotted."""
+    """Get list of algorithms in standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM."""
     algs = []
     if "BDRE" in data_dict:
         algs.append(("BDRE", "BDRE"))
@@ -89,6 +89,8 @@ def get_algorithms_to_plot(data_dict):
     for mdre_name in mdre_order:
         if mdre_name in data_dict:
             algs.append((mdre_name, "MDRE"))
+    if "Spatial" in data_dict:
+        algs.append(("Spatial", "VFM"))
     if "Spatial" in data_dict:
         algs.append(("Spatial", "VFM"))
     return algs
@@ -127,14 +129,14 @@ def plot_metric(data_by_kl, ylabel, figure_name, stats_file, use_log_y=True, hig
     stats_file.write(f"Figure: {figure_name}\n")
     stats_file.write(f"Metric: {ylabel}\n")
     stats_file.write(f"{'='*60}\n")
-    stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DISTANCES}\n\n")
+    stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DIVERGENCES}\n\n")
 
     for i in range(NTEST_SETS):
         stats_file.write(f"Test Set {i} ({TEST_SET_TITLES[i]}):\n")
         for alg_key, alg_label in algorithms:
             if alg_key in avg_by_kl:
                 y_vals = avg_by_kl[alg_key][:, i]
-                axes[i].plot(KL_DISTANCES, y_vals, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
+                axes[i].plot(KL_DIVERGENCES, y_vals, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
                 stats_file.write(f"  {alg_label} ({alg_key}): {y_vals.tolist()}\n")
         stats_file.write("\n")
 
@@ -158,7 +160,7 @@ def plot_metric(data_by_kl, ylabel, figure_name, stats_file, use_log_y=True, hig
     handles, labels = axes[0].get_legend_handles_labels()
     # Remove duplicate labels and enforce order
     by_label = dict(zip(labels, handles))
-    legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE"]
+    legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
     ordered_labels = [lbl for lbl in legend_order if lbl in by_label]
     ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
     plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -184,7 +186,7 @@ def plot_stratified_mae(stratified_data, stats_file):
         stats_file.write(f"Figure: stratified_mae_test{test_idx}\n")
         stats_file.write(f"Test Set: {TEST_SET_TITLES[test_idx]}\n")
         stats_file.write(f"{'='*60}\n")
-        stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DISTANCES}\n\n")
+        stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DIVERGENCES}\n\n")
 
         all_vals = []
         for alg_key, _ in algorithms:
@@ -206,7 +208,7 @@ def plot_stratified_mae(stratified_data, stats_file):
                 if alg_key in stratified_data and q in stratified_data[alg_key]:
                     arr = stratified_data[alg_key][q]
                     avg = np.mean(arr, axis=1)[:, test_idx]
-                    axes[q_idx].plot(KL_DISTANCES, avg, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
+                    axes[q_idx].plot(KL_DIVERGENCES, avg, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
                     stats_file.write(f"  {alg_label} ({alg_key}): {avg.tolist()}\n")
 
             axes[q_idx].set_xscale('log')
@@ -220,7 +222,10 @@ def plot_stratified_mae(stratified_data, stats_file):
         fig.suptitle(f'Stratified MAE by True LDR Quartile - {TEST_SET_TITLES[test_idx]}', y=1.02)
         handles, labels = axes[0].get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
+        legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
+        ordered_labels = [lbl for lbl in legend_order if lbl in by_label]
+        ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
+        plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.tight_layout()
         plt.savefig(f'{FIGURES_DIR}/stratified_mae_test{test_idx}.pdf')
 
@@ -242,15 +247,14 @@ with open(stats_filename, 'w') as stats_file:
     if maes_by_kl:
         plot_metric(maes_by_kl, 'Mean Absolute Error\n(Test Set)', 'Completed', stats_file)
 
-    # Other plots disabled for paper-ready output
-    # if median_aes_by_kl:
-    #     plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
-    # if spearman_by_kl:
-    #     plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
-    #                 use_log_y=False, higher_is_better=True)
-    # if trimmed_mae_iqr_by_kl:
-    #     plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
-    # if stratified_mae_by_kl:
-    #     plot_stratified_mae(stratified_mae_by_kl, stats_file)
+    if median_aes_by_kl:
+        plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
+    if spearman_by_kl:
+        plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
+                    use_log_y=False, higher_is_better=True)
+    if trimmed_mae_iqr_by_kl:
+        plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
+    if stratified_mae_by_kl:
+        plot_stratified_mae(stratified_mae_by_kl, stats_file)
 
 print(f"Stats written to: {stats_filename}")

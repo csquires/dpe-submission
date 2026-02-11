@@ -22,7 +22,7 @@ config = yaml.load(open('experiments/plugin_dre/config.yaml', 'r'), Loader=yaml.
 DATA_DIR = config['data_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
 NSAMPLES_TRAIN = config['nsamples_train']
 GRID_SIZE = config['grid_size']
@@ -61,10 +61,10 @@ def create_uniform_grid(bounds, grid_size):
 
 
 # Dataset storage
-nrows = len(KL_DISTANCES) * NUM_INSTANCES_PER_KL
+nrows = len(KL_DIVERGENCES) * NUM_INSTANCES_PER_KL
 num_grid_points = GRID_SIZE * GRID_SIZE
 
-kl_distance_arr = np.zeros(nrows, dtype=np.float32)
+kl_divergence_arr = np.zeros(nrows, dtype=np.float32)
 # true parameters (metadata)
 mu0_arr = np.zeros((nrows, DATA_DIM), dtype=np.float32)
 mu1_arr = np.zeros((nrows, DATA_DIM), dtype=np.float32)
@@ -79,10 +79,10 @@ grid_bounds_arr = np.zeros((nrows, 4), dtype=np.float32)  # x_min, x_max, y_min,
 true_ldrs_grid_arr = np.zeros((nrows, num_grid_points), dtype=np.float32)
 
 idx = 0
-for kl_distance in tqdm(KL_DISTANCES, desc="Creating data"):
+for kl_divergence in tqdm(KL_DIVERGENCES, desc="Creating data"):
     for instance_idx in range(NUM_INSTANCES_PER_KL):
         # Create Gaussian pair with specified KL divergence
-        gaussian_pair = create_two_gaussians_kl(dim=DATA_DIM, k=kl_distance, beta=0.5)
+        gaussian_pair = create_two_gaussians_kl(dim=DATA_DIM, k=kl_divergence, beta=0.5)
         mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']
         mu1, Sigma1 = gaussian_pair['mu1'], gaussian_pair['Sigma1']
 
@@ -91,7 +91,7 @@ for kl_distance in tqdm(KL_DISTANCES, desc="Creating data"):
         p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
 
         # Store parameters
-        kl_distance_arr[idx] = kl_distance
+        kl_divergence_arr[idx] = kl_divergence
         mu0_arr[idx] = mu0.numpy()
         mu1_arr[idx] = mu1.numpy()
         Sigma0_arr[idx] = Sigma0.numpy()
@@ -118,7 +118,7 @@ for kl_distance in tqdm(KL_DISTANCES, desc="Creating data"):
 os.makedirs(DATA_DIR, exist_ok=True)
 dataset_filename = f'{DATA_DIR}/dataset.h5'
 with h5py.File(dataset_filename, 'w') as f:
-    f.create_dataset('kl_distance_arr', data=kl_distance_arr)
+    f.create_dataset('kl_divergence_arr', data=kl_divergence_arr)
     f.create_dataset('mu0_arr', data=mu0_arr)
     f.create_dataset('mu1_arr', data=mu1_arr)
     f.create_dataset('Sigma0_arr', data=Sigma0_arr)
@@ -134,6 +134,6 @@ with h5py.File(dataset_filename, 'w') as f:
     f.attrs['nsamples_train'] = NSAMPLES_TRAIN
 
 print(f"Dataset saved to: {dataset_filename}")
-print(f"  - {nrows} instances ({len(KL_DISTANCES)} KL distances x {NUM_INSTANCES_PER_KL} instances)")
+print(f"  - {nrows} instances ({len(KL_DIVERGENCES)} KL distances x {NUM_INSTANCES_PER_KL} instances)")
 print(f"  - {GRID_SIZE}x{GRID_SIZE} = {num_grid_points} grid points per instance")
 print(f"  - {NSAMPLES_TRAIN} training samples per distribution")

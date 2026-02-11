@@ -138,10 +138,10 @@ if __name__ == '__main__':
     DIM = 2
     NSAMPLES_TRAIN = 10000
     NSAMPLES_TEST = 10
-    KL_DISTANCE = 5
+    KL_DIVERGENCE = 5
 
     # === CREATE SYNTHETIC DATA ===
-    gaussian_pair = create_two_gaussians_kl(DIM, KL_DISTANCE, beta=0.5)
+    gaussian_pair = create_two_gaussians_kl(DIM, KL_DIVERGENCE, beta=0.5)
     mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']
     mu1, Sigma1 = gaussian_pair['mu1'], gaussian_pair['Sigma1']
     p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)

@@ -22,11 +22,11 @@ metrics_filename = f'{RESULTS_DIR}/metrics.h5'
 # Load true LDRs
 with h5py.File(dataset_filename, 'r') as f:
     true_ldrs_grid = f['true_ldrs_grid_arr'][:]
-    kl_distances = f['kl_distance_arr'][:]
+    kl_divergences = f['kl_divergence_arr'][:]
 
 # Discover algorithms from raw results
 with h5py.File(raw_results_filename, 'r') as f:
-    alg_names = [key.replace('est_ldrs_grid_', '') for key in f.keys() if key.startswith('est_ldrs_grid_')]
+    alg_names = [key.replace('est_ldrs_grid_', '') for key in f.keys() if key.startswith('est_ldrs_grid_') and 'TriangularTDRE' not in key]
 
 print(f"Found algorithms: {alg_names}")
 print(f"True LDRs shape: {true_ldrs_grid.shape}")  # (nrows, num_grid_points)
@@ -34,7 +34,7 @@ print(f"True LDRs shape: {true_ldrs_grid.shape}")  # (nrows, num_grid_points)
 # Compute metrics for each algorithm
 with h5py.File(metrics_filename, 'w') as metrics_file:
     # Store KL distances for reference
-    metrics_file.create_dataset('kl_distances', data=kl_distances)
+    metrics_file.create_dataset('kl_divergences', data=kl_divergences)
 
     with h5py.File(raw_results_filename, 'r') as results_file:
         for alg_name in alg_names:
@@ -53,7 +53,7 @@ with h5py.File(metrics_filename, 'w') as metrics_file:
             print(f"\n{alg_name}:")
             print(f"  Absolute errors shape: {abs_errors.shape}")
             print(f"  MAE by KL distance:")
-            for i, kl in enumerate(kl_distances):
+            for i, kl in enumerate(kl_divergences):
                 print(f"    KL={kl:.1f}: MAE={mae_per_instance[i]:.4f}")
 
 print(f"\nMetrics saved to: {metrics_filename}")

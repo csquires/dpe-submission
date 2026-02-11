@@ -23,7 +23,8 @@ from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.tdre import TDRE
 from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.triangular_tsm import TriangularTSM
+from src.density_ratio_estimation.triangular_tdre import TriangularTDRE
+from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 
 
@@ -77,30 +78,56 @@ for num_waypoints_mdre in MDRE_WAYPOINTS:
     )
     mdre_variants.append((f"MDRE_{num_waypoints_mdre}", MDRE(mdre_classifier, device=DEVICE)))
 
-# Instantiate Spatial
+# Instantiate Spatial (VFM)
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
-# Instantiate TSM
+# Instantiate TriangularTDRE
+triangular_tdre_waypoints = 5
+# triangular_tdre_classifiers = make_pairwise_binary_classifiers(
+#     name="default",
+#     num_classes=triangular_tdre_waypoints,
+#     input_dim=DATA_DIM,
+# )
+# triangular_tdre = TriangularTDRE(
+#     triangular_tdre_classifiers,
+#     num_waypoints=triangular_tdre_waypoints,
+#     device=DEVICE,
+#     midpoint_oversample=7,
+#     gamma_power=3.0,
+# )
+# instantiate tsm
 tsm = TSM(DATA_DIM, device=DEVICE)
+# Instantiate TriangularMDRE
+triangular_mdre_waypoints = 15
+triangular_mdre_classifier = make_multiclass_classifier(
+    name="default",
+    input_dim=DATA_DIM,
+    num_classes=triangular_mdre_waypoints,
+)
+triangular_mdre = TriangularMDRE(
+    triangular_mdre_classifier,
+    device=DEVICE,
+    midpoint_oversample=7,
+    gamma_power=3.0,
+)
 
-# Instantiate TriangularTSM
-triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
 
 # List of all algorithms to run
 algorithms = [
     ("BDRE", bdre),
     *tdre_variants,
     *mdre_variants,
-    ("VFM", spatial),
     ("TSM", tsm),
-    ("TriangularTSM", triangular_tsm),
+    ("TriangularMDRE", triangular_mdre),
+    # ("TriangularTDRE", triangular_tdre),
+    ("VFM", spatial),
 ]
 
 # Create results directory
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 with h5py.File(dataset_filename, 'r') as dataset_file:
-    nrows = dataset_file['kl_distance_arr'].shape[0]
+    nrows = dataset_file['kl_divergence_arr'].shape[0]
     num_grid_points = dataset_file['grid_points_arr'].shape[1]
 
     for alg_name, alg in algorithms:
@@ -117,8 +144,8 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][idx]).to(DEVICE)
             samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][idx]).to(DEVICE)
 
-            # Train algorithm (special handling for TriangularTSM)
-            if alg_name == "TriangularTSM":
+            # Train algorithm (special handling for TriangularMDRE/TriangularTDRE)
+            if alg_name in {"TriangularMDRE", "TriangularTDRE"}:
                 alg.fit(samples_p0, samples_p1, samples_p0)  # use p0 as pstar
             else:
                 alg.fit(samples_p0, samples_p1)

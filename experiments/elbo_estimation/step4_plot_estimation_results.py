@@ -18,26 +18,23 @@ FIGURES_DIR = config['figures_dir']
 ALPHAS = config['alphas']
 DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 
-#processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/complete_elbo.h5'
-# Load processed results
-with h5py.File(processed_results_filename, 'r') as f:
-    # Find all algorithms
-    alg_names = [key.replace('mae_', '') for key in f.keys() if key.startswith('mae_')]
-    mae_by_alg = {alg_name: f[f'mae_{alg_name}'][:] for alg_name in alg_names}
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 
 colors = {
     "BDRE": "#1f77b4",
     "TDRE": "#ff7f0e",
     "MDRE": "#2ca02c",
     "TSM": "#d62728",
-    "TriangularMDRE": "#9467bd",
+    "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
-    "Direct3": "#8c564b",
-    "Direct4": "#e377c2",
-    "Direct5": "#7f7f7f",
 }
-legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM", "Direct3", "Direct4", "Direct5"]
+legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
+
+# Load processed results
+with h5py.File(processed_results_filename, 'r') as f:
+    # Find all algorithms
+    alg_names = [key.replace('mae_', '') for key in f.keys() if key.startswith('mae_')]
+    mae_by_alg = {alg_name: f[f'mae_{alg_name}'][:] for alg_name in alg_names}
 
 # Plot
 plt.clf()

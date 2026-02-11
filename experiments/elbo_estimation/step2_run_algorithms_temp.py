@@ -15,7 +15,6 @@ from src.models.binary_classification import make_binary_classifier, make_pairwi
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.eldr_estimation.direct_adapters import make_direct3_estimator, make_direct4_estimator, make_direct5_estimator
 
 
 config = yaml.load(open('experiments/elbo_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -61,13 +60,8 @@ triangular_tsm = TriangularTSM(DATA_DIM + 1, device=DEVICE)
 # instantiate spatial velo denoiser
 spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM+1, device=DEVICE)
 
-# instantiate direct ELDR estimators
-direct3 = make_direct3_estimator(input_dim=DATA_DIM+1, device=DEVICE)
-direct4 = make_direct4_estimator(input_dim=DATA_DIM+1, device=DEVICE)
-direct5 = make_direct5_estimator(input_dim=DATA_DIM+1, device=DEVICE)
-
 # DRE-based algorithms (use fit/predict pattern)
-dre_algorithms = [
+algorithms = [
     # ("BDRE", bdre),
     # ("TDRE", tdre),
     # ("MDRE", mdre),
@@ -75,16 +69,6 @@ dre_algorithms = [
     # ("TriangularTSM", triangular_tsm),
     ("VFM", spatial),
 ]
-
-# Direct ELDR algorithms (use estimate_eldr directly)
-direct_algorithms = [
-    # ("Direct3", direct3),
-    # ("Direct4", direct4),
-    # ("Direct5", direct5),
-]
-
-# Combined list for result tracking
-algorithms = dre_algorithms + direct_algorithms
 
 
 def estimate_eldr_from_dre(dre, samples_pstar, samples_p0, samples_p1, alg_name=""):
@@ -102,7 +86,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
     nrows = dataset_file['design_arr'].shape[0]
 
     # Run DRE-based algorithms (fit/predict pattern)
-    for alg_name, alg in dre_algorithms:
+    for alg_name, alg in algorithms:
         dataset_name = f'est_eldrs_arr_{alg_name}'
         if dataset_name in existing_results and not args.force:
             print(f"Skipping {alg_name} (results exist, use --force to overwrite)")
@@ -129,40 +113,6 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             # estimate ELDR using fit/predict pattern
             est_eldr = estimate_eldr_from_dre(alg, samples_pstar, samples_p0, samples_p1, alg_name=alg_name)
             est_eldrs_arr[idx] = est_eldr.item() if isinstance(est_eldr, torch.Tensor) else est_eldr
-
-        with h5py.File(results_filename, 'a') as f:
-            if dataset_name in f:
-                del f[dataset_name]
-            f.create_dataset(dataset_name, data=est_eldrs_arr)
-
-    # Run direct ELDR algorithms (estimate_eldr interface)
-    for alg_name, alg in direct_algorithms:
-        dataset_name = f'est_eldrs_arr_{alg_name}'
-        if dataset_name in existing_results and not args.force:
-            print(f"Skipping {alg_name} (results exist, use --force to overwrite)")
-            continue
-
-        print(f"Running {alg_name}...")
-        est_eldrs_arr = np.zeros(nrows)
-        for idx in trange(nrows):
-            # p_star samples: (theta_star, y_star) from variational posterior
-            theta_star = torch.from_numpy(dataset_file['theta_star_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, DATA_DIM)
-            y_star = torch.from_numpy(dataset_file['y_star_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, 1)
-            samples_pstar = torch.cat([theta_star, y_star], dim=1)  # (NSAMPLES, DATA_DIM+1)
-
-            # p0 samples: prior-induced joint (theta0, y0)
-            theta0 = torch.from_numpy(dataset_file['theta0_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, DATA_DIM)
-            y0 = torch.from_numpy(dataset_file['y0_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, 1)
-            samples_p0 = torch.cat([theta0, y0], dim=1)  # (NSAMPLES, DATA_DIM+1)
-
-            # p1 samples: q(theta) x prior predictive (theta1, y1)
-            theta1 = torch.from_numpy(dataset_file['theta1_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, DATA_DIM)
-            y1 = torch.from_numpy(dataset_file['y1_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, 1)
-            samples_p1 = torch.cat([theta1, y1], dim=1)  # (NSAMPLES, DATA_DIM+1)
-
-            # estimate ELDR directly
-            est_eldr = alg.estimate_eldr(samples_pstar, samples_p0, samples_p1)
-            est_eldrs_arr[idx] = est_eldr if isinstance(est_eldr, (int, float)) else est_eldr.item()
 
         with h5py.File(results_filename, 'a') as f:
             if dataset_name in f:

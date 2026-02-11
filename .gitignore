@@ -26,5 +26,3 @@ CLAUDE.md
 *.png
 *.sbatch
 /logs/
-/hpo/
-/experiments/direct3_hpo/

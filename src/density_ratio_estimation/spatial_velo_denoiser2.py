@@ -1,3 +1,9 @@
+"""
+simplified denoiser-based stochastic interpolant density ratio estimator.
+
+sequential-only variant with vmap-based divergence computation.
+uses create_graph=False for efficiency during inference.
+"""
 from typing import Optional, Literal
 
 import numpy as np
@@ -44,6 +50,9 @@ def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Ten
     """
     Computes exact divergence (trace of Jacobian).
 
+    Uses create_graph=False since this is only called during inference,
+    not during training where backprop through the divergence is needed.
+
     Args:
         output: Vector field [batch, dim]
         x: Input points [batch, dim] (must have requires_grad=True)
@@ -59,8 +68,8 @@ def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Ten
         grad_i = torch.autograd.grad(
             outputs=output[:, i].sum(),
             inputs=x,
-            create_graph=True,
-            retain_graph=True,
+            create_graph=False,
+            retain_graph=False,
         )[0]
         divergence = divergence + grad_i[:, i]
 
@@ -70,9 +79,14 @@ def compute_divergence(output: torch.Tensor, x: torch.Tensor, epsilon: torch.Ten
 class SpatialVeloDenoiser(DensityRatioEstimator):
     """
     Denoiser-based variant of the interpolant estimator.
-    
-    Modified to train Velocity (b) and Denoiser (eta) networks completely separately
-    and sequentially.
+
+    Simplified sequential-only version of spatial_velo_denoiser.py.
+    Trains velocity (b) and denoiser (eta) networks completely separately.
+
+    Key differences from full version:
+        - no simultaneous training mode
+        - uses vmap for efficient divergence computation in predict_ldr
+        - create_graph=False in divergence for inference efficiency
     """
     def __init__(
         self,
@@ -114,7 +128,6 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         self.net_eta = None
 
     def init_model(self) -> None:
-        # Initialize two completely separate networks
         self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
         self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
 
@@ -140,26 +153,24 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         gamma_dot_t: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Compute partial_t log rho(t, x) using:
-        dt_log_rho = -div(b) - b.score
-                   = -div(b) + b.eta/gamma
+        Compute partial_t log rho(t, x) = -div(b) + b.eta/gamma.
         """
         x = x.clone().requires_grad_(True)
 
-        # Run separate forward passes
         b_pred = self.net_b(t, x)
         eta_pred = self.net_eta(t, x)
 
-        # Exact divergence (trace of Jacobian)
-        div_b = compute_divergence(b_pred, x)
+        div_b = compute_divergence(b_pred, x)  # [B]
+        b_dot_eta = (b_pred * eta_pred).sum(dim=-1, keepdim=True)  # [B, 1]
 
-        # Scalar terms
-        b_dot_eta = (b_pred * eta_pred).sum(dim=-1, keepdim=True)
-
-        return -div_b.view(-1, 1) + b_dot_eta / gamma_t
+        return -div_b.view(-1, 1) + b_dot_eta / gamma_t  # [B, 1]
 
     def _compute_time_score_single(self, t_scalar: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """Compute time score for a single time value across all samples.
+        """
+        Compute time score for a single time value across all samples.
+
+        Uses vmap over jacrev to compute divergence efficiently per-sample,
+        avoiding the loop in compute_divergence when called from predict_ldr.
 
         Args:
             t_scalar: Single time value (scalar tensor)
@@ -172,11 +183,9 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
 
         gamma_t = self.gamma(t_scalar)
 
-        # Compute b and eta
         b_pred = self.net_b(t_batch, x)
         eta_pred = self.net_eta(t_batch, x)
 
-        # Compute divergence using jacrev + vmap over samples
         def b_single(x_single):
             return self.net_b(t_scalar.view(1, 1), x_single.unsqueeze(0)).squeeze(0)
 
@@ -185,12 +194,22 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             return torch.trace(jac)
 
         div_b = torch.vmap(jac_trace)(x)  # [n_samples]
-
-        b_dot_eta = (b_pred * eta_pred).sum(dim=-1)
+        b_dot_eta = (b_pred * eta_pred).sum(dim=-1)  # [n_samples]
 
         return -div_b + b_dot_eta / gamma_t  # [n_samples]
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+        """
+        Train b and eta networks sequentially on samples from p0 and p1.
+
+        Procedure:
+            phase 1: train b network (eta frozen) with velocity matching loss
+            phase 2: train eta network (b frozen) with denoising loss
+
+        Loss formulas:
+            velocity: 0.5*||b||^2 - (dI_t/dt + gamma'*z).b
+            denoiser: 0.5*||eta||^2 - z.eta
+        """
         self.init_model()
 
         samples_p0 = samples_p0.float()
@@ -209,54 +228,43 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             print(f"\n[Phase 1/2] Training Velocity Network (b) for {self.n_epochs} epochs...")
 
         self.net_b.train()
-        self.net_eta.eval() # Eta not trained here
+        self.net_eta.eval()  # eta frozen
         optimizer_b = optim.Adam(self.net_b.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
         for epoch in range(self.n_epochs):
-            # Sample batches
             p0_idx = torch.randint(0, n_p0, (self.batch_size,))
             p1_idx = torch.randint(0, n_p1, (self.batch_size,))
             x0 = samples_p0[p0_idx].to(self.device)
             x1 = samples_p1[p1_idx].to(self.device)
 
-            # Sample time uniformly from [eps, 1-eps] per sample
             t = torch.rand(self.batch_size, device=self.device) * (1 - 2 * self.eps) + self.eps
             t_batch = t.unsqueeze(-1)  # [B, 1]
-
-            # Sample noise (independent per sample)
             z = torch.randn_like(x0)
-
-            # Compute gamma and gamma' for each t
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
             gamma_prime_t = self.dgamma_dt(t).unsqueeze(-1)  # [B, 1]
 
-            # Interpolant mean
             I_t = (1 - t_batch) * x0 + t_batch * x1
-            dtIt = x1 - x0  # derivative of I_t w.r.t. t
+            dtIt = x1 - x0
 
             if self.antithetic:
-                # Antithetic sampling: x_t+ and x_t-
                 x_t_plus = I_t + gamma_t * z
                 x_t_minus = I_t - gamma_t * z
 
                 b_plus = self.net_b(t_batch, x_t_plus)
                 b_minus = self.net_b(t_batch, x_t_minus)
 
-                # Velocity loss with antithetic sampling
-                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)
-                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)
-                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)
-                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)
+                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)  # [B]
+                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)  # [B]
+                target_dot_b_plus = ((dtIt + gamma_prime_t * z) * b_plus).sum(dim=-1)  # [B]
+                target_dot_b_minus = ((dtIt - gamma_prime_t * z) * b_minus).sum(dim=-1)  # [B]
                 loss_b = (0.25 * b_norm_sq_plus - 0.5 * target_dot_b_plus
                         + 0.25 * b_norm_sq_minus - 0.5 * target_dot_b_minus).mean()
             else:
-                # Standard (non-antithetic) training
                 x_t = I_t + gamma_t * z
                 b_pred = self.net_b(t_batch, x_t)
 
-                # Velocity loss: 0.5*||b||² - ((x1 - x0)+gamma_t'z)·b
-                b_norm_sq = (b_pred ** 2).sum(dim=-1)
-                target_dot_b = ((dtIt + gamma_prime_t * z) * b_pred).sum(dim=-1)
+                b_norm_sq = (b_pred ** 2).sum(dim=-1)  # [B]
+                target_dot_b = ((dtIt + gamma_prime_t * z) * b_pred).sum(dim=-1)  # [B]
                 loss_b = (0.5 * b_norm_sq - target_dot_b).mean()
 
             optimizer_b.zero_grad()
@@ -272,7 +280,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         if self.verbose:
             print(f"\n[Phase 2/2] Training Denoiser Network (eta) for {self.n_epochs} epochs...")
 
-        self.net_b.eval() # B is now fixed
+        self.net_b.eval()  # b frozen
         self.net_eta.train()
         optimizer_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
@@ -282,26 +290,17 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             x0 = samples_p0[p0_idx].to(self.device)
             x1 = samples_p1[p1_idx].to(self.device)
 
-            # Sample time uniformly from [eps, 1-eps] per sample
             t = torch.rand(self.batch_size, device=self.device)
             t_batch = t.unsqueeze(-1)  # [B, 1]
-
-            # Sample noise (independent per sample)
             z = torch.randn_like(x0)
-
-            # Compute gamma for each t
             gamma_t = self.gamma(t).unsqueeze(-1)  # [B, 1]
 
-            # Interpolant
             x_t = (1 - t_batch) * x0 + t_batch * x1 + gamma_t * z
 
-            # Predict eta
             eta_pred = self.net_eta(t_batch, x_t)
 
-            # Denoiser loss: 0.5*||d||² - z·d
-            # (Minimizes distance to z, consistent with d = z)
-            eta_norm_sq = (eta_pred ** 2).sum(dim=-1)
-            z_dot_eta = (z * eta_pred).sum(dim=-1)
+            eta_norm_sq = (eta_pred ** 2).sum(dim=-1)  # [B]
+            z_dot_eta = (z * eta_pred).sum(dim=-1)  # [B]
             loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
 
             optimizer_eta.zero_grad()
@@ -313,10 +312,21 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
 
         if self.verbose:
             print(f"[SpatialVeloDenoiser] Training complete")
-        
-        self.net_eta.eval() # Set both to eval for inference
+
+        self.net_eta.eval()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
+        """
+        Estimate log p0(x)/p1(x) by integrating time score over [eps, 1-eps].
+
+        Uses vmap to efficiently compute time scores across all time points.
+        Processes in chunks to avoid OOM with large n_points * n_samples.
+
+        Procedure:
+            1. evaluate time_score at n_points in [eps, 1-eps] via vmap
+            2. integrate via trapezoidal (type='2'), simpson (type='3'), or mean (type='1')
+            3. return negative integral (ldr = -int_0^1 partial_t log rho dt)
+        """
         if self.net_b is None or self.net_eta is None:
             raise RuntimeError("SpatialVeloDenoiser model is not trained. Call fit() before predict_ldr().")
 
@@ -325,19 +335,23 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         samples = xs.float().to(self.device)
         n_samples = samples.shape[0]
 
-        # Integration grid
         n_points = self.integration_steps
         if n_points % 2 == 0:
             n_points += 1
         t_vals = torch.linspace(self.eps, 1 - self.eps, n_points, device=self.device)
 
-        # Compute time scores at each t for all samples using vmap
         compute_vmapped = torch.vmap(
             self._compute_time_score_single,
             in_dims=(0, None),  # batch over t, broadcast samples
             out_dims=0
         )
-        time_scores = compute_vmapped(t_vals, samples).detach()  # [n_points, n_samples]
+        chunk_size = max(1, 100000 // n_samples)
+        time_score_chunks = []
+        for i in range(0, n_points, chunk_size):
+            t_chunk = t_vals[i:i + chunk_size]
+            chunk_scores = compute_vmapped(t_chunk, samples).detach()
+            time_score_chunks.append(chunk_scores)
+        time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
 
         if self.integration_type == '3':
             # Simpson's rule integration
@@ -368,13 +382,13 @@ if __name__ == '__main__':
     from src.models.binary_classification import make_binary_classifier
 
     DIM = 2
-    NSAMPLES_TRAIN = 10000
-    NSAMPLES_TEST = 100
-    KL_DISTANCE = 5
+    NSAMPLES_TRAIN = 1000
+    NSAMPLES_TEST = 1000
+    KL_DIVERGENCE = 5
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
     # === CREATE SYNTHETIC DATA ===
-    gaussian_pair = create_two_gaussians_kl(DIM, KL_DISTANCE, beta=0.5)
+    gaussian_pair = create_two_gaussians_kl(DIM, KL_DIVERGENCE, beta=0.5)
     mu0, Sigma0 = gaussian_pair['mu0'].to(DEVICE), gaussian_pair['Sigma0'].to(DEVICE)
     mu1, Sigma1 = gaussian_pair['mu1'].to(DEVICE), gaussian_pair['Sigma1'].to(DEVICE)
     p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
@@ -412,13 +426,13 @@ if __name__ == '__main__':
         'k': [], 'steps': [],'type':[], 'mae': []
     }
     param_grid = {
-        'eps': [2.2e-4, 2.2e-3, 2.2e-2], #[2.1e-3, 2.2e-3, 2.3e-3],
-        'epochs': [300, 3000, 6000], #[300],
+        'eps': [2.1e-3, 2.2e-3, 2.3e-3],
+        'epochs': [300],
         'antithetic': [True],
-        'lr': [1.4e-3, 9e-4, 5e-3, 1e-2], #[1.3e-3, 1.4e-3, 1.5e-3],
+        'lr': [1.3e-3, 1.4e-3, 1.5e-3],
         'k': [20],
-        'steps': [3000, 15000], #[3000],
-        'type': ['2', '3'], #['2']
+        'steps': [3000],
+        'type': ['2']
     }
     for r in range(1):
         for this_eps in param_grid['eps']:

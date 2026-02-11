@@ -38,7 +38,7 @@ label_map = {
 }
 
 for alg_name, maes in mae_by_beta.items():
-    if alg_name in ['Direct3', 'TriangularTSM']:
+    if alg_name in ['TriangularTSM']:
         continue
     color = colors.get(alg_name, None)
     label = label_map.get(alg_name, alg_name)

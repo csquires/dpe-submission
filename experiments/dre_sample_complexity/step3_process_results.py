@@ -14,7 +14,7 @@ RAW_RESULTS_DIR = config['raw_results_dir']
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
 NSAMPLES_TRAIN_VALUES = config['nsamples_train_values']
 NSAMPLES_TEST = config['nsamples_test']
@@ -33,7 +33,7 @@ with h5py.File(dataset_filename, 'r') as f:
     true_ldrs_arr = f['true_ldrs_arr'][:]
 
 nrows = true_ldrs_arr.shape[0]
-n_kl = len(KL_DISTANCES)
+n_kl = len(KL_DIVERGENCES)
 n_instances = NUM_INSTANCES_PER_KL
 n_nsamples_train = len(NSAMPLES_TRAIN_VALUES)
 
