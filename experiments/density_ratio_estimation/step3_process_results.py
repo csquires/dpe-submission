@@ -15,7 +15,7 @@ RAW_RESULTS_DIR = config['raw_results_dir']
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
@@ -111,24 +111,24 @@ for alg_name, est_ldrs_arr in est_ldrs_by_alg.items():
     # MAE (original)
     absolute_errors = np.abs(est_ldrs_arr - true_ldrs_arr)
     maes = reduce(absolute_errors, 'n t d -> n t', 'mean')
-    maes_by_kl[alg_name] = maes.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+    maes_by_kl[alg_name] = maes.reshape(len(KL_DIVERGENCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
 
     # Median AE
     median_aes = compute_median_ae(est_ldrs_arr, true_ldrs_arr)
-    median_aes_by_kl[alg_name] = median_aes.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+    median_aes_by_kl[alg_name] = median_aes.reshape(len(KL_DIVERGENCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
 
     # Spearman correlation
     spearman = compute_spearman_correlation(est_ldrs_arr, true_ldrs_arr)
-    spearman_by_kl[alg_name] = spearman.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+    spearman_by_kl[alg_name] = spearman.reshape(len(KL_DIVERGENCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
 
     # Trimmed MAE within IQR
     trimmed_mae = compute_trimmed_mae_iqr(est_ldrs_arr, true_ldrs_arr)
-    trimmed_mae_iqr_by_kl[alg_name] = trimmed_mae.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+    trimmed_mae_iqr_by_kl[alg_name] = trimmed_mae.reshape(len(KL_DIVERGENCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
 
     # Stratified MAE by quartiles
     strat_maes = compute_stratified_mae_quartiles(est_ldrs_arr, true_ldrs_arr)
     stratified_mae_by_kl[alg_name] = {
-        q: arr.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+        q: arr.reshape(len(KL_DIVERGENCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
         for q, arr in strat_maes.items()
     }
 

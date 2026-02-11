@@ -115,7 +115,7 @@ algorithms = [
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
 with h5py.File(dataset_filename, 'r') as dataset_file:
-    nrows = dataset_file['kl_distance_arr'].shape[0]
+    nrows = dataset_file['kl_divergence_arr'].shape[0]
 
     for alg_name, alg in algorithms:
         dataset_name = f'est_ldrs_arr_{alg_name}'

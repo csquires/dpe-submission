@@ -13,7 +13,7 @@ PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NSAMPLES_TRAIN_VALUES = config['nsamples_train_values']
 NSAMPLES_TEST = config['nsamples_test']
 
@@ -51,7 +51,7 @@ colors = {
     "VFM": "#9467bd",
 }
 
-KL_TITLES = [rf'KL$(p_0 \| p_1) = {kl}$' for kl in KL_DISTANCES]
+KL_TITLES = [rf'KL$(p_0 \| p_1) = {kl}$' for kl in KL_DIVERGENCES]
 
 
 def get_algorithms_to_plot(data_dict):
@@ -85,7 +85,7 @@ def plot_metric(data_by_alg, ylabel, figure_name, stats_file, use_log_y=True, hi
     """
     # Average over instances: (n_kl, n_nsamples_train)
     avg_by_alg = {alg: np.mean(arr, axis=1) for alg, arr in data_by_alg.items()}
-    n_kl = len(KL_DISTANCES)
+    n_kl = len(KL_DIVERGENCES)
 
     all_vals = [arr for arr in avg_by_alg.values()]
     if all_vals:
@@ -114,7 +114,7 @@ def plot_metric(data_by_alg, ylabel, figure_name, stats_file, use_log_y=True, hi
     stats_file.write(f"X-axis: nsamples_train = {NSAMPLES_TRAIN_VALUES}\n\n")
 
     for kl_idx in range(n_kl):
-        stats_file.write(f"KL = {KL_DISTANCES[kl_idx]}:\n")
+        stats_file.write(f"KL = {KL_DIVERGENCES[kl_idx]}:\n")
         for alg_key, alg_label in algorithms:
             if alg_key in avg_by_alg:
                 y_vals = avg_by_alg[alg_key][kl_idx, :]
@@ -147,7 +147,7 @@ def plot_stratified_mae(stratified_data, stats_file):
     """Plot stratified MAE with one subplot per quartile for each KL distance."""
     quartiles = ['q1', 'q2', 'q3', 'q4']
     quartile_labels = ['Q1 (0-25%)', 'Q2 (25-50%)', 'Q3 (50-75%)', 'Q4 (75-100%)']
-    n_kl = len(KL_DISTANCES)
+    n_kl = len(KL_DIVERGENCES)
 
     # For each KL distance, create a figure with 4 subplots (one per quartile)
     for kl_idx in range(n_kl):
@@ -163,7 +163,7 @@ def plot_stratified_mae(stratified_data, stats_file):
 
         stats_file.write(f"\n{'='*60}\n")
         stats_file.write(f"Figure: stratified_mae_kl{kl_idx}\n")
-        stats_file.write(f"KL: {KL_DISTANCES[kl_idx]}\n")
+        stats_file.write(f"KL: {KL_DIVERGENCES[kl_idx]}\n")
         stats_file.write(f"{'='*60}\n")
         stats_file.write(f"X-axis: nsamples_train = {NSAMPLES_TRAIN_VALUES}\n\n")
 
@@ -217,7 +217,7 @@ with open(stats_filename, 'w') as stats_file:
     stats_file.write(f"Data dimension: {DATA_DIM}\n")
     stats_file.write(f"Training sample sizes: {NSAMPLES_TRAIN_VALUES}\n")
     stats_file.write(f"Test samples: {NSAMPLES_TEST}\n")
-    stats_file.write(f"KL distances: {KL_DISTANCES}\n")
+    stats_file.write(f"KL distances: {KL_DIVERGENCES}\n")
 
     # Plot 1: MAE (original)
     if maes_by_alg:

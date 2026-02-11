@@ -3,7 +3,7 @@ results_dir: "experiments/plugin_dre/results"
 figures_dir: "experiments/plugin_dre/figures"
 
 data_dim: 2
-kl_distances: [0.5, 2.0, 4.0, 8.0]
+kl_divergences: [0.5, 2.0, 4.0, 8.0]
 num_instances_per_kl: 1        # Single instance per KL (simpler visualization)
 nsamples_train: 10000          # Large training set
 

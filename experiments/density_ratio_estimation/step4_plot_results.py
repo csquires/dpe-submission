@@ -13,7 +13,7 @@ PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NSAMPLES_TRAIN = config['nsamples_train']
 NSAMPLES_TEST = config['nsamples_test']
 NTEST_SETS = config['ntest_sets']
@@ -129,14 +129,14 @@ def plot_metric(data_by_kl, ylabel, figure_name, stats_file, use_log_y=True, hig
     stats_file.write(f"Figure: {figure_name}\n")
     stats_file.write(f"Metric: {ylabel}\n")
     stats_file.write(f"{'='*60}\n")
-    stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DISTANCES}\n\n")
+    stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DIVERGENCES}\n\n")
 
     for i in range(NTEST_SETS):
         stats_file.write(f"Test Set {i} ({TEST_SET_TITLES[i]}):\n")
         for alg_key, alg_label in algorithms:
             if alg_key in avg_by_kl:
                 y_vals = avg_by_kl[alg_key][:, i]
-                axes[i].plot(KL_DISTANCES, y_vals, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
+                axes[i].plot(KL_DIVERGENCES, y_vals, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
                 stats_file.write(f"  {alg_label} ({alg_key}): {y_vals.tolist()}\n")
         stats_file.write("\n")
 
@@ -186,7 +186,7 @@ def plot_stratified_mae(stratified_data, stats_file):
         stats_file.write(f"Figure: stratified_mae_test{test_idx}\n")
         stats_file.write(f"Test Set: {TEST_SET_TITLES[test_idx]}\n")
         stats_file.write(f"{'='*60}\n")
-        stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DISTANCES}\n\n")
+        stats_file.write(f"X-axis: KL(p0 || p1) = {KL_DIVERGENCES}\n\n")
 
         all_vals = []
         for alg_key, _ in algorithms:
@@ -208,7 +208,7 @@ def plot_stratified_mae(stratified_data, stats_file):
                 if alg_key in stratified_data and q in stratified_data[alg_key]:
                     arr = stratified_data[alg_key][q]
                     avg = np.mean(arr, axis=1)[:, test_idx]
-                    axes[q_idx].plot(KL_DISTANCES, avg, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
+                    axes[q_idx].plot(KL_DIVERGENCES, avg, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
                     stats_file.write(f"  {alg_label} ({alg_key}): {avg.tolist()}\n")
 
             axes[q_idx].set_xscale('log')

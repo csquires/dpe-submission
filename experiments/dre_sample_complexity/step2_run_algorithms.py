@@ -28,7 +28,7 @@ DATA_DIR = config['data_dir']
 RAW_RESULTS_DIR = config['raw_results_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
 NSAMPLES_TRAIN_VALUES = config['nsamples_train_values']
 NSAMPLES_TEST = config['nsamples_test']
@@ -108,7 +108,7 @@ def make_algorithms():
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
 with h5py.File(dataset_filename, 'r') as dataset_file:
-    nrows = dataset_file['kl_distance_arr'].shape[0]
+    nrows = dataset_file['kl_divergence_arr'].shape[0]
     n_nsamples_train = len(NSAMPLES_TRAIN_VALUES)
 
     # Get algorithm names

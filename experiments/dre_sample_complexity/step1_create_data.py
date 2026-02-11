@@ -16,7 +16,7 @@ DATA_DIR = config['data_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
 GAMMA = config['gamma']
-KL_DISTANCES = config['kl_distances']
+KL_DIVERGENCES = config['kl_divergences']
 NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
 NSAMPLES_TRAIN_VALUES = config['nsamples_train_values']
 NSAMPLES_TEST = config['nsamples_test']
@@ -29,8 +29,8 @@ torch.manual_seed(SEED)
 MAX_NSAMPLES_TRAIN = max(NSAMPLES_TRAIN_VALUES)
 
 # dataset storage
-nrows = len(KL_DISTANCES) * NUM_INSTANCES_PER_KL
-kl_distance_arr = np.zeros(nrows, dtype=np.float32)
+nrows = len(KL_DIVERGENCES) * NUM_INSTANCES_PER_KL
+kl_divergence_arr = np.zeros(nrows, dtype=np.float32)
 # true parameters (metadata)
 mu0_arr = np.zeros((nrows, DATA_DIM), dtype=np.float32)
 mu1_arr = np.zeros((nrows, DATA_DIM), dtype=np.float32)
@@ -45,8 +45,8 @@ samples_pstar_arr = np.zeros((nrows, NSAMPLES_TEST, DATA_DIM), dtype=np.float32)
 true_ldrs_arr = np.zeros((nrows, NSAMPLES_TEST), dtype=np.float32)
 
 idx = 0
-for kl_distance in tqdm(KL_DISTANCES):
-    gaussian_pairs = create_two_gaussians_kl_range(dim=DATA_DIM, k=kl_distance, beta_min=0.3, beta_max=0.7, npairs=NUM_INSTANCES_PER_KL)
+for kl_divergence in tqdm(KL_DIVERGENCES):
+    gaussian_pairs = create_two_gaussians_kl_range(dim=DATA_DIM, k=kl_divergence, beta_min=0.3, beta_max=0.7, npairs=NUM_INSTANCES_PER_KL)
     for gaussian_pair in gaussian_pairs:
         mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']
         mu1, Sigma1 = gaussian_pair['mu1'], gaussian_pair['Sigma1']
@@ -60,7 +60,7 @@ for kl_distance in tqdm(KL_DISTANCES):
         pstar = MultivariateNormal(mu_star, covariance_matrix=Sigma_star)
 
         # store parameters
-        kl_distance_arr[idx] = kl_distance
+        kl_divergence_arr[idx] = kl_divergence
         mu0_arr[idx] = mu0.numpy()
         mu1_arr[idx] = mu1.numpy()
         Sigma0_arr[idx] = Sigma0.numpy()
@@ -83,7 +83,7 @@ for kl_distance in tqdm(KL_DISTANCES):
 
 os.makedirs(DATA_DIR, exist_ok=True)
 with h5py.File(f'{DATA_DIR}/dataset.h5', 'w') as f:
-    f.create_dataset('kl_distance_arr', data=kl_distance_arr)
+    f.create_dataset('kl_divergence_arr', data=kl_divergence_arr)
     f.create_dataset('mu0_arr', data=mu0_arr)
     f.create_dataset('mu1_arr', data=mu1_arr)
     f.create_dataset('Sigma0_arr', data=Sigma0_arr)
@@ -97,4 +97,4 @@ print(f"Dataset saved to {DATA_DIR}/dataset.h5")
 print(f"  - nrows: {nrows}")
 print(f"  - max training samples: {MAX_NSAMPLES_TRAIN}")
 print(f"  - test samples: {NSAMPLES_TEST}")
-print(f"  - KL distances: {KL_DISTANCES}")
+print(f"  - KL divergences: {KL_DIVERGENCES}")

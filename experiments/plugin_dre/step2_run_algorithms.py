@@ -127,7 +127,7 @@ algorithms = [
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 with h5py.File(dataset_filename, 'r') as dataset_file:
-    nrows = dataset_file['kl_distance_arr'].shape[0]
+    nrows = dataset_file['kl_divergence_arr'].shape[0]
     num_grid_points = dataset_file['grid_points_arr'].shape[1]
 
     for alg_name, alg in algorithms:

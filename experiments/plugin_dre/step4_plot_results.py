@@ -125,7 +125,7 @@ def scale_alpha_global(errors, global_min, global_max, min_alpha=0.1, max_alpha=
 
 # Load data
 with h5py.File(dataset_filename, 'r') as f:
-    kl_distances = f['kl_distance_arr'][:]
+    kl_divergences = f['kl_divergence_arr'][:]
     mu0_arr = f['mu0_arr'][:]
     mu1_arr = f['mu1_arr'][:]
     Sigma0_arr = f['Sigma0_arr'][:]
@@ -143,7 +143,7 @@ with h5py.File(metrics_filename, 'r') as f:
 
 print(f"Found algorithms: {alg_names}")
 num_algorithms = len(alg_names)
-num_kls = len(kl_distances)
+num_kls = len(kl_divergences)
 
 # Load all absolute errors and MAE values
 with h5py.File(metrics_filename, 'r') as f:
@@ -205,7 +205,7 @@ for alg_idx, alg_name in enumerate(alg_names):
     subfig.subplots_adjust(wspace=0, hspace=0)
 
     for kl_idx in range(num_kls):
-        kl = kl_distances[kl_idx]
+        kl = kl_divergences[kl_idx]
         row_kl, col_kl = kl_positions[kl_idx]
         ax = axes[row_kl, col_kl]
 
@@ -313,7 +313,7 @@ for alg_idx, alg_name in enumerate(alg_names):
     subfig.subplots_adjust(wspace=0, hspace=0)
 
     for kl_idx in range(num_kls):
-        kl = kl_distances[kl_idx]
+        kl = kl_divergences[kl_idx]
         row_kl, col_kl = kl_positions[kl_idx]
         ax = axes[row_kl, col_kl]
 
@@ -383,7 +383,7 @@ plt.close()
 print("\nCreating single-panel RGB figure (largest KL only)...")
 
 largest_kl_idx = num_kls - 1
-largest_kl = kl_distances[largest_kl_idx]
+largest_kl = kl_divergences[largest_kl_idx]
 
 fig3 = plt.figure(figsize=(4 * ncols_alg, 4 * nrows_alg))
 axes3 = fig3.subplots(nrows_alg, ncols_alg)
@@ -531,7 +531,7 @@ for alg_idx, alg_name in enumerate(alg_names):
     subfig.subplots_adjust(wspace=0, hspace=0)
 
     for kl_idx in range(num_kls):
-        kl = kl_distances[kl_idx]
+        kl = kl_divergences[kl_idx]
         row_kl, col_kl = kl_positions[kl_idx]
         ax = axes[row_kl, col_kl]
 
@@ -596,7 +596,7 @@ for alg_idx, alg_name in enumerate(alg_names):
     subfig.subplots_adjust(wspace=0, hspace=0)
 
     for kl_idx in range(num_kls):
-        kl = kl_distances[kl_idx]
+        kl = kl_divergences[kl_idx]
         row_kl, col_kl = kl_positions[kl_idx]
         ax = axes[row_kl, col_kl]
 
@@ -753,5 +753,5 @@ with h5py.File(metrics_filename, 'r') as f:
     for alg_name in alg_names:
         mae = f[f'mae_{alg_name}'][:]
         print(f"\n{alg_name}:")
-        for i, kl in enumerate(kl_distances):
+        for i, kl in enumerate(kl_divergences):
             print(f"  KL={kl:.1f}: MAE={mae[i]:.4f}")
