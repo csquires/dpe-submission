@@ -92,7 +92,7 @@ Experiment-specific parameters vary by task:
 **density_ratio_estimation** ([config1.yaml](experiments/density_ratio_estimation/config1.yaml))
 ```yaml
 gamma: 0.05                                      # covariance scale parameter
-kl_divergences: [0.3, 1, 3, 9, 18, 36, 54]       # kl divergences b/w p_0, p_1 to test
+kl_divergences: [0.5, 2, 8, 32, 128]             # kl divergences b/w p_0, p_1 to test
 num_instances_per_kl: 10                         # instances per kl value
 nsamples_train: 2048                             # training samples
 nsamples_test: 1024                              # test samples
