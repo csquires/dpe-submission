@@ -58,10 +58,8 @@ SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-# dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-dataset_filename = f'{DATA_DIR}/updated.h5'
-#results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-results_filename = f'{RAW_RESULTS_DIR}/updated.h5'
+dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 
 existing_results = set()
 if os.path.exists(results_filename):
