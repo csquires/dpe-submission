@@ -12,8 +12,8 @@ FIGURES_DIR = config['figures_dir']
 DATA_DIM = config['data_dim']
 NSAMPLES = config['nsamples']
 
-#processed_results_filename = f'{PROCESSED_RESULTS_DIR}/mae_by_beta_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/updated_with_vfm.h5'
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/mae_by_beta_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+# processed_results_filename = f'{PROCESSED_RESULTS_DIR}/updated_with_vfm.h5'
 with h5py.File(processed_results_filename, 'r') as f:
     design_eig_percentages = f['design_eig_percentages'][:]
     mae_by_beta = {key.replace('mae_by_beta_', ''): f[key][:] for key in f.keys() if key.startswith('mae_by_beta_')}
