@@ -1,0 +1,50 @@
+# Directory paths for data and results storage
+# These directories will be created by step1_create_data.py and subsequent steps
+data_dir: "experiments/ising_eldr_estimation/data"
+raw_results_dir: "experiments/ising_eldr_estimation/raw_results"
+processed_results_dir: "experiments/ising_eldr_estimation/processed_results"
+figures_dir: "experiments/ising_eldr_estimation/figures"
+
+# Ising lattice parameters
+# grid_size: n x n lattice of binary spins {-1, +1}
+# Larger grids increase computational cost but provide more realistic spin configurations
+grid_size: 16
+
+# Design parameters: coupling strength values for experimental design
+# Each design value represents a different Ising model (different J parameter)
+# Higher values = stronger coupling = more aligned spins = lower entropy
+# These define a sequence of designs to compare in ELDR estimation
+designs: [2, 4, 8, 16, 32]
+
+# Data generation parameters
+# num_priors: number of independent prior samples (base distribution p_base)
+# Each prior represents a different initial belief state
+num_priors: 5
+
+# nsamples: number of Monte Carlo samples from the target distributions
+# Used to estimate ELDR via empirical averaging
+# Higher values reduce variance but increase computational cost
+nsamples: 1000
+
+# Gibbs sampling parameters for Ising model sampling
+# gibbs_burnin: number of MCMC iterations to discard before collecting samples
+# Ensures convergence to stationary distribution before collecting data
+# Should be large enough relative to grid_size and coupling strength
+gibbs_burnin: 1000
+
+# gibbs_thinning: thinning interval for MCMC samples
+# Take every k-th sample to reduce autocorrelation
+# Value of 1 means no thinning (keep every sample)
+# Increase if samples are highly correlated
+gibbs_thinning: 1
+
+# Computational configuration
+# device: "cuda" or "cpu"
+# Use "cuda" for GPU acceleration (recommended for faster experiments)
+# Use "cpu" for systems without GPU or for debugging
+device: "cuda"
+
+# seed: random seed for reproducibility
+# Fixes all random number generation across numpy, torch, and sampling procedures
+# Standard choice: 1729 (Ramanujan's taxicab number)
+seed: 1729
