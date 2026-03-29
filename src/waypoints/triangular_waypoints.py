@@ -4,10 +4,15 @@ import torch
 class TriangularWaypointBuilder1D:
     """
     Build a 1D triangular path p0 -> p* -> p1 using a single parameter t in [0, 1].
+    pstar influence peaks at t=vertex (default 0.5).
     """
-    def __init__(self, midpoint_oversample: int = 0, gamma_power: float = 1.0) -> None:
+    def __init__(self, midpoint_oversample: int = 0, gamma_power: float = 1.0, vertex: float = 0.5) -> None:
         self.midpoint_oversample = max(0, int(midpoint_oversample))
         self.gamma_power = float(gamma_power)
+        v = float(vertex)
+        if v <= 1e-6 or v >= 1 - 1e-6:
+            raise ValueError(f"vertex must be in (1e-6, 1 - 1e-6), got {v}")
+        self.vertex = v
 
     def _make_t(self, num_waypoints: int, device: torch.device) -> torch.Tensor:
         if self.midpoint_oversample <= 0 or num_waypoints <= 2:
@@ -25,9 +30,10 @@ class TriangularWaypointBuilder1D:
         num_waypoints: int,
     ) -> torch.Tensor:
         t = self._make_t(num_waypoints, samples_p0.device).view(-1, 1)
-        alpha = torch.clamp(1 - 2 * t, min=0.0)
-        beta = torch.clamp(2 * t - 1, min=0.0)
-        gamma = (1 - 2 * torch.abs(t - 0.5)).clamp(min=0.0)
+        v = self.vertex
+        alpha = torch.clamp((v - t) / v, min=0.0)
+        beta = torch.clamp((t - v) / (1.0 - v), min=0.0)
+        gamma = torch.clamp(1.0 - alpha - beta, min=0.0)
         if self.gamma_power != 1.0:
             gamma = gamma ** self.gamma_power
 
