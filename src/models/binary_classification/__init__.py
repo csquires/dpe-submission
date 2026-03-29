@@ -1,6 +1,10 @@
 from src.models.binary_classification.binary_classifier import BinaryClassifier
 from src.models.binary_classification.default_binary_classifier import make_default_binary_classifier
 from src.models.binary_classification.gaussian_binary_classifier import make_gaussian_binary_classifier
+from src.models.binary_classification.multi_head_binary_classifier import (
+    MultiHeadBinaryClassifier,
+    make_multi_head_binary_classifier,
+)
 
 
 def make_binary_classifier(name: str, **kwargs) -> BinaryClassifier:
