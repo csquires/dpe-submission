@@ -25,8 +25,8 @@ VERTEX_WAYPOINTS = config['vertex_waypoints']
 NUM_WAYPOINTS = config['num_waypoints']
 LATENT_DIM = config.get('latent_dim', 10)
 MAX_TRAIN_SAMPLES = config.get('max_train_samples', None)
-BATCH_SIZE = config.get('batch_size', None)
 TRAIN_RATIO = config.get('train_ratio', None)
+DESIGN_EIG_PERCENTAGES = config.get('design_eig_percentages', None)
 
 # set random seeds early (before importing models)
 np.random.seed(SEED)
@@ -86,6 +86,15 @@ os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
 with h5py.File(dataset_filename, 'r') as dataset_file:
     nrows = dataset_file['design_arr'].shape[0]
 
+    # filter rows by design_eig_percentage if specified in config
+    if DESIGN_EIG_PERCENTAGES is not None:
+        all_betas = dataset_file['design_eig_percentage_arr'][:].squeeze()
+        row_mask = np.array([np.isclose(all_betas[i], DESIGN_EIG_PERCENTAGES).any() for i in range(nrows)])
+        row_indices = np.where(row_mask)[0]
+        print(f"Filtering to {len(row_indices)}/{nrows} rows matching betas {DESIGN_EIG_PERCENTAGES}")
+    else:
+        row_indices = np.arange(nrows)
+
     # compute and save true_eigs if not present or --force
     if 'true_eigs_arr' not in existing_results or args.force:
         true_eigs_arr = np.zeros(nrows, dtype=np.float32)
@@ -128,7 +137,6 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             input_dim=DATA_DIM + 1,
             num_classes=NUM_WAYPOINTS,
             latent_dim=LATENT_DIM,
-            batch_size=BATCH_SIZE,
         )
 
         # instantiate TriangularMDRE with the classifier
@@ -145,17 +153,18 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         # wrap with EIG plugin
         plugin = EIGPlugin(density_ratio_estimator=adapter, train_ratio=TRAIN_RATIO)
 
-        # allocate result array
+        # allocate result array (full size, unfiltered rows will be 0)
         est_eigs_arr = np.zeros(nrows, dtype=np.float32)
 
-        # loop over all configurations in dataset
-        for idx in trange(nrows):
-            theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][idx]).to(DEVICE)  # [NSAMPLES, DATA_DIM]
-            y_samples = torch.from_numpy(dataset_file['y_samples_arr'][idx]).to(DEVICE)  # [NSAMPLES, 1]
+        # loop over filtered configurations
+        for idx in trange(len(row_indices)):
+            row_idx = row_indices[idx]
+            theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][row_idx]).to(DEVICE)  # [NSAMPLES, DATA_DIM]
+            y_samples = torch.from_numpy(dataset_file['y_samples_arr'][row_idx]).to(DEVICE)  # [NSAMPLES, 1]
 
             # estimate eig
             result = plugin.estimate_eig(theta_samples, y_samples)
-            est_eigs_arr[idx] = result.item() if hasattr(result, 'item') else result
+            est_eigs_arr[row_idx] = result.item() if hasattr(result, 'item') else result
 
         # save estimated eigs to results file
         with h5py.File(results_filename, 'a') as results_file:
