@@ -39,43 +39,23 @@ def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1
     return 0.5 * torch.log1p(quad / sigma2)
 
 
-class TriangularMDREEIGAdapter:
+class TriangularDREAdapter:
     """
-    Adapter bridging TriangularMDRE to EIGPlugin interface.
+    Adapter bridging triangular DRE methods to EIGPlugin interface.
 
-    TriangularMDRE.fit() requires three arguments (samples_p0, samples_p1, samples_pstar),
-    while EIGPlugin expects a DensityRatioEstimator with fit(samples_p0, samples_p1).
+    Triangular DRE methods require fit(samples_p0, samples_p1, samples_pstar),
+    while EIGPlugin expects fit(samples_p0, samples_p1).
     This adapter uses samples_p0 (joint distribution) as pstar.
     """
 
-    def __init__(self, triangular_mdre: TriangularMDRE):
-        """
-        args:
-            triangular_mdre: instantiated TriangularMDRE object
-        """
-        self.triangular_mdre = triangular_mdre
+    def __init__(self, dre):
+        self.dre = dre
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
-        """
-        Fit TriangularMDRE with p0 samples as pstar.
-
-        args:
-            samples_p0: joint distribution samples, shape [batch_size, dim]
-            samples_p1: marginal distribution samples, shape [batch_size, dim]
-        """
-        self.triangular_mdre.fit(samples_p0, samples_p1, samples_p0)
+        self.dre.fit(samples_p0, samples_p1, samples_p0)
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """
-        Predict log density ratio at query points.
-
-        args:
-            xs: query points, shape [batch_size, dim]
-
-        returns:
-            log density ratios, shape [batch_size]
-        """
-        return self.triangular_mdre.predict_ldr(xs)
+        return self.dre.predict_ldr(xs)
 
 
 def main():
@@ -93,8 +73,8 @@ def main():
     config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
 
     HIDDEN_DIMS = config['hidden_dims']
-    MDRE_NUM_WAYPOINTS = config['mdre_num_waypoints']
-    MDRE_NUM_LAYERS = config['mdre_num_layers']
+    NUM_WAYPOINTS = config['num_waypoints']
+    NUM_LAYERS = config['num_layers']
     TSM_N_EPOCHS = config['tsm_n_epochs']
     TSM_BATCH_SIZE = config['tsm_batch_size']
     TSM_LR = config['tsm_lr']
@@ -107,8 +87,8 @@ def main():
 
     # === 2.3 VALIDATE CONFIGURATION ===
     assert isinstance(HIDDEN_DIMS, list) and len(HIDDEN_DIMS) > 0, "hidden_dims must be non-empty list"
-    assert MDRE_NUM_WAYPOINTS > 0, "mdre_num_waypoints must be > 0"
-    assert MDRE_NUM_LAYERS > 0, "mdre_num_layers must be > 0"
+    assert NUM_WAYPOINTS > 0, "num_waypoints must be > 0"
+    assert NUM_LAYERS > 0, "num_layers must be > 0"
     assert TSM_N_EPOCHS > 0, "tsm_n_epochs must be > 0"
     assert TSM_BATCH_SIZE > 0, "tsm_batch_size must be > 0"
     if DEVICE == "cuda":
@@ -118,8 +98,8 @@ def main():
     print(f"  device: {DEVICE}")
     print(f"  seed: {SEED}")
     print(f"  hidden_dims: {HIDDEN_DIMS}")
-    print(f"  mdre_num_waypoints: {MDRE_NUM_WAYPOINTS}")
-    print(f"  mdre_num_layers: {MDRE_NUM_LAYERS}")
+    print(f"  num_waypoints: {NUM_WAYPOINTS}")
+    print(f"  num_layers: {NUM_LAYERS}")
     print(f"  data_dim: {DATA_DIM}, nsamples: {NSAMPLES}")
 
     # === 3. FILE PATHS AND DATASET INITIALIZATION ===
@@ -172,25 +152,7 @@ def main():
             np.random.seed(SEED)
             torch.manual_seed(SEED)
 
-            # 7.2 COUNT TSM PARAMETERS
-            temp_tsm_model = TimeScoreNetwork1D(DATA_DIM + 1, hidden_dim)
-            tsm_param_count = sum(p.numel() for p in temp_tsm_model.parameters())
-            del temp_tsm_model
-
-            # 7.3 INSTANTIATE TRIANGULAR MDRE AND ADAPTER
-            mdre_classifier = make_multiclass_classifier(
-                name="default",
-                input_dim=DATA_DIM + 1,
-                num_classes=MDRE_NUM_WAYPOINTS,
-                latent_dim=hidden_dim,
-                num_layers=MDRE_NUM_LAYERS,
-            )
-            triangular_mdre = TriangularMDRE(mdre_classifier, device=DEVICE)
-            mdre_adapter = TriangularMDREEIGAdapter(triangular_mdre)
-            mdre_plugin = EIGPlugin(density_ratio_estimator=mdre_adapter)
-            mdre_param_count = sum(p.numel() for p in mdre_classifier.parameters())
-
-            # 7.4 INSTANTIATE TSM AND PLUGIN
+            # 7.2 INSTANTIATE TSM
             tsm = TSM(
                 input_dim=DATA_DIM + 1,
                 hidden_dim=hidden_dim,
@@ -200,10 +162,65 @@ def main():
                 device=DEVICE,
             )
             tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
+            temp_tsm_model = TimeScoreNetwork1D(DATA_DIM + 1, hidden_dim)
+            tsm_param_count = sum(p.numel() for p in temp_tsm_model.parameters())
+            del temp_tsm_model
 
-            # 7.5 BUILD ALGORITHM TUPLES
+            # 7.3 INSTANTIATE TRIANGULAR MDRE
+            mdre_classifier = make_multiclass_classifier(
+                name="default",
+                input_dim=DATA_DIM + 1,
+                num_classes=NUM_WAYPOINTS,
+                latent_dim=hidden_dim,
+                num_layers=NUM_LAYERS,
+            )
+            triangular_mdre = TriangularMDRE(mdre_classifier, device=DEVICE)
+            mdre_adapter = TriangularDREAdapter(triangular_mdre)
+            mdre_plugin = EIGPlugin(density_ratio_estimator=mdre_adapter)
+            mdre_param_count = sum(p.numel() for p in mdre_classifier.parameters())
+
+            # 7.4 INSTANTIATE TRIANGULAR TDRE
+            tdre_classifiers = [
+                DefaultBinaryClassifier(
+                    input_dim=DATA_DIM + 1,
+                    latent_dim=hidden_dim,
+                    num_layers=NUM_LAYERS,
+                ).to(DEVICE)
+                for _ in range(NUM_WAYPOINTS - 1)
+            ]
+            triangular_tdre = TriangularTDRE(
+                classifiers=tdre_classifiers,
+                num_waypoints=NUM_WAYPOINTS,
+                device=DEVICE,
+            )
+            tdre_adapter = TriangularDREAdapter(triangular_tdre)
+            tdre_plugin = EIGPlugin(density_ratio_estimator=tdre_adapter)
+            tdre_param_count = sum(
+                sum(p.numel() for p in c.parameters()) for c in tdre_classifiers
+            )
+
+            # 7.5 INSTANTIATE MULTIHEAD TRIANGULAR TDRE
+            mh_classifier = MultiHeadBinaryClassifier(
+                input_dim=DATA_DIM + 1,
+                num_heads=NUM_WAYPOINTS - 1,
+                hidden_dim=hidden_dim,
+                head_dim=hidden_dim,
+                num_shared_layers=NUM_LAYERS - 2,  # heads add 2 layers
+            ).to(DEVICE)
+            mh_tdre = MultiHeadTriangularTDRE(
+                classifier=mh_classifier,
+                num_waypoints=NUM_WAYPOINTS,
+                device=DEVICE,
+            )
+            mh_tdre_adapter = TriangularDREAdapter(mh_tdre)
+            mh_tdre_plugin = EIGPlugin(density_ratio_estimator=mh_tdre_adapter)
+            mh_tdre_param_count = sum(p.numel() for p in mh_classifier.parameters())
+
+            # 7.6 BUILD ALGORITHM TUPLES
             algorithms = [
                 ("TriangularMDRE", mdre_plugin, mdre_param_count),
+                ("TriangularTDRE", tdre_plugin, tdre_param_count),
+                ("MultiHeadTriangularTDRE", mh_tdre_plugin, mh_tdre_param_count),
                 ("TSM", tsm_plugin, tsm_param_count),
             ]
 

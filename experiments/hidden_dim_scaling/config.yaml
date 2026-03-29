@@ -16,11 +16,18 @@ target_design_eig_percentage: 0.7
 hidden_dims: [16, 32, 64, 128, 256]
 
 # model hyperparameters - fixed across all hidden_dim values
-mdre_num_waypoints: 15
-mdre_num_layers: 3
+num_waypoints: 15
+num_layers: 4
 tsm_n_epochs: 1000
 tsm_batch_size: 512
 tsm_lr: 0.001
+
+# algorithms to compare
+algorithms:
+  - TriangularMDRE
+  - TriangularTDRE
+  - MultiHeadTriangularTDRE
+  - TSM
 
 # compute - device and random seed
 device: "cuda"

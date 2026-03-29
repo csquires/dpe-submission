@@ -31,13 +31,17 @@ ALGORITHMS = config.get('algorithms', ['TSM', 'TriangularMDRE'])
 # 2. Style and Color Configuration
 
 COLORS = {
-    'TSM': '#d62728',
-    'TriangularMDRE': '#aec7e8',
+    'TSM': '#d62728',            # red
+    'TriangularMDRE': '#aec7e8', # light blue
+    'TriangularTDRE': '#2ca02c', # green
+    'MultiHeadTriangularTDRE': '#9467bd',  # purple
 }
 
 MARKERS = {
     'TSM': 'o',
     'TriangularMDRE': 's',
+    'TriangularTDRE': '^',
+    'MultiHeadTriangularTDRE': 'D',
 }
 
 LINEWIDTH = 1.5
