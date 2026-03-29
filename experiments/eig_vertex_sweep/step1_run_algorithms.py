@@ -23,6 +23,10 @@ NSAMPLES = config['nsamples']
 SEED = config['seed']
 VERTEX_WAYPOINTS = config['vertex_waypoints']
 NUM_WAYPOINTS = config['num_waypoints']
+LATENT_DIM = config.get('latent_dim', 10)
+MAX_TRAIN_SAMPLES = config.get('max_train_samples', None)
+BATCH_SIZE = config.get('batch_size', None)
+TRAIN_RATIO = config.get('train_ratio', None)
 
 # set random seeds early (before importing models)
 np.random.seed(SEED)
@@ -122,21 +126,24 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         classifier = make_multiclass_classifier(
             name="default",
             input_dim=DATA_DIM + 1,
-            num_classes=NUM_WAYPOINTS
+            num_classes=NUM_WAYPOINTS,
+            latent_dim=LATENT_DIM,
+            batch_size=BATCH_SIZE,
         )
 
         # instantiate TriangularMDRE with the classifier
         triangular_mdre = TriangularMDRE(
             classifier,
             waypoint_builder=waypoint_builder,
-            device=DEVICE
+            device=DEVICE,
+            max_train_samples=MAX_TRAIN_SAMPLES,
         )
 
         # wrap with adapter
         adapter = TriangularMDREEIGAdapter(triangular_mdre)
 
         # wrap with EIG plugin
-        plugin = EIGPlugin(density_ratio_estimator=adapter)
+        plugin = EIGPlugin(density_ratio_estimator=adapter, train_ratio=TRAIN_RATIO)
 
         # allocate result array
         est_eigs_arr = np.zeros(nrows, dtype=np.float32)

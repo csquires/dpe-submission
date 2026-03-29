@@ -6,7 +6,7 @@ from src.models.multiclass_classification.multiclass_classifier import Multiclas
 
 class DefaultMulticlassClassifier(MulticlassClassifier):
     def __init__(
-        self, 
+        self,
         input_dim: int,
         num_classes: int,
         # model hyperparameters
@@ -15,6 +15,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         # training hyperparameters
         learning_rate: float = 0.05,
         num_epochs: int = 1000,
+        batch_size: int = None,
     ):
         super().__init__()
         layers = []
@@ -28,6 +29,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         self.num_classes = num_classes
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
+        self.batch_size = batch_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -41,22 +43,33 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
                     nn.init.zeros_(module.bias)
 
     def fit(
-        self, 
+        self,
         xs: torch.Tensor,  # [n, dim]
         ys: torch.Tensor,  # [n], with values in {0, ..., num_classes-1}
     ) -> None:
         self._reset_parameters()
         self.train()
-        loss = nn.CrossEntropyLoss()
+        loss_fn = nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+
+        n = xs.shape[0]
+        batch_size = self.batch_size if self.batch_size is not None else n
+
         for epoch in range(self.num_epochs):
-            optimizer.zero_grad()
-            y_pred = self.forward(xs)
-            l = loss(y_pred, ys)
-            l.backward()
-            optimizer.step()
-        if y_pred.isnan().any():
-            breakpoint()
+            perm = torch.randperm(n, device=xs.device)
+            for i in range(0, n, batch_size):
+                idx = perm[i:i + batch_size]
+                optimizer.zero_grad()
+                y_pred = self.forward(xs[idx])
+                loss = loss_fn(y_pred, ys[idx])
+                loss.backward()
+                optimizer.step()
+
+        # check for nans
+        with torch.no_grad():
+            final_pred = self.forward(xs[:batch_size])
+            if final_pred.isnan().any():
+                breakpoint()
 
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
         self.eval()

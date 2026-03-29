@@ -14,8 +14,12 @@ import yaml
 
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
+from src.models.binary_classification.default_binary_classifier import DefaultBinaryClassifier
+from src.models.binary_classification.multi_head_binary_classifier import MultiHeadBinaryClassifier
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
+from src.density_ratio_estimation.triangular_tdre import TriangularTDRE
+from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
 from src.eig_estimation.plugin import EIGPlugin
 
 

@@ -18,6 +18,7 @@ class TriangularMDRE(DensityRatioEstimator):
         midpoint_oversample: int = 0,
         gamma_power: float = 1.0,
         vertex: float = 0.5,
+        max_train_samples: int = None,
     ):
         self.device = device
         self.classifier = classifier.to(self.device)
@@ -27,6 +28,7 @@ class TriangularMDRE(DensityRatioEstimator):
             vertex=vertex,
         )
         self.num_waypoints = self.classifier.num_classes
+        self.max_train_samples = max_train_samples
 
     def fit(
         self,
@@ -34,6 +36,16 @@ class TriangularMDRE(DensityRatioEstimator):
         samples_p1: torch.Tensor,  # [b1, dim]
         samples_pstar: torch.Tensor,  # [bstar, dim]
     ) -> None:
+        # subsample for training if max_train_samples is set
+        if self.max_train_samples is not None:
+            n = self.max_train_samples
+            if samples_p0.shape[0] > n:
+                samples_p0 = samples_p0[torch.randperm(samples_p0.shape[0])[:n]]
+            if samples_p1.shape[0] > n:
+                samples_p1 = samples_p1[torch.randperm(samples_p1.shape[0])[:n]]
+            if samples_pstar.shape[0] > n:
+                samples_pstar = samples_pstar[torch.randperm(samples_pstar.shape[0])[:n]]
+
         waypoint_samples = self.waypoint_builder.build_waypoints(
             samples_p0=samples_p0,
             samples_p1=samples_p1,

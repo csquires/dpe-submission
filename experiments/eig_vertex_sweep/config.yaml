@@ -3,9 +3,12 @@ raw_results_dir: "experiments/eig_vertex_sweep/raw_results"
 processed_results_dir: "experiments/eig_vertex_sweep/processed_results"
 figures_dir: "experiments/eig_vertex_sweep/figures"
 data_dim: 3
-nsamples: 1000
+nsamples: 100000
 device: "cuda"
 seed: 1729
 design_eig_percentages: [0.5, 0.6, 0.7, 0.8, 0.9, 0.999]
 vertex_waypoints: [3, 5, 7, 9]
 num_waypoints: 15
+latent_dim: 64
+max_train_samples: 10000
+batch_size: 1024
