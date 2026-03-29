@@ -14,16 +14,17 @@ class TriangularMDRE(DensityRatioEstimator):
         self,
         classifier: MulticlassClassifier,
         waypoint_builder: TriangularWaypointBuilder1D = None,
-        # waypoint_builder: TriangularWaypointBuilder1D | None = None,
         device: str = "cuda",
         midpoint_oversample: int = 0,
         gamma_power: float = 1.0,
+        vertex: float = 0.5,
     ):
         self.device = device
         self.classifier = classifier.to(self.device)
         self.waypoint_builder = waypoint_builder or TriangularWaypointBuilder1D(
             midpoint_oversample=midpoint_oversample,
             gamma_power=gamma_power,
+            vertex=vertex,
         )
         self.num_waypoints = self.classifier.num_classes
 

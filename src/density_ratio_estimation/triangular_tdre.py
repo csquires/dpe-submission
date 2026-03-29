@@ -13,17 +13,18 @@ class TriangularTDRE(DensityRatioEstimator):
         self,
         classifiers: list[BinaryClassifier],
         waypoint_builder: TriangularWaypointBuilder1D = None,
-        # waypoint_builder: TriangularWaypointBuilder1D | None = None,
         num_waypoints: int = 5,
         device: str = "cuda",
         midpoint_oversample: int = 0,
         gamma_power: float = 1.0,
+        vertex: float = 0.5,
     ):
         self.device = device
         self.classifiers = [classifier.to(self.device) for classifier in classifiers]
         self.waypoint_builder = waypoint_builder or TriangularWaypointBuilder1D(
             midpoint_oversample=midpoint_oversample,
             gamma_power=gamma_power,
+            vertex=vertex,
         )
         self.num_waypoints = num_waypoints
 
