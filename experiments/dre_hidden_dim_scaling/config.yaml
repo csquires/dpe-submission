@@ -1,0 +1,32 @@
+# hidden dimension scaling experiment for density ratio estimation
+
+# directory configuration
+data_dir: experiments/dre_hidden_dim_scaling/data
+raw_results_dir: experiments/dre_hidden_dim_scaling/raw_results
+processed_results_dir: experiments/dre_hidden_dim_scaling/processed_results
+figures_dir: experiments/dre_hidden_dim_scaling/figures
+
+# data generation
+data_dim: 3
+kl_divergence: 5.4
+num_instances: 20
+nsamples_train: 8100
+nsamples_test: 1024
+
+# hidden dimension sweep
+hidden_dims: [16, 32, 64, 128, 256]
+
+# model hyperparameters
+num_waypoints: 15
+num_layers: 4
+
+# algorithms
+algorithms:
+  - TriangularMDRE
+  - TriangularTDRE
+  - MultiHeadTriangularTDRE
+  - TSM
+
+# compute configuration
+device: cuda
+seed: 1729
