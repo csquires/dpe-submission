@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import sys
 import time
@@ -58,6 +59,23 @@ class TriangularDREAdapter:
         return self.dre.predict_ldr(xs)
 
 
+def validate_subset(user_values, config_values, param_name):
+    """
+    Return filtered config list preserving order, or raise ValueError.
+
+    If user_values is None/empty, return all config_values.
+    Otherwise, validate that all user_values exist in config_values
+    and return only those from config_values that appear in user_values,
+    preserving config_values' order.
+    """
+    if not user_values:
+        return config_values
+    invalid = [v for v in user_values if v not in set(config_values)]
+    if invalid:
+        raise ValueError(f"invalid {param_name}: {invalid}\navailable: {config_values}")
+    return [v for v in config_values if v in set(user_values)]
+
+
 def main():
     # === 1. COMMAND-LINE ARGUMENT PARSING ===
     parser = argparse.ArgumentParser()
@@ -66,13 +84,37 @@ def main():
         action="store_true",
         help="Force re-run of all algorithms, overwriting existing results"
     )
+    parser.add_argument(
+        "--methods",
+        nargs="*",
+        default=None,
+        help="algorithms to run (default: all from config)"
+    )
+    parser.add_argument(
+        "--hidden-dims",
+        nargs="*",
+        type=int,
+        default=None,
+        help="hidden dimensions to run (default: all from config)"
+    )
     args = parser.parse_args()
 
-    # === 2. CONFIG LOADING AND PARAMETER EXTRACTION ===
+    # === 1.5 VALIDATE CLI ARGUMENTS ===
     config_path = "experiments/hidden_dim_scaling/config.yaml"
     config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
 
-    HIDDEN_DIMS = config['hidden_dims']
+    try:
+        # validate methods if provided
+        config_methods = ["TriangularMDRE", "TriangularTDRE", "MultiHeadTriangularTDRE", "TSM"]
+        methods = validate_subset(args.methods, config_methods, "methods")
+
+        # validate hidden_dims if provided
+        hidden_dims = validate_subset(args.hidden_dims, config['hidden_dims'], "hidden_dims")
+    except ValueError as e:
+        parser.error(str(e))
+
+    # === 2. CONFIG LOADING AND PARAMETER EXTRACTION ===
+    HIDDEN_DIMS = hidden_dims
     NUM_WAYPOINTS = config['num_waypoints']
     NUM_LAYERS = config['num_layers']
     TSM_N_EPOCHS = config['tsm_n_epochs']
@@ -104,19 +146,10 @@ def main():
 
     # === 3. FILE PATHS AND DATASET INITIALIZATION ===
     dataset_filename = f'{DATA_DIR}/dataset_filtered.h5'
-    results_filename = f'{RAW_RESULTS_DIR}/results.h5'
+    true_eigs_filename = f'{RAW_RESULTS_DIR}/true_eigs.h5'
 
     # 3.2 CREATE OUTPUT DIRECTORY
     os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
-
-    # 3.3 LOAD AND CACHE EXISTING RESULTS
-    existing_results = set()
-    if os.path.exists(results_filename):
-        with h5py.File(results_filename, 'r') as f:
-            existing_results = set(f.keys())
-        print(f"Existing results for: {sorted(existing_results)}")
-    else:
-        print(f"No existing results file at {results_filename} (will create)")
 
     # === 4. DATASET LOADING ===
     with h5py.File(dataset_filename, 'r') as dataset_file:
@@ -129,20 +162,20 @@ def main():
         # === 5. TRUE EIG COMPUTATION (ONE-TIME, BEFORE ALGORITHM LOOP) ===
         true_eigs_arr = np.zeros(nrows, dtype=np.float32)
 
-        if 'true_eigs_arr' not in existing_results or args.force:
-            print("\nComputing true EIGs...")
+        if os.path.exists(true_eigs_filename) and not args.force:
+            print("Loading existing true EIGs...")
+            with h5py.File(true_eigs_filename, 'r') as f:
+                true_eigs_arr = f['true_eigs'][:]
+        else:
+            print("Computing true EIGs...")
             for idx in trange(nrows):
                 Sigma_pi = torch.from_numpy(dataset_file['prior_covariance_arr'][idx]).to(DEVICE)
                 design = torch.from_numpy(dataset_file['design_arr'][idx]).to(DEVICE)  # already [data_dim, 1]
                 true_eigs_arr[idx] = compute_true_eig(Sigma_pi, design).item()
 
             # write true_eigs_arr atomically
-            with h5py.File(results_filename, 'a') as results_file:
-                if 'true_eigs_arr' in results_file:
-                    del results_file['true_eigs_arr']
-                results_file.create_dataset('true_eigs_arr', data=true_eigs_arr)
-        else:
-            print("True EIGs already computed, skipping")
+            with h5py.File(true_eigs_filename, 'w') as f:
+                f.create_dataset('true_eigs', data=true_eigs_arr)
 
         # === 7. MAIN LOOP STRUCTURE: PER HIDDEN DIMENSION ===
         for hidden_dim in HIDDEN_DIMS:
@@ -152,11 +185,18 @@ def main():
             np.random.seed(SEED)
             torch.manual_seed(SEED)
 
+            # 7.1.5 COMPUTE EPOCH MULTIPLIER
+            epochs_multiplier = int(math.log2(hidden_dim // 16)) + 1
+            tsm_epochs = TSM_N_EPOCHS * epochs_multiplier
+            mdre_epochs = 1000 * epochs_multiplier
+            tdre_epochs = 1000 * epochs_multiplier
+            print(f"  epochs_multiplier={epochs_multiplier} (tsm={tsm_epochs}, mdre={mdre_epochs}, tdre={tdre_epochs})")
+
             # 7.2 INSTANTIATE TSM
             tsm = TSM(
                 input_dim=DATA_DIM + 1,
                 hidden_dim=hidden_dim,
-                n_epochs=TSM_N_EPOCHS,
+                n_epochs=tsm_epochs,
                 batch_size=TSM_BATCH_SIZE,
                 lr=TSM_LR,
                 device=DEVICE,
@@ -173,6 +213,7 @@ def main():
                 num_classes=NUM_WAYPOINTS,
                 latent_dim=hidden_dim,
                 num_layers=NUM_LAYERS,
+                num_epochs=mdre_epochs,
             )
             triangular_mdre = TriangularMDRE(mdre_classifier, device=DEVICE)
             mdre_adapter = TriangularDREAdapter(triangular_mdre)
@@ -185,6 +226,7 @@ def main():
                     input_dim=DATA_DIM + 1,
                     latent_dim=hidden_dim,
                     num_layers=NUM_LAYERS,
+                    num_epochs=tdre_epochs,
                 ).to(DEVICE)
                 for _ in range(NUM_WAYPOINTS - 1)
             ]
@@ -206,6 +248,7 @@ def main():
                 hidden_dim=hidden_dim,
                 head_dim=hidden_dim,
                 num_shared_layers=NUM_LAYERS - 2,  # heads add 2 layers
+                num_epochs=tdre_epochs,
             ).to(DEVICE)
             mh_tdre = MultiHeadTriangularTDRE(
                 classifier=mh_classifier,
@@ -217,40 +260,43 @@ def main():
             mh_tdre_param_count = sum(p.numel() for p in mh_classifier.parameters())
 
             # 7.6 BUILD ALGORITHM TUPLES
-            algorithms = [
+            all_algorithms = [
                 ("TriangularMDRE", mdre_plugin, mdre_param_count),
                 ("TriangularTDRE", tdre_plugin, tdre_param_count),
                 ("MultiHeadTriangularTDRE", mh_tdre_plugin, mh_tdre_param_count),
                 ("TSM", tsm_plugin, tsm_param_count),
             ]
+            # filter by --methods CLI arg
+            algorithms = [(n, p, c) for n, p, c in all_algorithms if n in methods]
 
             # === 8. INNER LOOP: PER ALGORITHM ===
             for alg_name, alg_plugin, param_count in algorithms:
-                # 8.1 CHECK FOR EXISTING RESULTS
-                est_eigs_key = f'est_eigs_arr_{alg_name}_hidden_dim_{hidden_dim}'
+                # 8.1 CONSTRUCT FILENAME FOR THIS METHOD-DIM PAIR
+                results_filename = f'{RAW_RESULTS_DIR}/{alg_name}_hidden_dim_{hidden_dim}.h5'
 
-                if est_eigs_key in existing_results and not args.force:
-                    print(f"  Skipping {alg_name} hidden_dim={hidden_dim} (results exist, use --force to overwrite)")
+                # 8.2 CHECK FOR EXISTING RESULTS
+                if os.path.exists(results_filename) and not args.force:
+                    print(f"  Skipping {alg_name} hidden_dim={hidden_dim} (exists)")
                     continue
 
                 print(f"  Starting {alg_name} hidden_dim={hidden_dim}.")
 
-                # 8.2 INITIALIZE RESULT ARRAYS
+                # 8.3 INITIALIZE RESULT ARRAYS
                 est_eigs_arr = np.zeros(nrows, dtype=np.float32)
                 timing_arr = np.zeros(nrows, dtype=np.float32)
                 peak_memory = 0.0
 
-                # 8.3 INNERMOST LOOP: PER DATA POINT
+                # 8.4 INNERMOST LOOP: PER DATA POINT
                 for idx in trange(nrows):
-                    # 8.3.1 LOAD SAMPLE DATA
+                    # 8.4.1 LOAD SAMPLE DATA
                     theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][idx]).to(DEVICE)
                     y_samples = torch.from_numpy(dataset_file['y_samples_arr'][idx]).to(DEVICE)
 
-                    # 8.3.2 RESET GPU MEMORY STATS
+                    # 8.4.2 RESET GPU MEMORY STATS
                     if DEVICE == 'cuda':
                         torch.cuda.reset_peak_memory_stats()
 
-                    # 8.3.3 MEASURE TIMING AND RUN ALGORITHM
+                    # 8.4.3 MEASURE TIMING AND RUN ALGORITHM
                     t0 = time.perf_counter()
                     try:
                         result = alg_plugin.estimate_eig(theta_samples, y_samples)
@@ -266,31 +312,25 @@ def main():
                         t1 = time.perf_counter()
                         timing_arr[idx] = t1 - t0
 
-                    # 8.3.4 CAPTURE PEAK MEMORY
+                    # 8.4.4 CAPTURE PEAK MEMORY
                     if DEVICE == 'cuda':
                         peak_memory = max(peak_memory, torch.cuda.max_memory_allocated())
 
-                # 8.4 SAVE RESULTS TO HDF5 (ATOMIC)
-                with h5py.File(results_filename, 'a') as results_file:
-                    timing_key = f'timing_arr_{alg_name}_hidden_dim_{hidden_dim}'
-                    memory_key = f'peak_memory_{alg_name}_hidden_dim_{hidden_dim}'
-                    param_key = f'param_count_{alg_name}_hidden_dim_{hidden_dim}'
-
-                    # delete if exists to ensure clean write
-                    for key in [est_eigs_key, timing_key, memory_key, param_key]:
-                        if key in results_file:
-                            del results_file[key]
-
-                    # create fresh datasets
-                    results_file.create_dataset(est_eigs_key, data=est_eigs_arr)
-                    results_file.create_dataset(timing_key, data=timing_arr)
-                    results_file.create_dataset(memory_key, data=np.array(peak_memory, dtype=np.float32))
-                    results_file.create_dataset(param_key, data=np.array(param_count, dtype=np.int64))
+                # 8.5 SAVE RESULTS TO HDF5 (ATOMIC)
+                temp_file = results_filename + '.tmp'
+                with h5py.File(temp_file, 'w') as f:
+                    f.create_dataset('est_eigs_arr', data=est_eigs_arr)
+                    f.create_dataset('timing_arr', data=timing_arr)
+                    f.create_dataset('peak_memory', data=np.array(peak_memory, dtype=np.float32))
+                    f.create_dataset('param_count', data=np.array(param_count, dtype=np.int64))
+                os.replace(temp_file, results_filename)
 
     # === 9. POST-LOOP SUMMARY AND EXIT ===
     print("=" * 60)
     print("Experiment completed successfully")
-    print(f"Results saved to: {results_filename}")
+    print(f"Results saved to: {RAW_RESULTS_DIR}/")
+    print(f"  - True EIGs: {true_eigs_filename}")
+    print(f"  - Per-method results: {RAW_RESULTS_DIR}/<method>_hidden_dim_<dim>.h5")
     print(f"Total hidden_dims tested: {len(HIDDEN_DIMS)}")
     print(f"Total algorithms: {len(algorithms)}")
     print("=" * 60)
