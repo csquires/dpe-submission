@@ -1,4 +1,4 @@
-# directories - all relative to project root
+# directory configuration
 data_dir: "experiments/hidden_dim_scaling/data"
 raw_results_dir: "experiments/hidden_dim_scaling/raw_results"
 processed_results_dir: "experiments/hidden_dim_scaling/processed_results"
@@ -8,6 +8,7 @@ figures_dir: "experiments/hidden_dim_scaling/figures"
 source_data_dir: "experiments/eig_estimation/data"
 source_data_dim: 3
 source_nsamples: 10000
+nsamples_test: 1024
 
 # filter criteria - select designs matching specific EIG percentage
 target_design_eig_percentage: 0.7
@@ -18,6 +19,9 @@ hidden_dims: [16, 32, 64, 128, 256]
 # model hyperparameters - fixed across all hidden_dim values
 num_waypoints: 15
 num_layers: 4
+num_epochs: 100
+
+# tsm-specific hyperparameters
 tsm_n_epochs: 1000
 tsm_batch_size: 512
 tsm_lr: 0.001
@@ -29,6 +33,6 @@ algorithms:
   - MultiHeadTriangularTDRE
   - TSM
 
-# compute - device and random seed
+# compute configuration
 device: "cuda"
 seed: 1729

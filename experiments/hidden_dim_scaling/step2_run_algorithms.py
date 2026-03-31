@@ -242,6 +242,7 @@ def main():
             )
 
             # 7.5 INSTANTIATE MULTIHEAD TRIANGULAR TDRE
+            # scale learning rate by sqrt(hidden_dim/16) for stability at larger sizes
             mh_classifier = MultiHeadBinaryClassifier(
                 input_dim=DATA_DIM + 1,
                 num_heads=NUM_WAYPOINTS - 1,
@@ -249,6 +250,9 @@ def main():
                 head_dim=hidden_dim,
                 num_shared_layers=NUM_LAYERS - 2,  # heads add 2 layers
                 num_epochs=tdre_epochs,
+                epoch_scale=1,  # not NUM_WAYPOINTS-1: multi-head already processes all heads per epoch
+                lr_hidden_dim_scale=True,
+                lr_base_dim=16,
             ).to(DEVICE)
             mh_tdre = MultiHeadTriangularTDRE(
                 classifier=mh_classifier,

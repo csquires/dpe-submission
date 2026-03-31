@@ -1,13 +1,37 @@
+# directory configuration
 data_dir: "experiments/eig_estimation/data"
 raw_results_dir: "experiments/eig_vertex_sweep/raw_results"
 processed_results_dir: "experiments/eig_vertex_sweep/processed_results"
 figures_dir: "experiments/eig_vertex_sweep/figures"
+
+# data parameters
 data_dim: 3
 nsamples: 100000
+max_train_samples: 10000
+nsamples_test: 1024
+
+# experimental sweep parameters
+design_eig_percentages: [0.5, 0.6, 0.7, 0.8, 0.9, 0.999]
+vertex_waypoints: [3, 5, 7, 9]
+
+# model hyperparameters
+num_waypoints: 15
+latent_dim: 16
+num_layers: 4
+num_epochs: 100
+
+# tsm-specific hyperparameters
+tsm_n_epochs: 1000
+tsm_batch_size: 512
+tsm_lr: 0.001
+
+# algorithms to run
+algorithms:
+  - TriangularMDRE
+  - TriangularTDRE
+  - MultiHeadTriangularTDRE
+  - TSM
+
+# compute configuration
 device: "cuda"
 seed: 1729
-design_eig_percentages: [0.5, 0.7, 0.9]
-vertex_waypoints: [3, 5, 7, 9]
-num_waypoints: 15
-latent_dim: 32
-max_train_samples: 10000

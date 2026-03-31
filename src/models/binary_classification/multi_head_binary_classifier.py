@@ -21,6 +21,11 @@ class MultiHeadBinaryClassifier(nn.Module):
     forward(x) -> [batch, num_heads] logits (parallel head computation)
     fit(xs_per_head, ys_per_head) -> trains with batched backbone pass
     predict_logits(xs) -> [batch, num_heads] logits in eval mode
+
+    training budget scaling:
+    - epoch_scale: multiplies num_epochs to match separate-classifier budget
+      (typically set to num_heads to match TriangularTDRE optimization steps)
+    - lr_scale: scales learning_rate by 1/sqrt(hidden_dim/base_dim) for stability
     """
 
     def __init__(
@@ -32,6 +37,9 @@ class MultiHeadBinaryClassifier(nn.Module):
         num_shared_layers: int = 2,
         learning_rate: float = 0.005,
         num_epochs: int = 300,
+        epoch_scale: int = 1,
+        lr_hidden_dim_scale: bool = False,
+        lr_base_dim: int = 16,
     ) -> None:
         super().__init__()
 
@@ -56,8 +64,18 @@ class MultiHeadBinaryClassifier(nn.Module):
         self.num_heads = num_heads
         self.hidden_dim = hidden_dim
         self.head_dim = head_dim
-        self.learning_rate = learning_rate
-        self.num_epochs = num_epochs
+
+        # apply epoch scaling (match total optimization budget of separate classifiers)
+        self.num_epochs = num_epochs * epoch_scale
+
+        # apply learning rate scaling for larger models
+        # scale UP for larger hidden_dim to compensate for multi-task gradient averaging
+        if lr_hidden_dim_scale:
+            import math
+            scale_factor = math.sqrt(hidden_dim / lr_base_dim)
+            self.learning_rate = learning_rate * scale_factor
+        else:
+            self.learning_rate = learning_rate
 
         self._reset_parameters()
 
@@ -151,8 +169,9 @@ class MultiHeadBinaryClassifier(nn.Module):
                 logits_i = (h @ self.heads_w2[i] + self.heads_b2[i]).squeeze(-1)  # [n_i]
                 total_loss = total_loss + loss_fn(logits_i, ys_i.squeeze(-1))
 
-            # average and backprop
-            (total_loss / num_heads).backward()
+            # backprop without averaging: each head needs full gradient signal
+            # (averaging would scale head gradients by 1/num_heads, undertrain them)
+            total_loss.backward()
             optimizer.step()
 
         self.eval()

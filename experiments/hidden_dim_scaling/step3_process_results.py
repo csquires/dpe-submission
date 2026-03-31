@@ -83,34 +83,34 @@ for alg in ALGORITHMS:
 def compute_metrics(est_eigs, true_eigs, timing_arr):
     """aggregate metrics for a single (alg, hidden_dim) pair.
 
-    compute mae and std of absolute errors from estimates vs. true values.
-    compute timing mean and std from raw timing array.
+    compute mae and std of absolute errors across instances.
+    each instance has one EIG value, so abs_errors is already per-instance.
 
     args:
-        est_eigs: (100,) estimated eig values
-        true_eigs: (100,) true eig values
-        timing_arr: (100,) timing measurements in seconds
+        est_eigs: (num_instances,) estimated eig values
+        true_eigs: (num_instances,) true eig values
+        timing_arr: (num_instances,) timing measurements in seconds
 
     returns:
         dict: {
-            'mae': float or nan,
-            'std': float or nan,
-            'timing_mean': float or nan,
-            'timing_std': float or nan
+            'mae': float - mean absolute error across instances,
+            'std': float - sample std of absolute errors (ddof=1),
+            'timing_mean': float,
+            'timing_std': float
         }
     """
-    # compute absolute errors
+    # compute absolute errors (already per-instance for EIG)
     abs_errors = np.abs(est_eigs - true_eigs)
 
     # mae: mean of absolute errors
     mae = np.mean(abs_errors)
 
-    # std: standard deviation of absolute errors
-    std = np.std(abs_errors)
+    # std: sample standard deviation across instances
+    std = np.std(abs_errors, ddof=1)
 
     # timing statistics
     timing_mean = np.mean(timing_arr)
-    timing_std = np.std(timing_arr)
+    timing_std = np.std(timing_arr, ddof=1)
 
     return {
         'mae': mae,

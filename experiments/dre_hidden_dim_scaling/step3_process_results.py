@@ -81,34 +81,33 @@ for alg in ALGORITHMS:
 def compute_metrics(est_ldrs, true_ldrs, timing_arr):
     """aggregate metrics for a single (alg, hidden_dim) pair.
 
-    compute mae and std of absolute errors from estimates vs. true values.
-    compute timing mean and std from raw timing array.
+    compute mae per instance, then report mean and std across instances.
+    this captures instance-to-instance variability for proper error bars.
 
     args:
-        est_ldrs: (20, 1024) estimated log density ratios
-        true_ldrs: (20, 1024) true log density ratios
-        timing_arr: (20,) timing measurements in seconds
+        est_ldrs: (num_instances, num_test) estimated log density ratios
+        true_ldrs: (num_instances, num_test) true log density ratios
+        timing_arr: (num_instances,) timing measurements in seconds
 
     returns:
         dict: {
-            'mae': float or nan,
-            'std': float or nan,
-            'timing_mean': float or nan,
-            'timing_std': float or nan
+            'mae': float - mean of per-instance MAEs,
+            'std': float - std of per-instance MAEs (ddof=1),
+            'timing_mean': float,
+            'timing_std': float
         }
     """
-    # compute absolute errors
-    abs_errors = np.abs(est_ldrs - true_ldrs)
+    # compute mae per instance: [num_instances]
+    abs_errors = np.abs(est_ldrs - true_ldrs)  # [num_instances, num_test]
+    mae_per_instance = np.mean(abs_errors, axis=1)  # [num_instances]
 
-    # mae: mean of absolute errors
-    mae = np.mean(abs_errors)
-
-    # std: standard deviation of absolute errors
-    std = np.std(abs_errors)
+    # aggregate across instances
+    mae = np.mean(mae_per_instance)
+    std = np.std(mae_per_instance, ddof=1)  # sample std for proper error bars
 
     # timing statistics
     timing_mean = np.mean(timing_arr)
-    timing_std = np.std(timing_arr)
+    timing_std = np.std(timing_arr, ddof=1)
 
     return {
         'mae': mae,

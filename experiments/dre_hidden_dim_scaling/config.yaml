@@ -13,14 +13,20 @@ num_instances: 20
 nsamples_train: 8100
 nsamples_test: 1024
 
-# hidden dimension sweep
+# hidden dimension sweep - main experimental variable
 hidden_dims: [16, 32, 64, 128, 256]
 
 # model hyperparameters
 num_waypoints: 15
 num_layers: 4
+num_epochs: 100
 
-# algorithms
+# tsm-specific hyperparameters
+tsm_n_epochs: 1000
+tsm_batch_size: 512
+tsm_lr: 0.001
+
+# algorithms to compare
 algorithms:
   - TriangularMDRE
   - TriangularTDRE

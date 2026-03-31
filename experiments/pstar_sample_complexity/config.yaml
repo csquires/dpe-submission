@@ -1,0 +1,34 @@
+# directory configuration
+data_dir: "experiments/pstar_sample_complexity/data"
+raw_results_dir: "experiments/pstar_sample_complexity/raw_results"
+processed_results_dir: "experiments/pstar_sample_complexity/processed_results"
+figures_dir: "experiments/pstar_sample_complexity/figures"
+
+# data generation
+data_dim: 3
+kl_divergence: 1.5
+num_instances: 20
+n_std_padding: 3.0
+
+# sample counts
+nsamples_p0_p1: 3000
+nsamples_pstar_values: [100, 1000, 3000, 9000]
+nsamples_test: 1024
+
+# model hyperparameters
+num_waypoints: 15
+latent_dim: 16
+num_layers: 4
+num_epochs: 100
+
+# tsm-specific hyperparameters
+tsm_n_epochs: 1000
+tsm_batch_size: 512
+tsm_lr: 0.001
+
+# algorithms to run
+algorithms: [TriangularMDRE, TriangularTDRE, MultiHeadTriangularTDRE, TSM]
+
+# execution
+device: "cuda"
+seed: 1729
