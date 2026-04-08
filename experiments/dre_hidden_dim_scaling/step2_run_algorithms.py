@@ -61,6 +61,18 @@ def main():
         default=None,
         help="hidden dimensions to run (default: all from config)"
     )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="Override default learning rate for the method being run"
+    )
+    parser.add_argument(
+        "--trial",
+        type=int,
+        default=0,
+        help="Trial index for organizing results (default: 0)"
+    )
     args = parser.parse_args()
 
     # === 1.5 VALIDATE CLI ARGUMENTS ===
@@ -93,6 +105,13 @@ def main():
     TSM_BATCH_SIZE = config.get('tsm_batch_size', 512)
     TSM_LR = config.get('tsm_lr', 1e-3)
 
+    LR_DEFAULTS = config.get('lr_defaults', {
+        'TriangularMDRE': 0.05,
+        'TriangularTDRE': 0.005,
+        'MultiHeadTriangularTDRE': 0.005,
+        'TSM': 0.001,
+    })
+
     # === 2.3 VALIDATE CONFIGURATION ===
     assert isinstance(HIDDEN_DIMS, list) and len(HIDDEN_DIMS) > 0, "hidden_dims must be non-empty list"
     assert NUM_WAYPOINTS > 0, "num_waypoints must be > 0"
@@ -109,6 +128,10 @@ def main():
     print(f"  num_waypoints: {NUM_WAYPOINTS}")
     print(f"  num_layers: {NUM_LAYERS}")
     print(f"  data_dim: {DATA_DIM}, nsamples_test: {NSAMPLES_TEST}")
+
+    lr_override = args.lr
+    if lr_override is not None:
+        print(f"  learning rate override: {lr_override}")
 
     # === 3. FILE PATHS AND DATASET INITIALIZATION ===
     dataset_filename = f'{DATA_DIR}/dataset.h5'
@@ -141,6 +164,7 @@ def main():
             print(f"  epochs_multiplier={epochs_multiplier} (tsm={tsm_epochs}, mdre={mdre_epochs}, tdre={tdre_epochs})")
 
             # 5.2 INSTANTIATE TRIANGULAR MDRE
+            lr_kwargs_mdre = {"learning_rate": lr_override} if lr_override is not None else {}
             mdre_classifier = make_multiclass_classifier(
                 name="default",
                 input_dim=DATA_DIM,
@@ -148,17 +172,20 @@ def main():
                 latent_dim=hidden_dim,
                 num_layers=NUM_LAYERS,
                 num_epochs=mdre_epochs,
+                **lr_kwargs_mdre,
             )
             triangular_mdre = TriangularMDRE(mdre_classifier, device=DEVICE)
             mdre_param_count = sum(p.numel() for p in mdre_classifier.parameters())
 
             # 5.3 INSTANTIATE TRIANGULAR TDRE
+            lr_kwargs_tdre = {"learning_rate": lr_override} if lr_override is not None else {}
             tdre_classifiers = [
                 DefaultBinaryClassifier(
                     input_dim=DATA_DIM,
                     latent_dim=hidden_dim,
                     num_layers=NUM_LAYERS,
                     num_epochs=tdre_epochs,
+                    **lr_kwargs_tdre,
                 ).to(DEVICE)
                 for _ in range(NUM_WAYPOINTS - 1)
             ]
@@ -174,6 +201,7 @@ def main():
             # 5.4 INSTANTIATE MULTIHEAD TRIANGULAR TDRE
             # scale epochs by num_heads to match TriangularTDRE optimization budget
             # scale learning rate by 1/sqrt(hidden_dim/16) for stability at larger sizes
+            lr_kwargs_mh = {"learning_rate": lr_override} if lr_override is not None else {}
             mh_classifier = MultiHeadBinaryClassifier(
                 input_dim=DATA_DIM,
                 num_heads=NUM_WAYPOINTS - 1,
@@ -184,6 +212,7 @@ def main():
                 epoch_scale=1,  # not NUM_WAYPOINTS-1: multi-head already processes all heads per epoch
                 lr_hidden_dim_scale=True,
                 lr_base_dim=16,
+                **lr_kwargs_mh,
             ).to(DEVICE)
             mh_tdre = MultiHeadTriangularTDRE(
                 classifier=mh_classifier,
@@ -193,12 +222,13 @@ def main():
             mh_tdre_param_count = sum(p.numel() for p in mh_classifier.parameters())
 
             # 5.5 INSTANTIATE TSM
+            lr_kwargs_tsm = {"lr": lr_override} if lr_override is not None else {}
             tsm = TSM(
                 input_dim=DATA_DIM,
                 hidden_dim=hidden_dim,
                 n_epochs=tsm_epochs,
                 batch_size=TSM_BATCH_SIZE,
-                lr=TSM_LR,
+                **lr_kwargs_tsm,
                 device=DEVICE,
             )
             temp_tsm_model = TimeScoreNetwork1D(DATA_DIM, hidden_dim)
@@ -218,7 +248,7 @@ def main():
             # === 6. INNER LOOP: PER ALGORITHM ===
             for alg_name, alg, param_count in algorithms:
                 # 6.1 CONSTRUCT FILENAME FOR THIS METHOD-DIM PAIR
-                results_filename = f'{RAW_RESULTS_DIR}/{alg_name}_hidden_dim_{hidden_dim}.h5'
+                results_filename = f'{RAW_RESULTS_DIR}/{alg_name}_hidden_dim_{hidden_dim}_trial_{args.trial}.h5'
 
                 # 6.2 CHECK FOR EXISTING RESULTS
                 if os.path.exists(results_filename) and not args.force:
@@ -226,6 +256,8 @@ def main():
                     continue
 
                 print(f"  Starting {alg_name} hidden_dim={hidden_dim}.")
+                lr_used = lr_override if lr_override is not None else LR_DEFAULTS[alg_name]
+                print(f"    learning_rate={lr_used}")
 
                 # 6.3 INITIALIZE RESULT ARRAYS
                 est_ldrs_arr = np.zeros((nrows, NSAMPLES_TEST), dtype=np.float32)
@@ -278,13 +310,15 @@ def main():
                     f.create_dataset('timing_arr', data=timing_arr)
                     f.create_dataset('peak_memory', data=np.array(peak_memory, dtype=np.float32))
                     f.create_dataset('param_count', data=np.array(param_count, dtype=np.int64))
+                    lr_used = lr_override if lr_override is not None else LR_DEFAULTS[alg_name]
+                    f.create_dataset('learning_rate', data=np.array(lr_used, dtype=np.float32))
                 os.replace(temp_file, results_filename)
 
     # === 7. POST-LOOP SUMMARY AND EXIT ===
     print("=" * 60)
     print("Experiment completed successfully")
     print(f"Results saved to: {RAW_RESULTS_DIR}/")
-    print(f"  - Per-method results: {RAW_RESULTS_DIR}/<method>_hidden_dim_<dim>.h5")
+    print(f"  - Per-method results: {RAW_RESULTS_DIR}/<method>_hidden_dim_<dim>_trial_<trial>.h5")
     print(f"Total hidden_dims tested: {len(HIDDEN_DIMS)}")
     print(f"Total algorithms: {len(methods)}")
     print("=" * 60)
