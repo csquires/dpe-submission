@@ -26,3 +26,12 @@ CLAUDE.md
 *.png
 *.sbatch
 /logs/
+**/logs/*
+notes/
+plans/
+~/
+test_*
+*.h5
+*.pdf
+*.pt
+data/*
