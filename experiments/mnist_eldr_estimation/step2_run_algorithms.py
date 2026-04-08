@@ -9,7 +9,7 @@ from src.density_ratio_estimation import BDRE, MDRE, TSM
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.models.binary_classification import make_binary_classifier
+from src.models.binary_classification import make_binary_classifier, make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
 
 
@@ -73,14 +73,14 @@ def create_estimator(method, config, device):
         return TriangularMDRE(classifier, device=device)
 
     elif method == "MultiHeadTriangularTDRE":
-        classifier_builder = lambda: make_binary_classifier(
-            name="default",
-            input_dim=input_dim
+        classifier = make_multi_head_binary_classifier(
+            input_dim=input_dim,
+            num_heads=num_waypoints - 1,
         )
         return MultiHeadTriangularTDRE(
-            classifier_builder=classifier_builder,
+            classifier=classifier,
             num_waypoints=num_waypoints,
-            device=device
+            device=device,
         )
 
     elif method == "VFM":
