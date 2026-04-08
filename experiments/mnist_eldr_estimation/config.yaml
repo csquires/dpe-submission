@@ -1,0 +1,43 @@
+# MNIST ELDR Estimation Experiment Configuration
+
+# Experimental Grid
+alphas: [0.5, 1.0, 2.0, 4.0]
+num_pairs_per_alpha: 10
+num_samples: 10000
+
+# Model Architecture
+latent_dim: 14
+
+# Flow Training Configuration
+flow_lr: 0.01
+flow_batch_size: 128
+flow_total_steps: 250000
+flow_weight_decay: 0.0001
+flow_ema_decay: 0.9999
+flow_warmup_frac: 0.05
+
+# VAE Training Configuration
+vae_lr: 0.001
+vae_epochs: 50
+vae_beta: 1.0
+vae_beta_warmup: 0
+vae_weight_decay: 0.0001
+vae_grad_clip: 1.0
+
+# Estimation Configuration
+algorithms: [TriangularMDRE, MultiHeadTriangularTDRE, VFM, TSM]
+num_waypoints: 5
+
+# Log-Density Evaluation
+log_prob_steps: 200
+
+# Directory Configuration
+ckpt_dir: "experiments/mnist_eldr_estimation/ckpt"
+data_dir: "experiments/mnist_eldr_estimation/data"
+raw_results_dir: "experiments/mnist_eldr_estimation/raw_results"
+processed_results_dir: "experiments/mnist_eldr_estimation/processed_results"
+figures_dir: "experiments/mnist_eldr_estimation/figures"
+
+# Compute Configuration
+device: "cuda"
+seed: 1729
