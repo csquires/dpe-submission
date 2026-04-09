@@ -19,7 +19,8 @@ METHODS = {
     'TriangularMDRE': 'blue',
     'MultiHeadTriangularTDRE': 'orange',
     'VFM': 'green',
-    'TSM': 'red'
+    'TSM': 'red',
+    'CTSM': 'purple'
 }
 FIGURE_SIZE = (8, 5)
 FONT_SIZE = 12
@@ -64,9 +65,9 @@ def main():
                 raise KeyError('alphas dataset missing in HDF5 file')
             alphas = f['alphas'][:]
 
-            # verify alphas shape
-            if alphas.shape != (4,):
-                print(f'warning: alphas shape is {alphas.shape}, expected (4,)')
+            # verify alphas is non-empty
+            if len(alphas) == 0:
+                raise ValueError('alphas array is empty')
 
             results['alphas'] = alphas
 

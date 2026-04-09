@@ -5,7 +5,7 @@ import os
 import torch
 import yaml
 
-from src.density_ratio_estimation import BDRE, MDRE, TSM
+from src.density_ratio_estimation import BDRE, MDRE, TSM, CTSM
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
@@ -91,6 +91,9 @@ def create_estimator(method, config, device):
 
     elif method == "TSM":
         return TSM(input_dim=input_dim, device=device)
+
+    elif method == "CTSM":
+        return CTSM(input_dim=input_dim, device=device)
 
     elif method == "BDRE":
         classifier = make_binary_classifier(

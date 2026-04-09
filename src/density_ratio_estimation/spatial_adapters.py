@@ -29,7 +29,7 @@ def make_spatial_velo_denoiser(input_dim: int, device: str = "cuda", **kwargs) -
             eps: [2.1e-3, 2.2e-3, 2.3e-3]
             lr: [1.3e-3, 1.4e-3, 1.5e-3]
             k: [20]
-            epochs: [300]
+            epochs: [1000]
             steps: [5000]
             type: ['2']
             antithetic: [True]
@@ -37,7 +37,7 @@ def make_spatial_velo_denoiser(input_dim: int, device: str = "cuda", **kwargs) -
         Selected values (midpoints where applicable):
             k: 20 - Interpolant parameter controlling gamma curvature
             eps: 2.2e-3 - Boundary epsilon for time sampling
-            n_epochs: 300 - Training epochs per network (b and eta)
+            n_epochs: 1000 - Training epochs per network (b and eta)
             hidden_dim: 256 - Hidden layer dimension for MLP networks
             batch_size: 512 - Training batch size
             lr: 1.3e-3 - Learning rate for Adam optimizer
@@ -51,7 +51,7 @@ def make_spatial_velo_denoiser(input_dim: int, device: str = "cuda", **kwargs) -
     defaults = {
         'k': 20,
         'eps': 2.2e-3,
-        'n_epochs': 300,
+        'n_epochs': 1000,
         'hidden_dim': 256,
         'batch_size': 512,
         'lr': 1.3e-3,
