@@ -19,6 +19,51 @@ from src.models.flow import VelocityMLP, sample_flow, log_prob
 from experiments.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
 
 
+def compute_log_jacobian(vae_pair, vae_global, z_global, device, chunk_size=500):
+    """log |det J| of g^{-1} = vae_pair_enc o vae_global_dec.
+
+    change-of-variables correction from per-pair flow latent space
+    to global vae latent space. computes the 14x14 jacobian column
+    by column via autograd, then takes slogdet.
+
+    args:
+        vae_pair: per-pair VAE whose encoder defines the target space
+        vae_global: global VAE whose decoder maps back to image space
+        z_global: [N, D] points in global latent space
+        device: torch device
+        chunk_size: samples per chunk for memory management
+
+    returns:
+        [N] log |det J_{g^{-1}}(z)| for each point
+    """
+    N, D = z_global.shape
+    log_dets = []
+
+    for start in range(0, N, chunk_size):
+        z_chunk = z_global[start:start + chunk_size].clone().to(device)
+        z_chunk.requires_grad_(True)
+        B = z_chunk.shape[0]
+
+        # forward: global_dec -> pair_enc
+        img = vae_global.decode(z_chunk)
+        mu, _ = vae_pair.encode(img)
+
+        # jacobian column by column
+        J = torch.zeros(B, D, D, device=device)
+        for i in range(D):
+            grad = torch.autograd.grad(
+                mu[:, i].sum(), z_chunk,
+                create_graph=False,
+                retain_graph=(i < D - 1),
+            )[0]  # [B, D]
+            J[:, i, :] = grad
+
+        log_det = torch.linalg.slogdet(J).logabsdet  # [B]
+        log_dets.append(log_det.detach().cpu())
+
+    return torch.cat(log_dets, dim=0)  # [N]
+
+
 def load_pstar_images(config, device):
     """load balanced MNIST images for p* distribution.
 
@@ -137,7 +182,12 @@ def process_pair(config, alpha_idx, pair_idx, pstar_images, device, device_str, 
             log_p1_list.append(log_prob(flow_1, z1_b, steps=config['log_prob_steps'], device=device_str).cpu())
         log_p0 = torch.cat(log_p0_list, dim=0)
         log_p1 = torch.cat(log_p1_list, dim=0)
-        true_ldrs = log_p0 - log_p1  # [N,]
+
+    # jacobian corrections for change of variables
+    # log p0_global(z) = log p_flow0(g0^{-1}(z)) + log|det J_{g0^{-1}}(z)|
+    log_jac_0 = compute_log_jacobian(vae_0, vae_global, pstar_latent, device)
+    log_jac_1 = compute_log_jacobian(vae_1, vae_global, pstar_latent, device)
+    true_ldrs = (log_p0 + log_jac_0) - (log_p1 + log_jac_1)  # [N,]
 
     # save to HDF5
     with h5py.File(output_path, 'w') as f:
