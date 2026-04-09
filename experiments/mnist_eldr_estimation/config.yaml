@@ -2,8 +2,8 @@
 
 # Experimental Grid
 alphas: [0.5, 1.0, 2.0, 4.0]
-num_pairs_per_alpha: 10
-num_samples: 10000
+num_pairs_per_alpha: 40
+num_samples: 40000
 
 # Model Architecture
 latent_dim: 14
@@ -25,8 +25,8 @@ vae_weight_decay: 0.0001
 vae_grad_clip: 1.0
 
 # Estimation Configuration
-algorithms: [TriangularMDRE, MultiHeadTriangularTDRE, VFM, TSM]
-num_waypoints: 5
+algorithms: [TriangularMDRE, MultiHeadTriangularTDRE, VFM, TSM, CTSM]
+num_waypoints: 15
 
 # Log-Density Evaluation
 log_prob_steps: 200

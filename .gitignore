@@ -35,3 +35,4 @@ test_*
 *.pdf
 *.pt
 data/*
+experiments/mnist_eldr_estimation/hpo_configs/
