@@ -36,3 +36,5 @@ test_*
 *.pt
 data/*
 experiments/mnist_eldr_estimation/hpo_configs/
+**/submit_*.sh
+**/trial_*.json
