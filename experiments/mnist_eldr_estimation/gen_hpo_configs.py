@@ -13,30 +13,25 @@ import random
 
 SEARCH_SPACES = {
     "TSM": {
-        "n_epochs":   ("log_uniform_int", 500, 5000),
-        "lr":         ("log_uniform", 1e-4, 1e-2),
-        "hidden_dim": ("choice", [128, 256, 512]),
-        "batch_size": ("choice", [256, 512, 1024]),
-        "eps":        ("log_uniform", 1e-6, 1e-3),
+        "n_epochs":   ("log_uniform_int", 750, 1500),
+        "lr":         ("log_uniform", 3e-4, 3e-3),
+        "batch_size": ("choice", [64, 128, 256]),
+        "eps":        ("log_uniform", 1e-6, 1e-4),
     },
     "CTSM": {
-        "n_epochs":   ("log_uniform_int", 500, 5000),
-        "lr":         ("log_uniform", 1e-4, 1e-2),
-        "hidden_dim": ("choice", [128, 256, 512]),
-        "batch_size": ("choice", [256, 512, 1024]),
-        "sigma":      ("log_uniform", 0.1, 10.0),
-        "eps":        ("log_uniform", 1e-4, 1e-2),
+        "n_epochs":   ("log_uniform_int", 750, 1500),
+        "lr":         ("log_uniform", 3e-4, 3e-3),
+        "batch_size": ("choice", [64, 128, 256]),
+        "sigma":      ("log_uniform", 0.3, 3.0),
+        "eps":        ("log_uniform", 3e-4, 3e-3),
     },
     "VFM": {
-        "n_epochs":          ("log_uniform_int", 500, 5000),
-        "lr":                ("log_uniform", 1e-4, 1e-2),
-        "hidden_dim":        ("choice", [128, 256, 512]),
-        "batch_size":        ("choice", [256, 512, 1024]),
-        "k":                 ("log_uniform", 1, 100),
-        "eps":               ("log_uniform", 1e-4, 1e-2),
-        "antithetic":        ("choice", [True, False]),
-        "integration_steps": ("choice", [1000, 3000, 5000]),
-        "integration_type":  ("choice", ["1", "2", "3"]),
+        "n_epochs":          ("log_uniform_int", 750, 1500),
+        "lr":                ("log_uniform", 5e-4, 3e-3),
+        "batch_size":        ("choice", [64, 128, 256]),
+        "k":                 ("choice", [10, 20, 40]),
+        "eps":               ("log_uniform", 1e-3, 5e-3),
+        "integration_steps": ("uniform_int", 500, 5000),
     },
 }
 
@@ -48,6 +43,7 @@ def sample_param(spec):
     spec: tuple with format matching SEARCH_SPACES entries
           - ("log_uniform", lo, hi): continuous log-uniform in [lo, hi]
           - ("log_uniform_int", lo, hi): log-uniform rounded to int
+          - ("uniform_int", lo, hi): uniform integer in [lo, hi]
           - ("choice", options): discrete uniform from list
 
     returns: sampled value (int, float, or object depending on spec type)
@@ -63,6 +59,10 @@ def sample_param(spec):
         _, lo, hi = spec
         log_val = random.uniform(math.log(lo), math.log(hi))
         return round(math.exp(log_val))
+
+    elif dist_type == "uniform_int":
+        _, lo, hi = spec
+        return random.randint(lo, hi)
 
     elif dist_type == "choice":
         _, options = spec
