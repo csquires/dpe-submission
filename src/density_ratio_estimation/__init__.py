@@ -8,3 +8,4 @@ from src.density_ratio_estimation.triangular_tdre import TriangularTDRE
 from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.fmdre import FMDRE
+from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
