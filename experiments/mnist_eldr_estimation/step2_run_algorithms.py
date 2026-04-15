@@ -13,6 +13,29 @@ from src.models.binary_classification import make_binary_classifier, make_multi_
 from src.models.multiclass_classification import make_multiclass_classifier
 
 
+# per-alpha hyperparameters from HPO (round 2 filtered median)
+HPO_PARAMS = {
+    "TSM": {
+        0: {"n_epochs": 1300, "lr": 1.27e-3, "batch_size": 128, "eps": 5.06e-6},
+        1: {"n_epochs": 1412, "lr": 6.84e-4, "batch_size": 128, "eps": 2.40e-6},
+        2: {"n_epochs": 1445, "lr": 6.21e-4, "batch_size": 256, "eps": 1.66e-5},
+        3: {"n_epochs": 1047, "lr": 4.18e-4, "batch_size": 128, "eps": 1.52e-5},
+    },
+    "CTSM": {
+        0: {"n_epochs": 1030, "lr": 1.51e-3, "batch_size": 128, "sigma": 0.518, "eps": 1.82e-3},
+        1: {"n_epochs": 1289, "lr": 2.58e-3, "batch_size": 128, "sigma": 0.575, "eps": 6.27e-4},
+        2: {"n_epochs": 1152, "lr": 8.96e-4, "batch_size": 64, "sigma": 0.687, "eps": 2.53e-3},
+        3: {"n_epochs": 1039, "lr": 1.45e-3, "batch_size": 128, "sigma": 1.156, "eps": 6.09e-4},
+    },
+    "VFM": {
+        0: {"n_epochs": 1057, "lr": 7.74e-4, "batch_size": 256, "k": 40, "eps": 1.01e-3, "integration_steps": 1373},
+        1: {"n_epochs": 1125, "lr": 8.64e-4, "batch_size": 256, "k": 10, "eps": 1.40e-3, "integration_steps": 1872},
+        2: {"n_epochs": 1203, "lr": 8.32e-4, "batch_size": 256, "k": 10, "eps": 1.23e-3, "integration_steps": 1144},
+        3: {"n_epochs": 965, "lr": 6.69e-4, "batch_size": 128, "k": 20, "eps": 2.64e-3, "integration_steps": 3378},
+    },
+}
+
+
 def parse_args(args=None):
     """parse cli arguments."""
     parser = argparse.ArgumentParser()
@@ -59,8 +82,12 @@ def load_existing_results(results_filename):
     return existing_results
 
 
-def create_estimator(method, config, device):
-    """instantiate estimator for given method."""
+def create_estimator(method, config, device, alpha_idx=0):
+    """
+    instantiate estimator for given method.
+
+    methods with HPO_PARAMS entries use per-alpha hyperparameters.
+    """
     input_dim = config["latent_dim"]
     num_waypoints = config["num_waypoints"]
 
@@ -84,16 +111,16 @@ def create_estimator(method, config, device):
         )
 
     elif method == "VFM":
-        return make_spatial_velo_denoiser(
-            input_dim=input_dim,
-            device=device
-        )
+        hp = HPO_PARAMS["VFM"][alpha_idx]
+        return make_spatial_velo_denoiser(input_dim=input_dim, device=device, **hp)
 
     elif method == "TSM":
-        return TSM(input_dim=input_dim, device=device)
+        hp = HPO_PARAMS["TSM"][alpha_idx]
+        return TSM(input_dim=input_dim, device=device, **hp)
 
     elif method == "CTSM":
-        return CTSM(input_dim=input_dim, device=device)
+        hp = HPO_PARAMS["CTSM"][alpha_idx]
+        return CTSM(input_dim=input_dim, device=device, **hp)
 
     elif method == "BDRE":
         classifier = make_binary_classifier(
@@ -114,7 +141,7 @@ def create_estimator(method, config, device):
         raise ValueError(f"Unknown method: {method}")
 
 
-def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, config, device, force=False):
+def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, config, device, alpha_idx=0, force=False):
     """run single method, save results, return whether method ran."""
     dataset_key = f"est_ldrs_{method}"
     existing_results = load_existing_results(results_filename)
@@ -126,7 +153,7 @@ def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, 
     print(f"Running {method}...")
 
     # instantiate and fit estimator
-    estimator = create_estimator(method, config, device)
+    estimator = create_estimator(method, config, device, alpha_idx=alpha_idx)
 
     # triangular methods require pstar during fit
     if method in ["TriangularMDRE", "MultiHeadTriangularTDRE"]:
@@ -186,6 +213,7 @@ def main():
             results_filename,
             config,
             DEVICE,
+            alpha_idx=args.alpha_idx,
             force=args.force
         )
 
