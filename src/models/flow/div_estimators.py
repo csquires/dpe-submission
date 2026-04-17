@@ -87,7 +87,7 @@ def hutch_div(
         return (grad_z * eps).sum()  # scalar
 
     # vmap over batch with independent noise per sample
-    return torch.vmap(hutch_single)(x)  # [B]
+    return torch.vmap(hutch_single, randomness='different')(x)  # [B]
 
 
 def div_chunked(

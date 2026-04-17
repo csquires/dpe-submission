@@ -21,7 +21,7 @@ class FMDRE(DensityRatioEstimator):
     flow matching, then estimates log density ratios via ratio ode integration.
 
     hyperparameters control training dynamics (n_epochs, batch_size, lr) and
-    inference precision (integration_steps, eps, chunk_size).
+    inference precision (integration_steps, eps).
     """
 
     def __init__(
@@ -36,7 +36,6 @@ class FMDRE(DensityRatioEstimator):
         device: Optional[str] = None,
         integration_steps: int = 10000,
         div_method: str = "exact",
-        chunk_size: int = 500,
         verbose: bool = False,
         log_every: int = 100,
     ) -> None:
@@ -60,7 +59,6 @@ class FMDRE(DensityRatioEstimator):
             device: target device ('cuda' or 'cpu'); auto-detects if None
             integration_steps: number of ode integration steps (default 10000)
             div_method: divergence estimation method (default 'exact')
-            chunk_size: batch chunking for memory efficiency (default 500)
             verbose: print training progress (default False)
             log_every: epoch interval for verbose logging (default 100)
         """
@@ -73,7 +71,6 @@ class FMDRE(DensityRatioEstimator):
         self.eps = eps
         self.integration_steps = integration_steps
         self.div_method = div_method
-        self.chunk_size = chunk_size
         self.verbose = verbose
         self.log_every = log_every
 
@@ -152,7 +149,6 @@ class FMDRE(DensityRatioEstimator):
             eps=self.eps,
             device=str(self.device),
             div_method=self.div_method,
-            chunk_size=self.chunk_size,
         )
 
         return ldr.detach().cpu()

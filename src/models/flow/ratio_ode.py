@@ -33,7 +33,6 @@ def ratio_ode(
     eps: float = 0.01,
     device: str | None = None,
     div_method: str = "exact",
-    chunk_size: int = 500,
 ) -> Tensor:
     """
     integrate the ratio ODE backward from t=1 to t=0 to compute log density ratios.
@@ -65,34 +64,21 @@ def ratio_ode(
                              "hutch_gaussian" (hutchinson with gaussian noise)
                              "hutch_rademacher" (hutchinson with rademacher noise)
 
-        chunk_size: batch size for divergence chunking, memory efficiency (default 500)
-
     returns:
         [B] tensor of log density ratios log(p(x|c0) / p(x|c1)) at query points.
     """
-    # import divergence functions. note: these should be implemented in div_estimators.py
-    try:
-        from src.models.flow.div_estimators import exact_div, hutch_div, div_chunked
-    except ImportError:
-        raise ImportError(
-            "div_estimators module not found. "
-            "ensure src/models/flow/div_estimators.py exists with "
-            "exact_div, hutch_div, div_chunked functions."
-        )
+    from src.models.flow.div_estimators import exact_div, hutch_div
 
-    # device inference and initialization
     if device is None:
         device = xs.device.type if hasattr(xs.device, 'type') else str(xs.device)
 
     B, D = xs.shape
-    x_t = xs.clone().to(device)  # [B, D] current spatial state, evolves backward
-    log_r = torch.zeros(B, device=device, dtype=xs.dtype)  # [B] accumulated ratio
+    x_t = xs.clone().to(device)
+    log_r = torch.zeros(B, device=device, dtype=xs.dtype)
 
-    # time grid from 1-eps down to eps (backward integration)
     t_vals = torch.linspace(1.0 - eps, eps, steps, device=device, dtype=xs.dtype)
-    dt = t_vals[1] - t_vals[0]  # will be negative since going backward
+    dt = t_vals[1] - t_vals[0]
 
-    # set model to evaluation mode
     model.eval()
 
     # select divergence function once before loop
@@ -108,57 +94,39 @@ def ratio_ode(
             f"must be 'exact', 'hutch_gaussian', or 'hutch_rademacher'."
         )
 
-    # time stepping loop: integrate from t=1-eps down to t=eps
     with torch.no_grad():
         for i in range(steps - 1):
             t_i = t_vals[i].item()
 
-            # prepare batch tensors for both conditions
-            t_batch = torch.full((B, 1), t_i, device=device, dtype=xs.dtype)  # [B, 1]
-            c0 = torch.zeros(B, 1, device=device, dtype=xs.dtype)  # [B, 1] numerator
-            c1 = torch.ones(B, 1, device=device, dtype=xs.dtype)   # [B, 1] denominator
+            t_batch = torch.full((B, 1), t_i, device=device, dtype=xs.dtype)
+            c0 = torch.zeros(B, 1, device=device, dtype=xs.dtype)
+            c1 = torch.ones(B, 1, device=device, dtype=xs.dtype)
 
-            # evaluate model at both conditions
-            v0, s0 = model(t_batch, x_t, c0)  # [B, D], [B, D]
-            v1, s1 = model(t_batch, x_t, c1)  # [B, D], [B, D]
+            v0, s0 = model(t_batch, x_t, c0)
+            v1, s1 = model(t_batch, x_t, c1)
 
-            # compute velocity difference
-            v_diff = v1 - v0  # [B, D]
+            v_diff = v1 - v0
 
-            # define single-sample vecfield closure for divergence computation
+            # single-sample closure for divergence: y [D] -> v_diff [D]
             def vecfield(y: Tensor) -> Tensor:
-                """
-                vecfield for divergence estimation.
+                y_b = y.unsqueeze(0)
+                t_b = t_batch[:1]
+                c0_b = c0[:1]
+                c1_b = c1[:1]
+                v0_s = model(t_b, y_b, c0_b)[0].squeeze(0)
+                v1_s = model(t_b, y_b, c1_b)[0].squeeze(0)
+                return v1_s - v0_s
 
-                single-sample closure: y is [D] (single sample).
-                unsqueeze for batch model calls, squeeze output.
-                computes v_diff = u_t(y|c1) - u_t(y|c0).
-                """
-                y_b = y.unsqueeze(0)  # [1, D] unsqueeze for batch
-                t_b = t_batch[:1]     # [1, 1]
-                c0_b = c0[:1]         # [1, 1]
-                c1_b = c1[:1]         # [1, 1]
+            div = div_fn(vecfield, x_t)
 
-                # model calls return (velocity, score)
-                v0_s = model(t_b, y_b, c0_b)[0].squeeze(0)  # [D]
-                v1_s = model(t_b, y_b, c1_b)[0].squeeze(0)  # [D]
+            correction = (v_diff * s1).sum(dim=-1)
 
-                return v1_s - v0_s  # [D]
+            d_log_r = div + correction
+            log_r = log_r + d_log_r * abs(dt)
 
-            # estimate divergence with chunking
-            div = div_chunked(div_fn, vecfield, x_t, chunk_size)  # [B]
+            x_t = x_t + v0 * dt
 
-            # compute correction term: [u_t(x|c1) - u_t(x|c0)]^T s_t(x|c1)
-            correction = (v_diff * s1).sum(dim=-1)  # [B] dot product along D
-
-            # accumulate log ratio
-            d_log_r = div + correction  # [B]
-            log_r = log_r + d_log_r * abs(dt)  # use abs(dt) for backward integration
-
-            # update spatial state via backward Euler
-            x_t = x_t + v0 * dt  # [B, D] dt < 0, so moves backward along v0
-
-    return log_r  # [B]
+    return log_r
 
 
 def ratio_ode_s2(
@@ -168,85 +136,52 @@ def ratio_ode_s2(
     eps: float = 0.01,
     device: str | None = None,
     div_method: str = "exact",
-    chunk_size: int = 500,
     uncond_cond: float = -1.0,
     warn_uncond: bool = True,
 ) -> Tensor:
     """
-    integrate the ratio ODE backward from t=1 to t=0 to compute log density ratios in the s2 setting.
+    integrate the ratio ODE backward from t=1 to t=0 in the s2 setting.
 
-    the s2 setting uses the unconditional velocity field u_t(x|c_f) as the simulation trajectory
-    while all three ODE terms survive: divergence, numerator correction, and denominator correction.
+    the s2 setting uses the unconditional velocity field u_t(x|c_f) as the
+    simulation trajectory while all three ODE terms survive:
 
-    computes log(p(x|c0) / p(x|c1)) by backward integration where:
       d/dt log r_t = div[u_t(x|c1) - u_t(x|c0)]
                    + [u_t(x|c_f) - u_t(x|c0)]^T s_t(x|c0)
                    + [u_t(x|c1) - u_t(x|c_f)]^T s_t(x|c1)
 
     spatial state evolves under the unconditional field u_t(x|c_f).
 
-    integration boundary condition: log r_0 = 0 (shared prior).
-    goal: compute log r_1 = integral_0^1 (div + corr_num + corr_den) dt.
-
     reference: Antipov et al., arXiv:2602.24201, Section 4.2.
 
     args:
         model: nn.Module with forward(t, x, c) -> (velocity, score) tuple.
-               t: [B, 1] time values
-               x: [B, D] positions
-               c: [B, 1] condition tensor
-               returns: (velocity [B, D], score [B, D])
-
-        xs: [B, D] query points at t=1 (reference time)
-
-        steps: number of integration steps from t=1-eps to t=eps (default 10000)
-
-        eps: small time offset from boundaries to avoid singularities (default 0.01)
-
-        device: optional device override. if none, infers from xs (default none)
-
-        div_method: divergence estimation method (default "exact")
-                    options: "exact" (backprop, slow but accurate)
-                             "hutch_gaussian" (hutchinson with gaussian noise)
-                             "hutch_rademacher" (hutchinson with rademacher noise)
-
-        chunk_size: batch size for divergence chunking, memory efficiency (default 500)
-
+        xs: [B, D] query points at t=1
+        steps: number of integration steps (default 10000)
+        eps: time boundary offset (default 0.01)
+        device: optional device override
+        div_method: "exact", "hutch_gaussian", or "hutch_rademacher"
         uncond_cond: condition value for unconditional field (default -1.0)
-
-        warn_uncond: if true, emit warning about CFG dropout requirement (default true)
+        warn_uncond: emit warning about CFG dropout requirement (default true)
 
     returns:
-        [B] tensor of log density ratios log(p(x|c0) / p(x|c1)) at query points.
+        [B] log density ratios log(p(x|c0) / p(x|c1)).
 
-    cost: 3 velocity + 2 score evaluations per step (plus divergence computation).
+    cost: 3 velocity + 2 score evaluations per step (plus divergence).
     """
-    # import divergence functions. note: these should be implemented in div_estimators.py
-    try:
-        from src.models.flow.div_estimators import exact_div, hutch_div, div_chunked
-    except ImportError:
-        raise ImportError(
-            "div_estimators module not found. "
-            "ensure src/models/flow/div_estimators.py exists with "
-            "exact_div, hutch_div, div_chunked functions."
-        )
+    from src.models.flow.div_estimators import exact_div, hutch_div
 
-    # device inference and initialization
     if device is None:
         device = xs.device.type if hasattr(xs.device, 'type') else str(xs.device)
 
     B, D = xs.shape
-    x_t = xs.clone().to(device)  # [B, D] current spatial state, evolves backward
-    log_r = torch.zeros(B, device=device, dtype=xs.dtype)  # [B] accumulated ratio
+    x_t = xs.clone().to(device)
+    log_r = torch.zeros(B, device=device, dtype=xs.dtype)
 
-    # time grid from 1-eps down to eps (backward integration)
     t_vals = torch.linspace(1.0 - eps, eps, steps, device=device, dtype=xs.dtype)
-    dt = t_vals[1] - t_vals[0]  # will be negative since going backward
+    dt = t_vals[1] - t_vals[0]
 
-    # set model to evaluation mode
     model.eval()
 
-    # select divergence function once before loop
     if div_method == "exact":
         div_fn = exact_div
     elif div_method == "hutch_gaussian":
@@ -259,7 +194,6 @@ def ratio_ode_s2(
             f"must be 'exact', 'hutch_gaussian', or 'hutch_rademacher'."
         )
 
-    # early warning about CFG dropout requirement
     if warn_uncond:
         warnings.warn(
             "ratio_ode_s2 expects a model trained with CFG dropout (p_uncond > 0). "
@@ -267,58 +201,39 @@ def ratio_ode_s2(
             stacklevel=2
         )
 
-    # time stepping loop: integrate from t=1-eps down to t=eps
     with torch.no_grad():
         for i in range(steps - 1):
             t_i = t_vals[i].item()
 
-            # prepare batch tensors for conditions
-            t_batch = torch.full((B, 1), t_i, device=device, dtype=xs.dtype)  # [B, 1]
-            c0 = torch.zeros(B, 1, device=device, dtype=xs.dtype)  # [B, 1] numerator
-            c1 = torch.ones(B, 1, device=device, dtype=xs.dtype)   # [B, 1] denominator
-            cf = torch.full((B, 1), uncond_cond, device=device, dtype=xs.dtype)  # [B, 1] unconditional
+            t_batch = torch.full((B, 1), t_i, device=device, dtype=xs.dtype)
+            c0 = torch.zeros(B, 1, device=device, dtype=xs.dtype)
+            c1 = torch.ones(B, 1, device=device, dtype=xs.dtype)
+            cf = torch.full((B, 1), uncond_cond, device=device, dtype=xs.dtype)
 
-            # evaluate model at all three conditions (3 evaluations)
-            v0, s0 = model(t_batch, x_t, c0)  # [B, D], [B, D] numerator
-            v1, s1 = model(t_batch, x_t, c1)  # [B, D], [B, D] denominator
-            vf, _  = model(t_batch, x_t, cf)  # [B, D], [B, D] unconditional (score unused)
+            v0, s0 = model(t_batch, x_t, c0)
+            v1, s1 = model(t_batch, x_t, c1)
+            vf, _  = model(t_batch, x_t, cf)
 
-            # compute velocity difference
-            v_diff = v1 - v0  # [B, D]
+            v_diff = v1 - v0
 
-            # define single-sample vecfield closure for divergence computation
             def vecfield(y: Tensor) -> Tensor:
-                """
-                vecfield for divergence estimation.
+                y_b = y.unsqueeze(0)
+                t_b = t_batch[:1]
+                c0_b = c0[:1]
+                c1_b = c1[:1]
+                v0_s = model(t_b, y_b, c0_b)[0].squeeze(0)
+                v1_s = model(t_b, y_b, c1_b)[0].squeeze(0)
+                return v1_s - v0_s
 
-                single-sample closure: y is [D] (single sample).
-                unsqueeze for batch model calls, squeeze output.
-                computes v_diff = u_t(y|c1) - u_t(y|c0).
-                """
-                y_b = y.unsqueeze(0)  # [1, D] unsqueeze for batch
-                t_b = t_batch[:1]     # [1, 1]
-                c0_b = c0[:1]         # [1, 1]
-                c1_b = c1[:1]         # [1, 1]
+            div = div_fn(vecfield, x_t)
 
-                # model calls return (velocity, score)
-                v0_s = model(t_b, y_b, c0_b)[0].squeeze(0)  # [D]
-                v1_s = model(t_b, y_b, c1_b)[0].squeeze(0)  # [D]
+            corr_num = (vf - v0) * s0
+            corr_den = (v1 - vf) * s1
+            correction = (corr_num + corr_den).sum(dim=-1)
 
-                return v1_s - v0_s  # [D]
+            d_log_r = div + correction
+            log_r = log_r + d_log_r * abs(dt)
 
-            # estimate divergence with chunking
-            div = div_chunked(div_fn, vecfield, x_t, chunk_size)  # [B]
+            x_t = x_t + vf * dt
 
-            # compute two correction terms
-            corr_num = (vf - v0) * s0  # [B, D] numerator correction
-            corr_den = (v1 - vf) * s1  # [B, D] denominator correction
-            correction = (corr_num + corr_den).sum(dim=-1)  # [B] sum both
-
-            # accumulate log ratio
-            d_log_r = div + correction  # [B]
-            log_r = log_r + d_log_r * abs(dt)  # use abs(dt) for backward integration
-
-            # update spatial state via backward Euler under unconditional field
-            x_t = x_t + vf * dt  # [B, D] dt < 0, so moves backward along vf
-
-    return log_r  # [B]
+    return log_r
