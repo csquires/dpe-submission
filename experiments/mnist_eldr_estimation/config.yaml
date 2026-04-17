@@ -2,7 +2,7 @@
 
 # Experimental Grid
 alphas: [0.5, 1.0, 2.0, 4.0]
-num_pairs_per_alpha: 40
+num_pairs_per_alpha: 10
 num_samples: 40000
 
 # Model Architecture
