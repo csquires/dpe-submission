@@ -36,6 +36,7 @@ def main():
     mae_by_method = {method: np.zeros(n_alphas, dtype=np.float32) for method in algorithms}
     std_by_method = {method: np.zeros(n_alphas, dtype=np.float32) for method in algorithms}
     per_pair_by_method = {method: np.zeros((n_alphas, n_pairs), dtype=np.float32) for method in algorithms}
+    kl_per_pair = np.full((n_alphas, n_pairs), np.nan, dtype=np.float32)
 
     # compute mae for each (alpha, pair) combination
     for alpha_idx in range(n_alphas):
@@ -59,6 +60,8 @@ def main():
             try:
                 with h5py.File(data_file, 'r') as f:
                     true_ldrs = f['true_ldrs'][:]
+                    if 'kl_weights' in f:
+                        kl_per_pair[alpha_idx, pair_idx] = float(f['kl_weights'][()])
             except Exception as e:
                 print(f'warning: error reading {data_file}: {e}')
                 for method in algorithms:
@@ -101,6 +104,10 @@ def main():
         mae_by_method[method] = np.array(mae_list, dtype=np.float32)
         std_by_method[method] = np.array(std_list, dtype=np.float32)
 
+    # aggregate per-pair kl to per-alpha statistics
+    kl_mean = np.nanmean(kl_per_pair, axis=1)
+    kl_std = np.nanstd(kl_per_pair, axis=1, ddof=1)
+
     # validation before save
     for method in algorithms:
         mae_arr = mae_by_method[method]
@@ -127,6 +134,11 @@ def main():
             out_file.create_dataset(f'std_{method}', data=std_by_method[method])
             out_file.create_dataset(f'per_pair_{method}', data=per_pair_by_method[method])
 
+        # store kl divergence data
+        out_file.create_dataset('kl_per_pair', data=kl_per_pair)
+        out_file.create_dataset('kl_mean', data=kl_mean)
+        out_file.create_dataset('kl_std', data=kl_std)
+
     # print summary report
     print("\n" + "="*80)
     print("MNIST ELDR Estimation: Step 3 Results Processing Complete")
@@ -142,6 +154,9 @@ def main():
         mae_str = ', '.join([f'{x:.4f}' for x in mae_arr])
         std_str = ', '.join([f'{x:.4f}' for x in std_arr])
         print(f"  {method:25s}: MAE=[{mae_str}], Std=[{std_str}]")
+    print(f"\nKL(w, w') per alpha:")
+    for i, alpha in enumerate(alphas):
+        print(f"  alpha={alpha:.1f}: mean={kl_mean[i]:.4f}, std={kl_std[i]:.4f}")
     print("="*80 + "\n")
 
 

@@ -13,6 +13,7 @@ from experiments.utils.mnist_imbalance import (
     sample_dirichlet_weights,
     subsample_mnist,
     get_mnist_dataset,
+    invert_weights,
 )
 
 
@@ -114,9 +115,9 @@ def train_per_pair_vae_flow(config, alpha_idx, pair_idx, device, force):
     num_pairs = config["num_pairs_per_alpha"]
 
     # step 1: generate and save weights
-    weights_arr = sample_dirichlet_weights(alpha, n_draws=2, seed=pair_seed)
+    weights_arr = sample_dirichlet_weights(alpha, n_draws=1, seed=pair_seed)
     w0 = weights_arr[0]  # [10,]
-    w1 = weights_arr[1]  # [10,]
+    w1 = invert_weights(w0)  # [10,]
 
     weights_ckpt = {
         "w0": torch.from_numpy(w0).float(),

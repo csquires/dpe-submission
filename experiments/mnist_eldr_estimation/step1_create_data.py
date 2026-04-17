@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from src.models.vae import MNISTVAE
 from src.models.flow import VelocityMLP, sample_flow, log_prob
-from experiments.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
+from experiments.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist, weight_kl
 
 
 def compute_log_jacobian(vae_pair, vae_global, z_global, device, chunk_size=500):
@@ -197,6 +197,8 @@ def process_pair(config, alpha_idx, pair_idx, pstar_images, device, device_str, 
         f.create_dataset('true_ldrs', data=true_ldrs.numpy(), dtype=np.float32)
         f.create_dataset('w0', data=weights['w0'].cpu().numpy(), dtype=np.float32)
         f.create_dataset('w1', data=weights['w1'].cpu().numpy(), dtype=np.float32)
+        kl_val = weight_kl(weights['w0'].cpu().numpy(), weights['w1'].cpu().numpy())
+        f.create_dataset('kl_weights', data=float(kl_val))
 
     print(f"saved {output_path}")
 

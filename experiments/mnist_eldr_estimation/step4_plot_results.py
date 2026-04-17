@@ -71,6 +71,10 @@ def main():
 
             results['alphas'] = alphas
 
+            # load kl_mean if present
+            kl_mean = f['kl_mean'][:] if 'kl_mean' in f else None
+            results['kl_mean'] = kl_mean
+
             # load method results
             for method in METHODS.keys():
                 mae_key = f'mae_{method}'
@@ -116,6 +120,22 @@ def main():
     ax.set_title('Log Density Ratio MAE vs Alpha', fontsize=FONT_SIZE)
     ax.legend(loc='best', fontsize=FONT_SIZE)
     ax.grid(True, alpha=0.3)
+
+    if results.get('kl_mean') is not None and not np.any(np.isnan(results['kl_mean'])):
+        kl_mean = results['kl_mean']
+        sort_idx = np.argsort(alphas)
+        alphas_sorted = alphas[sort_idx]
+        kl_sorted = kl_mean[sort_idx]
+
+        if np.all(np.diff(kl_sorted) < 0):
+            def alpha_to_kl(a):
+                return np.interp(a, alphas_sorted, kl_sorted)
+
+            def kl_to_alpha(k):
+                return np.interp(k, kl_sorted[::-1], alphas_sorted[::-1])
+
+            sec_ax = ax.secondary_xaxis('top', functions=(alpha_to_kl, kl_to_alpha))
+            sec_ax.set_xlabel('Mean KL(w, w\')', fontsize=FONT_SIZE)
 
     # save figures
     pdf_path = os.path.join(figures_dir, 'mae_vs_alpha.pdf')
