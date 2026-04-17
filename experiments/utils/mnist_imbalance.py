@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torchvision.datasets
 import torchvision.transforms as transforms
+from scipy.special import xlogy
 
 
 def sample_dirichlet_weights(alpha: float, n_draws: int, seed: int | None = None) -> np.ndarray:
@@ -97,3 +98,66 @@ def get_mnist_dataset(root: str = './data', train: bool = True, download: bool =
     """
     transform = transforms.ToTensor()
     return torchvision.datasets.MNIST(root, train=train, download=download, transform=transform)
+
+
+def invert_weights(w: np.ndarray) -> np.ndarray:
+    """
+    compute reciprocal-normalized weights w'_i = w_i^{-1} / sum_j w_j^{-1}.
+
+    args:
+        w: [K] or [n, K] numpy array of class weights
+
+    returns:
+        same shape as input, each row sums to 1.0
+
+    procedure:
+        record if 1D. reshape to [1, K] if needed.
+        floor w at epsilon=1e-15.
+        compute reciprocals and normalize row-wise.
+        squeeze back to original shape if 1D.
+    """
+    is_1d = (w.ndim == 1)
+    if is_1d:
+        w = w.reshape(1, -1)
+
+    w_safe = np.maximum(w, 1e-15)
+    recip = 1.0 / w_safe
+    result = recip / recip.sum(axis=-1, keepdims=True)
+
+    if is_1d:
+        result = result.squeeze(axis=0)
+
+    return result
+
+
+def weight_kl(w: np.ndarray, w_prime: np.ndarray) -> float | np.ndarray:
+    """
+    compute KL divergence between categorical distributions.
+
+    KL(w || w') = sum_i w_i * log(w_i / w'_i)
+
+    args:
+        w: [K] or [n, K] numpy array of target weights
+        w_prime: [K] or [n, K] numpy array of model weights
+
+    returns:
+        float if inputs are 1D, [n] array if 2D
+
+    procedure:
+        record if 1D. reshape to [1, K] if needed.
+        compute ratio with clipped denominator.
+        use xlogy for 0*log(0) = 0 handling.
+        squeeze to scalar if 1D.
+    """
+    is_1d = (w.ndim == 1)
+    if is_1d:
+        w = w.reshape(1, -1)
+        w_prime = w_prime.reshape(1, -1)
+
+    ratio = w / np.maximum(w_prime, 1e-15)
+    kl = np.sum(xlogy(w, ratio), axis=-1)
+
+    if is_1d:
+        return float(kl[0])
+
+    return kl
