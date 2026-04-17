@@ -96,7 +96,7 @@ def main():
     seed = config["seed"]
 
     # pairs to inspect per alpha
-    pairs_to_show = [0, 5]
+    pairs_to_show = list(range(config["num_pairs_per_alpha"]))
     n_imgs = 8  # images per row
 
     dataset = get_mnist_dataset(root="./data", train=True)
