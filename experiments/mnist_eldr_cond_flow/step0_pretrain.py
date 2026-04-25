@@ -99,7 +99,6 @@ def train_cond_flow_pipeline(config: dict, device: str, force: bool) -> None:
 		latent_dim=config["latent_dim"],
 		num_classes=10,
 		hidden_dim=config["cond_flow_hidden_dim"],
-		embed_dim=config["cond_flow_embed_dim"],
 	)
 
 	# checkpoint path

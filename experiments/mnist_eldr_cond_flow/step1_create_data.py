@@ -279,7 +279,6 @@ def main():
         latent_dim=config['latent_dim'],
         num_classes=10,
         hidden_dim=config['cond_flow_hidden_dim'],
-        embed_dim=config['cond_flow_embed_dim']
     )
     cond_flow.load_state_dict(torch.load(
         f"{ckpt_dir}/cond_flow.pt", map_location='cpu'
