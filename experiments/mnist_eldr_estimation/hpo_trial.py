@@ -18,12 +18,16 @@ import yaml
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.ctsm import CTSM
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from src.density_ratio_estimation.fmdre import FMDRE
+from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
+from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
+from src.models.binary_classification import make_multi_head_binary_classifier
 
 
 def parse_args():
     """parse cli arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", type=str, required=True, choices=["TSM", "CTSM", "VFM"])
+    parser.add_argument("--method", type=str, required=True, choices=["TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", "MHTTDRE"])
     parser.add_argument("--config-file", type=str, required=True)
     parser.add_argument("--eval-pairs", type=str, default="0:0,1:0,2:0,3:0")
     parser.add_argument("--output-dir", type=str, required=True)
@@ -82,15 +86,16 @@ def load_pair_data(data_dir, alpha_idx, pair_idx, device):
     }
 
 
-def create_estimator(method, hyperparams, input_dim, device):
+def create_estimator(method, hyperparams, input_dim, device, num_waypoints):
     """
     create estimator instance for given method.
 
     Args:
-        method: one of "TSM", "CTSM", "VFM"
+        method: one of "TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", "MHTTDRE"
         hyperparams: dict of hyperparameters
         input_dim: input dimensionality
         device: torch device
+        num_waypoints: number of waypoints (required for MHTTDRE)
 
     Returns:
         estimator instance
@@ -101,22 +106,41 @@ def create_estimator(method, hyperparams, input_dim, device):
         return CTSM(input_dim=input_dim, device=device, **hyperparams)
     elif method == "VFM":
         return make_spatial_velo_denoiser(input_dim=input_dim, device=device, **hyperparams)
+    elif method == "FMDRE":
+        return FMDRE(input_dim=input_dim, device=device, **hyperparams)
+    elif method == "FMDRE_S2":
+        return FMDRE_S2(input_dim=input_dim, device=device, **hyperparams)
+    elif method == "MHTTDRE":
+        classifier = make_multi_head_binary_classifier(
+            input_dim=input_dim,
+            num_heads=num_waypoints - 1,
+            **hyperparams,
+        )
+        return MultiHeadTriangularTDRE(
+            classifier=classifier,
+            num_waypoints=num_waypoints,
+            device=device,
+        )
     else:
         raise ValueError(f"Unknown method: {method}")
 
 
-def eval_pair(estimator, data):
+def eval_pair(estimator, data, method):
     """
     fit estimator on p0/p1, predict on pstar, return mae.
 
     Args:
         estimator: density ratio estimator
         data: dict with keys pstar, p0, p1, true_ldrs
+        method: method name (for MHTTDRE special case)
 
     Returns:
         mae as float
     """
-    estimator.fit(data["p0"], data["p1"])
+    if method == "MHTTDRE":
+        estimator.fit(data["p0"], data["p1"], data["pstar"])
+    else:
+        estimator.fit(data["p0"], data["p1"])
     est = estimator.predict_ldr(data["pstar"])
     mae = torch.mean(torch.abs(est.cpu() - data["true_ldrs"].cpu())).item()
     return mae
@@ -137,6 +161,7 @@ def main():
     data_dir = exp_config["data_dir"]
     input_dim = exp_config["latent_dim"]
     device = exp_config["device"]
+    num_waypoints = exp_config["num_waypoints"]
 
     # load trial config
     with open(args.config_file, "r") as f:
@@ -157,10 +182,10 @@ def main():
         data = load_pair_data(data_dir, alpha_idx, pair_idx, device)
 
         # create fresh estimator
-        estimator = create_estimator(args.method, hyperparams, input_dim, device)
+        estimator = create_estimator(args.method, hyperparams, input_dim, device, num_waypoints)
 
         # compute mae
-        mae = eval_pair(estimator, data)
+        mae = eval_pair(estimator, data, args.method)
 
         print(f"pair ({alpha_idx},{pair_idx}): MAE={mae:.4f}")
         per_pair_mae[f"{alpha_idx}:{pair_idx}"] = mae

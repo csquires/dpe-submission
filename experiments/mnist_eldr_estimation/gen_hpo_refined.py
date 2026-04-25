@@ -43,6 +43,32 @@ PARAM_TYPES = {
         "eps": "log_uniform",
         "integration_steps": "uniform_int",
     },
+    "FMDRE": {
+        "n_epochs": "uniform_int",
+        "lr": "log_uniform",
+        "batch_size": "choice",
+        "eps": "log_uniform",
+        "integration_steps": "uniform_int",
+        "hidden_dim": "choice",
+        "score_weight": "log_uniform",
+    },
+    "FMDRE_S2": {
+        "n_epochs": "uniform_int",
+        "lr": "log_uniform",
+        "batch_size": "choice",
+        "eps": "log_uniform",
+        "integration_steps": "uniform_int",
+        "hidden_dim": "choice",
+        "score_weight": "log_uniform",
+        "p_uncond": "uniform",
+    },
+    "MHTTDRE": {
+        "learning_rate": "log_uniform",
+        "num_epochs": "uniform_int",
+        "hidden_dim": "choice",
+        "head_dim": "choice",
+        "num_shared_layers": "choice",
+    },
 }
 
 
@@ -83,6 +109,12 @@ def sample_from_range(values, param_type):
         if lo == hi:
             return lo
         return math.exp(random.uniform(math.log(lo), math.log(hi)))
+
+    elif param_type == "uniform":
+        lo, hi = min(values), max(values)
+        if lo == hi:
+            return lo
+        return random.uniform(lo, hi)
 
     elif param_type == "uniform_int":
         lo, hi = min(values), max(values)
@@ -127,7 +159,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description="generate refined hpo configs")
     parser.add_argument("--method", type=str, required=True,
-                        choices=["TSM", "CTSM", "VFM"])
+                        choices=["TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", "MHTTDRE"])
     parser.add_argument("--results-dir", type=str, required=True,
                         help="directory with round-1 results (contains TSM/, CTSM/, VFM/)")
     parser.add_argument("--output-dir", type=str, required=True,
@@ -140,7 +172,7 @@ def main():
                         help="single alpha index to generate for (default: all)")
     parser.add_argument("--num-eval-pairs", type=int, default=10,
                         help="number of pairs per alpha to evaluate on (sampled w/o replacement)")
-    parser.add_argument("--total-pairs", type=int, default=40,
+    parser.add_argument("--total-pairs", type=int, default=10,
                         help="total available pairs per alpha")
     args = parser.parse_args()
 
