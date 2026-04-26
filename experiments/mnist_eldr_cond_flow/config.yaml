@@ -1,0 +1,44 @@
+# MNIST ELDR Cond-Flow Experiment Configuration
+
+# Experimental Grid
+alphas: [0.5, 1.0, 2.0, 4.0]
+num_pairs_per_alpha: 10
+num_samples: 40000
+
+# Model Architecture
+latent_dim: 14
+
+# VAE Training Configuration (reused via train_global_vae)
+vae_lr: 0.001
+vae_epochs: 50
+vae_beta: 1.0
+vae_beta_warmup: 0
+vae_weight_decay: 0.0001
+vae_grad_clip: 1.0
+
+# Class-Conditional Flow Training Configuration
+cond_flow_total_steps: 250000
+cond_flow_lr: 0.01
+cond_flow_batch_size: 128
+cond_flow_hidden_dim: 512
+cond_flow_weight_decay: 0.0001
+cond_flow_ema_decay: 0.9999
+cond_flow_warmup_frac: 0.05
+
+# Estimation Configuration
+algorithms: [TriangularMDRE, MultiHeadTriangularTDRE, VFM, TSM, CTSM]
+num_waypoints: 15
+
+# Log-Density Evaluation
+log_prob_steps: 200
+
+# Directory Configuration
+ckpt_dir: "experiments/mnist_eldr_cond_flow/ckpt"
+data_dir: "experiments/mnist_eldr_cond_flow/data"
+raw_results_dir: "experiments/mnist_eldr_cond_flow/raw_results"
+processed_results_dir: "experiments/mnist_eldr_cond_flow/processed_results"
+figures_dir: "experiments/mnist_eldr_cond_flow/figures"
+
+# Compute Configuration
+device: "cuda"
+seed: 1729

@@ -97,11 +97,8 @@ def log_prob_class_cond(
 
         with torch.no_grad():
             v = model.forward_from_onehot(z_t, t_tensor, y_onehot)
-
-        div = _compute_div_cond_chunked(model, z_t, t_tensor, y_onehot, chunk_size)
-        div_integral = div_integral + div * dt
-
-        with torch.no_grad():
+            div = _compute_div_cond_chunked(model, z_t, t_tensor, y_onehot, chunk_size)
+            div_integral = div_integral + div * dt
             z_t = z_t - v * dt
 
     log_2pi = torch.log(torch.tensor(2.0 * math.pi, device=device))
