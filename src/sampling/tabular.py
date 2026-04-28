@@ -356,9 +356,11 @@ def pointwise_smoothed_ldr(
         a_flat = a_grid.flatten()  # [|S|*|A|]
 
         phi_grid = grid_coord_angle(s_flat, a_flat, L, n_actions, embed_dim)  # [|S|*|A|, embed_dim]
+        # align device with xs so cdist / arithmetic does not raise
+        phi_grid = phi_grid.to(x.device)
 
-        d_O_flat = torch.from_numpy(d_O).float().flatten()  # [|S|*|A|]
-        d_E_flat = torch.from_numpy(d_E).float().flatten()  # [|S|*|A|]
+        d_O_flat = torch.from_numpy(d_O).float().flatten().to(x.device)  # [|S|*|A|]
+        d_E_flat = torch.from_numpy(d_E).float().flatten().to(x.device)  # [|S|*|A|]
 
         # the gaussian normalization constant -0.5 * embed_dim * log(2 pi sigma^2)
         # is identical between the O- and E-mixtures, so it cancels in the difference.
