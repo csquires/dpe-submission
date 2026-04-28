@@ -35,12 +35,16 @@ def assert_monotone(table: np.ndarray, axis: int = -1, kind: str = "increasing")
     raises:
         ValueError: with message like "table not strictly increasing at indices [i, i+1]".
     """
+    # tolerance for "ties": small numerical noise should not flag as a violation,
+    # and exact-zero plateaus (e.g. alpha=0 where d_O == d_E) are acceptable for
+    # np.interp inversion. enforce *non-strict* monotonicity.
     diffs = np.diff(table, axis=axis)
+    tol = 1e-9 * max(1.0, np.abs(table).max())
 
     if kind == "increasing":
-        violation_mask = diffs <= 0
+        violation_mask = diffs < -tol
     elif kind == "decreasing":
-        violation_mask = diffs >= 0
+        violation_mask = diffs > tol
     else:
         raise ValueError(f"kind must be 'increasing' or 'decreasing', got {kind}")
 

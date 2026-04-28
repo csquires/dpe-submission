@@ -360,29 +360,21 @@ def pointwise_smoothed_ldr(
         d_O_flat = torch.from_numpy(d_O).float().flatten()  # [|S|*|A|]
         d_E_flat = torch.from_numpy(d_E).float().flatten()  # [|S|*|A|]
 
+        # the gaussian normalization constant -0.5 * embed_dim * log(2 pi sigma^2)
+        # is identical between the O- and E-mixtures, so it cancels in the difference.
+        # we omit it. similarly, in the flow branch log|det J^{-1}(x)| is the same
+        # constant offset for both measures and cancels.
         if enc_type == "gaussian_blob":
             sq_dist = torch.cdist(x, phi_grid) ** 2  # [N, |S|*|A|]
-            const_term = -0.5 * embed_dim * torch.log(2 * torch.pi * sigma ** 2)
-            log_components_O = torch.log(d_O_flat + eps) + const_term - sq_dist / (2 * sigma ** 2)
-            log_components_E = torch.log(d_E_flat + eps) + const_term - sq_dist / (2 * sigma ** 2)
-
-            log_p_tilde_O = torch.logsumexp(log_components_O, dim=1)  # [N]
-            log_p_tilde_E = torch.logsumexp(log_components_E, dim=1)  # [N]
-
-            return log_p_tilde_O - log_p_tilde_E
-
         else:  # flow_pushforward
-            z, log_det_inv_J = encoding_cfg["flow_module"].inverse(x)
-
+            z, _ = encoding_cfg["flow_module"].inverse(x)
             sq_dist = torch.cdist(z, phi_grid) ** 2  # [N, |S|*|A|]
-            const_term = -0.5 * embed_dim * torch.log(2 * torch.pi * sigma ** 2)
-            log_components_O = torch.log(d_O_flat + eps) + const_term - sq_dist / (2 * sigma ** 2)
-            log_components_E = torch.log(d_E_flat + eps) + const_term - sq_dist / (2 * sigma ** 2)
 
-            log_p_tilde_O = torch.logsumexp(log_components_O, dim=1)  # [N]
-            log_p_tilde_E = torch.logsumexp(log_components_E, dim=1)  # [N]
-
-            return log_p_tilde_O - log_p_tilde_E
+        log_components_O = torch.log(d_O_flat + eps) - sq_dist / (2 * sigma ** 2)
+        log_components_E = torch.log(d_E_flat + eps) - sq_dist / (2 * sigma ** 2)
+        log_p_tilde_O = torch.logsumexp(log_components_O, dim=1)  # [N]
+        log_p_tilde_E = torch.logsumexp(log_components_E, dim=1)  # [N]
+        return log_p_tilde_O - log_p_tilde_E
 
     else:
         raise ValueError(f"unknown encoding type: {enc_type}")
