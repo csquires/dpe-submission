@@ -12,63 +12,15 @@ import os
 import random
 import glob
 
+from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
+from experiments.mnist_eldr_estimation.gen_hpo_configs import sample_param
+
 
 ALPHA_PAIRS = {
     0: "0:0",
     1: "1:0",
     2: "2:0",
     3: "3:0",
-}
-
-# which params use log-uniform vs uniform vs choice
-PARAM_TYPES = {
-    "TSM": {
-        "n_epochs": "uniform_int",
-        "lr": "log_uniform",
-        "batch_size": "choice",
-        "eps": "log_uniform",
-    },
-    "CTSM": {
-        "n_epochs": "uniform_int",
-        "lr": "log_uniform",
-        "batch_size": "choice",
-        "sigma": "log_uniform",
-        "eps": "log_uniform",
-    },
-    "VFM": {
-        "n_epochs": "uniform_int",
-        "lr": "log_uniform",
-        "batch_size": "choice",
-        "k": "choice",
-        "eps": "log_uniform",
-        "integration_steps": "uniform_int",
-    },
-    "FMDRE": {
-        "n_epochs": "uniform_int",
-        "lr": "log_uniform",
-        "batch_size": "choice",
-        "eps": "log_uniform",
-        "integration_steps": "uniform_int",
-        "hidden_dim": "choice",
-        "score_weight": "log_uniform",
-    },
-    "FMDRE_S2": {
-        "n_epochs": "uniform_int",
-        "lr": "log_uniform",
-        "batch_size": "choice",
-        "eps": "log_uniform",
-        "integration_steps": "uniform_int",
-        "hidden_dim": "choice",
-        "score_weight": "log_uniform",
-        "p_uncond": "uniform",
-    },
-    "MHTTDRE": {
-        "learning_rate": "log_uniform",
-        "num_epochs": "uniform_int",
-        "hidden_dim": "choice",
-        "head_dim": "choice",
-        "num_shared_layers": "choice",
-    },
 }
 
 
@@ -82,6 +34,64 @@ def load_results(results_dir, method):
     return trials
 
 
+def narrow_spec(spec, top_k_values):
+    """
+    narrow a search-space spec tuple around observed top-K values.
+
+    spec: tuple from SEARCH_SPACES (e.g., ("log_uniform", lo, hi))
+    top_k_values: list of observed values from top-K trials
+
+    returns: narrowed spec tuple of same kind, with bounds set to [min, max] of top_k_values.
+             if min == max, collapses to ("choice", [value]).
+
+    dispatch per spec[0]:
+      "log_uniform": ("log_uniform", min(top_k_values), max(top_k_values))
+                     → if min == max: ("choice", [min])
+
+      "log_uniform_int": ("log_uniform_int", min(top_k_values), max(top_k_values))
+                         → if min == max: ("choice", [int(min)])
+                         NOTE: preserves log-uniform behavior; previous version downgraded to uniform_int.
+
+      "uniform": ("uniform", min(top_k_values), max(top_k_values))
+                 → if min == max: ("choice", [min])
+
+      "uniform_int": ("uniform_int", min(top_k_values), max(top_k_values))
+                     (no min==max collapse; discrete already, min/max are integers)
+
+      "choice": ("choice", sorted(set(top_k_values)))
+                (return unique values observed, sorted, as new choice set)
+
+      else: raise ValueError(f"unknown spec type: {spec[0]}")
+    """
+    spec_type = spec[0]
+    lo = min(top_k_values)
+    hi = max(top_k_values)
+
+    if spec_type == "log_uniform":
+        if lo == hi:
+            return ("choice", [lo])
+        return ("log_uniform", lo, hi)
+
+    elif spec_type == "log_uniform_int":
+        if lo == hi:
+            return ("choice", [int(lo)])
+        return ("log_uniform_int", int(lo), int(hi))
+
+    elif spec_type == "uniform":
+        if lo == hi:
+            return ("choice", [lo])
+        return ("uniform", lo, hi)
+
+    elif spec_type == "uniform_int":
+        return ("uniform_int", int(lo), int(hi))
+
+    elif spec_type == "choice":
+        return ("choice", sorted(set(top_k_values)))
+
+    else:
+        raise ValueError(f"unknown spec type: {spec_type}")
+
+
 def extract_ranges(trials, pair_key, top_k=5):
     """
     get top-k trials for a pair, return {param: [values]} dict.
@@ -90,41 +100,24 @@ def extract_ranges(trials, pair_key, top_k=5):
     pair_key: e.g. "0:0"
     top_k: number of top trials to consider
 
+    filtering: exclude trials where per_pair_mae[pair_key] is missing, NaN, or Inf.
+
     returns: dict mapping param name to list of values from top-k trials
     """
-    ranked = sorted(trials, key=lambda t: t["per_pair_mae"][pair_key])[:top_k]
+    # filter: only keep trials with valid (finite) MAE for this pair_key
+    valid_trials = []
+    for t in trials:
+        if pair_key not in t.get("per_pair_mae", {}):
+            continue
+        mae = t["per_pair_mae"][pair_key]
+        if math.isnan(mae) or math.isinf(mae):
+            continue
+        valid_trials.append(t)
+
+    # sort and extract top-k
+    ranked = sorted(valid_trials, key=lambda t: t["per_pair_mae"][pair_key])[:top_k]
     params = list(ranked[0]["hyperparams"].keys())
     return {p: [t["hyperparams"][p] for t in ranked] for p in params}
-
-
-def sample_from_range(values, param_type):
-    """
-    sample a value from the range defined by top-k values.
-
-    continuous params: sample between min and max of values.
-    discrete params: sample uniformly from unique values seen.
-    """
-    if param_type == "log_uniform":
-        lo, hi = min(values), max(values)
-        if lo == hi:
-            return lo
-        return math.exp(random.uniform(math.log(lo), math.log(hi)))
-
-    elif param_type == "uniform":
-        lo, hi = min(values), max(values)
-        if lo == hi:
-            return lo
-        return random.uniform(lo, hi)
-
-    elif param_type == "uniform_int":
-        lo, hi = min(values), max(values)
-        return random.randint(lo, hi)
-
-    elif param_type == "choice":
-        return random.choice(list(set(values)))
-
-    else:
-        raise ValueError(f"unknown param type: {param_type}")
 
 
 def gen_refined_configs(method, trials, alpha_idx, num_trials, top_k=5):
@@ -135,13 +128,15 @@ def gen_refined_configs(method, trials, alpha_idx, num_trials, top_k=5):
     """
     pair_key = ALPHA_PAIRS[alpha_idx]
     ranges = extract_ranges(trials, pair_key, top_k)
-    ptypes = PARAM_TYPES[method]
+    broad_specs = SEARCH_SPACES[method]["search_space"]
 
     configs = []
     for i in range(num_trials):
         hp = {}
         for param, values in ranges.items():
-            hp[param] = sample_from_range(values, ptypes[param])
+            broad_spec = broad_specs[param]
+            narrowed_spec = narrow_spec(broad_spec, values)
+            hp[param] = sample_param(narrowed_spec)
         configs.append({
             "trial_id": i,
             "method": method,
@@ -159,7 +154,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description="generate refined hpo configs")
     parser.add_argument("--method", type=str, required=True,
-                        choices=["TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", "MHTTDRE"])
+                        choices=list(SEARCH_SPACES.keys()))
     parser.add_argument("--results-dir", type=str, required=True,
                         help="directory with round-1 results (contains TSM/, CTSM/, VFM/)")
     parser.add_argument("--output-dir", type=str, required=True,

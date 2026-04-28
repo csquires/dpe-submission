@@ -15,19 +15,14 @@ import numpy as np
 import torch
 import yaml
 
-from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.ctsm import CTSM
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.density_ratio_estimation.fmdre import FMDRE
-from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
-from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
-from src.models.binary_classification import make_multi_head_binary_classifier
+from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
 
 
 def parse_args():
     """parse cli arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", type=str, required=True, choices=["TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", "MHTTDRE"])
+    parser.add_argument("--method", type=str, required=True, choices=list(SEARCH_SPACES.keys()),
+                        help="method name; must be a key of SEARCH_SPACES")
     parser.add_argument("--config-file", type=str, required=True)
     parser.add_argument("--eval-pairs", type=str, default="0:0,1:0,2:0,3:0")
     parser.add_argument("--output-dir", type=str, required=True)
@@ -86,58 +81,19 @@ def load_pair_data(data_dir, alpha_idx, pair_idx, device):
     }
 
 
-def create_estimator(method, hyperparams, input_dim, device, num_waypoints):
-    """
-    create estimator instance for given method.
-
-    Args:
-        method: one of "TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", "MHTTDRE"
-        hyperparams: dict of hyperparameters
-        input_dim: input dimensionality
-        device: torch device
-        num_waypoints: number of waypoints (required for MHTTDRE)
-
-    Returns:
-        estimator instance
-    """
-    if method == "TSM":
-        return TSM(input_dim=input_dim, device=device, **hyperparams)
-    elif method == "CTSM":
-        return CTSM(input_dim=input_dim, device=device, **hyperparams)
-    elif method == "VFM":
-        return make_spatial_velo_denoiser(input_dim=input_dim, device=device, **hyperparams)
-    elif method == "FMDRE":
-        return FMDRE(input_dim=input_dim, device=device, **hyperparams)
-    elif method == "FMDRE_S2":
-        return FMDRE_S2(input_dim=input_dim, device=device, **hyperparams)
-    elif method == "MHTTDRE":
-        classifier = make_multi_head_binary_classifier(
-            input_dim=input_dim,
-            num_heads=num_waypoints - 1,
-            **hyperparams,
-        )
-        return MultiHeadTriangularTDRE(
-            classifier=classifier,
-            num_waypoints=num_waypoints,
-            device=device,
-        )
-    else:
-        raise ValueError(f"Unknown method: {method}")
-
-
-def eval_pair(estimator, data, method):
+def eval_pair(estimator, data, requires_pstar):
     """
     fit estimator on p0/p1, predict on pstar, return mae.
 
     Args:
         estimator: density ratio estimator
         data: dict with keys pstar, p0, p1, true_ldrs
-        method: method name (for MHTTDRE special case)
+        requires_pstar: bool indicating whether fit() is called with three tensors
 
     Returns:
         mae as float
     """
-    if method == "MHTTDRE":
+    if requires_pstar:
         estimator.fit(data["p0"], data["p1"], data["pstar"])
     else:
         estimator.fit(data["p0"], data["p1"])
@@ -177,15 +133,19 @@ def main():
     t0 = time.time()
     per_pair_mae = {}
 
+    entry = SEARCH_SPACES[args.method]
+    builder_fn = entry["builder"]
+    requires_pstar = entry["requires_pstar"]
+
     for alpha_idx, pair_idx in eval_pairs:
         # load data
         data = load_pair_data(data_dir, alpha_idx, pair_idx, device)
 
         # create fresh estimator
-        estimator = create_estimator(args.method, hyperparams, input_dim, device, num_waypoints)
+        estimator = builder_fn(input_dim=input_dim, device=device, num_waypoints=num_waypoints, **hyperparams)
 
         # compute mae
-        mae = eval_pair(estimator, data, args.method)
+        mae = eval_pair(estimator, data, requires_pstar)
 
         print(f"pair ({alpha_idx},{pair_idx}): MAE={mae:.4f}")
         per_pair_mae[f"{alpha_idx}:{pair_idx}"] = mae

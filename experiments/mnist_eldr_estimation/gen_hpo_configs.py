@@ -10,56 +10,7 @@ import math
 import os
 import random
 
-
-SEARCH_SPACES = {
-    "TSM": {
-        "n_epochs":   ("log_uniform_int", 750, 1500),
-        "lr":         ("log_uniform", 3e-4, 3e-3),
-        "batch_size": ("choice", [64, 128, 256]),
-        "eps":        ("log_uniform", 1e-6, 1e-4),
-    },
-    "CTSM": {
-        "n_epochs":   ("log_uniform_int", 750, 1500),
-        "lr":         ("log_uniform", 3e-4, 3e-3),
-        "batch_size": ("choice", [64, 128, 256]),
-        "sigma":      ("log_uniform", 0.3, 3.0),
-        "eps":        ("log_uniform", 3e-4, 3e-3),
-    },
-    "VFM": {
-        "n_epochs":          ("log_uniform_int", 750, 1500),
-        "lr":                ("log_uniform", 5e-4, 3e-3),
-        "batch_size":        ("choice", [64, 128, 256]),
-        "k":                 ("choice", [10, 20, 40]),
-        "eps":               ("log_uniform", 1e-3, 5e-3),
-        "integration_steps": ("uniform_int", 500, 5000),
-    },
-    "FMDRE": {
-        "n_epochs":          ("log_uniform_int", 500, 1500),
-        "lr":                ("log_uniform", 5e-4, 3e-3),
-        "batch_size":        ("choice", [128, 256, 512]),
-        "eps":               ("log_uniform", 1e-3, 5e-2),
-        "integration_steps": ("uniform_int", 1000, 10000),
-        "hidden_dim":        ("choice", [128, 256, 512]),
-        "score_weight":      ("log_uniform", 0.1, 10.0),
-    },
-    "FMDRE_S2": {
-        "n_epochs":          ("log_uniform_int", 500, 1500),
-        "lr":                ("log_uniform", 5e-4, 3e-3),
-        "batch_size":        ("choice", [128, 256, 512]),
-        "eps":               ("log_uniform", 1e-3, 5e-2),
-        "integration_steps": ("uniform_int", 1000, 10000),
-        "hidden_dim":        ("choice", [128, 256, 512]),
-        "score_weight":      ("log_uniform", 0.1, 10.0),
-        "p_uncond":          ("uniform", 0.1, 0.9),
-    },
-    "MHTTDRE": {
-        "learning_rate":     ("log_uniform", 1e-4, 1e-2),
-        "num_epochs":        ("log_uniform_int", 100, 1000),
-        "hidden_dim":        ("choice", [16, 32, 64, 128]),
-        "head_dim":          ("choice", [10, 20, 40]),
-        "num_shared_layers": ("choice", [1, 2, 3]),
-    },
-}
+from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
 
 
 def sample_param(spec):
@@ -113,7 +64,7 @@ def gen_config(method, trial_id):
     returns: dict with structure {"trial_id": int, "method": str, "hyperparams": dict}
              hyperparams contains sampled values for all parameters in search space
     """
-    space = SEARCH_SPACES[method]  # raises KeyError if invalid method
+    space = SEARCH_SPACES[method]["search_space"]  # raises KeyError if invalid method
 
     hyperparams = {}
     for param_name, spec in space.items():
@@ -140,7 +91,8 @@ def main():
     """
     parser = argparse.ArgumentParser(description="generate hpo configs")
     parser.add_argument("--method", type=str, required=True,
-                       help="method: TSM, CTSM, VFM, FMDRE, FMDRE_S2, or MHTTDRE")
+                       choices=list(SEARCH_SPACES.keys()),
+                       help="method name; must be a key in SEARCH_SPACES")
     parser.add_argument("--num-trials", type=int, required=True,
                        help="number of trials to generate")
     parser.add_argument("--output-dir", type=str, required=True,
@@ -149,10 +101,6 @@ def main():
                        help="random seed for reproducibility")
 
     args = parser.parse_args()
-
-    # validate method
-    if args.method not in ["TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", "MHTTDRE"]:
-        parser.error(f"invalid method: {args.method}. must be TSM, CTSM, VFM, FMDRE, FMDRE_S2, or MHTTDRE")
 
     # set seed
     random.seed(args.seed)
