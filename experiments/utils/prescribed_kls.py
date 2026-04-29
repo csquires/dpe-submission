@@ -277,6 +277,10 @@ def hash_mdp_config(mdp_cfg: Dict[str, Any]) -> str:
         "tau": mdp_cfg["tau"],
         "G_alpha": mdp_cfg["G_alpha"],
         "G_beta": mdp_cfg["G_beta"],
+        "mu0_kind": mdp_cfg.get("mu0_kind", "uniform"),
+        "mu0_centers": sorted([list(c) for c in mdp_cfg.get("mu0_centers", [])]),
+        "reward_kind": mdp_cfg.get("reward_kind", "sparse"),
+        "reward_sigma": float(mdp_cfg.get("reward_sigma", 1.0)),
     }
 
     s = json.dumps(canonical, sort_keys=True)
@@ -409,9 +413,20 @@ def load_or_build_grid(
         p_slip=mdp_cfg["p_slip"],
         terminals=mdp_cfg["terminals"],
         gamma=mdp_cfg["gamma"],
+        mu0_kind=mdp_cfg.get("mu0_kind", "uniform"),
+        mu0_centers=mdp_cfg.get("mu0_centers"),
     )
-    r_E = reward_to_goal(mdp_cfg["L"], mdp_cfg["expert_goal"], mdp_cfg["terminals"])
-    r_anti = reward_to_goal(mdp_cfg["L"], mdp_cfg["anti_goal"], mdp_cfg["terminals"])
+    reward_kind = mdp_cfg.get("reward_kind", "sparse")
+    reward_sigma = float(mdp_cfg.get("reward_sigma", 1.0))
+    from src.utils.gridworld import shaped_reward_to_goal
+    r_E = shaped_reward_to_goal(
+        mdp_cfg["L"], mdp_cfg["expert_goal"], mdp_cfg["terminals"],
+        kind=reward_kind, sigma=reward_sigma,
+    )
+    r_anti = shaped_reward_to_goal(
+        mdp_cfg["L"], mdp_cfg["anti_goal"], mdp_cfg["terminals"],
+        kind=reward_kind, sigma=reward_sigma,
+    )
 
     # try to load from cache if not rebuild
     if not rebuild and cache_file.exists():
@@ -861,18 +876,19 @@ def load_or_build_traj_grid(
         )
     print("use these bounds to populate config.kl_targets")
 
-    # write to HDF5 atomically
+    # write to HDF5 atomically. cfg may pass alphas/betas as python lists
+    # (step1 calls .tolist() before constructing cfg), so coerce to arrays.
     datasets = {
-        'KL1': result['KL1'],
-        'KL2': result['KL2'],
-        'KL1_se': result['KL1_se'],
-        'KL2_se': result['KL2_se'],
-        'alphas': result['alphas'],
-        'betas': result['betas'],
-        'q_E': result['q_E'],
-        'q_O_grid': result['q_O_grid'],
-        'q_O_residuals': result['q_O_residuals'],
-        'monotone_beta_per_alpha': result['monotone_beta_per_alpha'].astype(np.uint8),
+        'KL1': np.asarray(result['KL1']),
+        'KL2': np.asarray(result['KL2']),
+        'KL1_se': np.asarray(result['KL1_se']),
+        'KL2_se': np.asarray(result['KL2_se']),
+        'alphas': np.asarray(result['alphas']),
+        'betas': np.asarray(result['betas']),
+        'q_E': np.asarray(result['q_E']),
+        'q_O_grid': np.asarray(result['q_O_grid']),
+        'q_O_residuals': np.asarray(result['q_O_residuals']),
+        'monotone_beta_per_alpha': np.asarray(result['monotone_beta_per_alpha']).astype(np.uint8),
     }
 
     attrs = {
