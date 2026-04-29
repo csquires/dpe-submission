@@ -184,6 +184,56 @@ def reward_to_goal(
 	return r
 
 
+def shaped_reward_to_goal(
+	L: int,
+	goal: tuple[int, int],
+	terminals: list[tuple[int, int]],
+	kind: str = "sparse",
+	sigma: float = 1.0,
+) -> np.ndarray:
+	"""build a reward matrix r[|S|, |A|] with either sparse or dense shape.
+
+	"sparse": r(s, a) = 1 if T(s, a) == goal else 0 (delegates to reward_to_goal).
+	"gaussian": r(s, a) = exp(-||T(s, a) - goal||_2^2 / sigma^2). dense gradient
+	  toward goal across all cells; sigma controls bandwidth.
+
+	terminal cells get zeroed (absorbing dynamics, no further reward).
+
+	args:
+		L: grid side length.
+		goal: (i, j) tuple marking goal cell.
+		terminals: list of (i, j) tuples marking absorbing states.
+		kind: "sparse" or "gaussian".
+		sigma: bandwidth for gaussian shaping; ignored for sparse.
+
+	returns:
+		r [L*L, 4] float64.
+	"""
+	if kind == "sparse":
+		return reward_to_goal(L, goal, terminals)
+	if kind != "gaussian":
+		raise ValueError(f"unknown reward kind: {kind}")
+	if sigma <= 0:
+		raise ValueError(f"sigma must be > 0, got {sigma}")
+
+	S = L * L
+	A = 4
+	ss, aa = np.meshgrid(np.arange(S), np.arange(A), indexing='ij')
+	ii, jj = ss // L, ss % L
+	di = np.array([-1, 1, 0, 0])
+	dj = np.array([0, 0, -1, 1])
+	ii_next = np.clip(ii + di[aa], 0, L - 1)
+	jj_next = np.clip(jj + dj[aa], 0, L - 1)
+	dist2 = (ii_next - goal[0]) ** 2 + (jj_next - goal[1]) ** 2
+	r = np.exp(-dist2 / sigma ** 2).astype(np.float64)
+
+	terminal_idxs = {i * L + j for (i, j) in terminals}
+	for s_term in terminal_idxs:
+		r[s_term, :] = 0.0
+
+	return r
+
+
 def value_iteration(
 	P: np.ndarray,
 	r: np.ndarray,
