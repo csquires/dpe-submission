@@ -32,7 +32,9 @@ def build_gridworld(
 	L: int,
 	p_slip: float,
 	terminals: list[tuple[int, int]],
-	gamma: float
+	gamma: float,
+	mu0_kind: str = "uniform",
+	mu0_centers: list[tuple[int, int]] | None = None,
 ) -> MDP:
 	"""builds a slippery gridworld MDP on an L×L grid with absorbing terminal states.
 
@@ -44,19 +46,28 @@ def build_gridworld(
 	- if p_slip=0, deterministic; if p_slip=1, uniformly random.
 
 	terminal states: P[s, a, s] = 1 for all a if s ∈ terminals; self-loop with zero reward.
-	initial distribution: uniform over non-terminal cells; zero on terminals; normalize.
+
+	initial distribution mu0:
+		- "uniform" (default): uniform over non-terminal cells.
+		- "distance_quadratic": mu0(s) ∝ Σ_c ||s − c||_2^2 for c in mu0_centers.
+		  zero on terminals; renormalize. for two centers at opposite corners,
+		  this concentrates mass on the off-diagonal corners (max sum of squared
+		  distances) and is minimized at the midpoint between centers.
 
 	args:
 		L: grid side length.
 		p_slip: slip probability in [0, 1].
 		terminals: list of (i, j) tuples marking absorbing states.
 		gamma: discount factor in [0, 1).
+		mu0_kind: initial-distribution scheme; one of "uniform", "distance_quadratic".
+		mu0_centers: required if mu0_kind == "distance_quadratic"; list of (i, j) cells.
 
 	returns:
 		MDP dataclass with P, mu0, gamma, L, n_states=L*L, n_actions=4.
 
 	raises:
-		ValueError: if L < 1, all cells terminal, or p_slip out of range.
+		ValueError: if L < 1, all cells terminal, p_slip out of range, or mu0
+			args are inconsistent.
 	"""
 	# validation
 	if L < 1:
@@ -102,11 +113,26 @@ def build_gridworld(
 		P[s_term, :, :] = 0.0
 		P[s_term, :, s_term] = 1.0
 
-	# build initial distribution: uniform on non-terminals
-	mu0 = np.ones(S, dtype=np.float64)
+	# build initial distribution
+	if mu0_kind == "uniform":
+		mu0 = np.ones(S, dtype=np.float64)
+	elif mu0_kind == "distance_quadratic":
+		if not mu0_centers:
+			raise ValueError("mu0_kind='distance_quadratic' requires non-empty mu0_centers")
+		ii_grid, jj_grid = np.meshgrid(np.arange(L), np.arange(L), indexing='ij')
+		w = np.zeros((L, L), dtype=np.float64)
+		for (ci, cj) in mu0_centers:
+			w += (ii_grid - ci) ** 2 + (jj_grid - cj) ** 2
+		mu0 = w.reshape(S)
+	else:
+		raise ValueError(f"unknown mu0_kind: {mu0_kind}")
+
 	for s_term in terminal_idxs:
 		mu0[s_term] = 0.0
-	mu0 /= mu0.sum()
+	total = mu0.sum()
+	if total <= 0:
+		raise ValueError("mu0 has zero mass after zeroing terminals")
+	mu0 /= total
 
 	return MDP(P=P, mu0=mu0, gamma=gamma, L=L, n_states=S, n_actions=A)
 
