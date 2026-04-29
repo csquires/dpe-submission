@@ -26,18 +26,21 @@ cond_flow_ema_decay: 0.9999
 cond_flow_warmup_frac: 0.05
 
 # Estimation Configuration
-algorithms: [TriangularMDRE, MultiHeadTriangularTDRE, VFM, TSM, CTSM]
+algorithms: [TriangularMDRE, MultiHeadTriangularTDRE, VFM, TSM, CTSM, TriangularCTSM_V1, TriangularCTSM_V2, TriangularCTSM_V3, TriangularVFM_V1, TriangularVFM_V2, TriangularVFM_V3]
 num_waypoints: 15
 
 # Log-Density Evaluation
 log_prob_steps: 200
 
 # Directory Configuration
-ckpt_dir: "experiments/mnist_eldr_cond_flow/ckpt"
-data_dir: "experiments/mnist_eldr_cond_flow/data"
-raw_results_dir: "experiments/mnist_eldr_cond_flow/raw_results"
-processed_results_dir: "experiments/mnist_eldr_cond_flow/processed_results"
-figures_dir: "experiments/mnist_eldr_cond_flow/figures"
+# expanded by src.utils.io._load_config; defaults set in src/utils/io.py.
+# DPE_CKPT_ROOT -> /scratch/$USER/ckpt/dpe-submission (node-local, fast).
+# DPE_DATA_ROOT -> /data/user_data/$USER/dpe-submission (NFS, all nodes).
+ckpt_dir: "${DPE_CKPT_ROOT}/mnist_eldr_cond_flow/ckpt"
+data_dir: "${DPE_DATA_ROOT}/mnist_eldr_cond_flow/data"
+raw_results_dir: "${DPE_DATA_ROOT}/mnist_eldr_cond_flow/raw_results"
+processed_results_dir: "${DPE_DATA_ROOT}/mnist_eldr_cond_flow/processed_results"
+figures_dir: "${DPE_DATA_ROOT}/mnist_eldr_cond_flow/figures"
 
 # Compute Configuration
 device: "cuda"

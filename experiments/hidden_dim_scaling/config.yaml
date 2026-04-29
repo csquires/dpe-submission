@@ -1,11 +1,11 @@
-# directory configuration
-data_dir: "experiments/hidden_dim_scaling/data"
-raw_results_dir: "experiments/hidden_dim_scaling/raw_results"
-processed_results_dir: "experiments/hidden_dim_scaling/processed_results"
-figures_dir: "experiments/hidden_dim_scaling/figures"
+# directory configuration (env-var-templated; expanded by src.utils.io._load_config)
+data_dir: "${DPE_DATA_ROOT}/hidden_dim_scaling/data"
+raw_results_dir: "${DPE_DATA_ROOT}/hidden_dim_scaling/raw_results"
+processed_results_dir: "${DPE_DATA_ROOT}/hidden_dim_scaling/processed_results"
+figures_dir: "${DPE_DATA_ROOT}/hidden_dim_scaling/figures"
 
 # source data - reuse from eig_estimation experiment
-source_data_dir: "experiments/eig_estimation/data"
+source_data_dir: "${DPE_DATA_ROOT}/eig_estimation/data"
 source_data_dim: 3
 source_nsamples: 10000
 nsamples_test: 1024

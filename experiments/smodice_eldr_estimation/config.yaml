@@ -1,0 +1,72 @@
+# Gridworld MDP definition
+gridworld:
+  L: 32                             # int, grid side length; |S| = L^2 = 1024 (must be >= 2)
+  p_slip: 0.1                       # float in [0, 1]; stochasticity
+  gamma: 0.995                      # float in (0, 1); discount factor; bumped from 0.99 for longer effective horizon
+  terminals: [[0, 0], [31, 31]]     # list of [row, col]; must match anti_goal and expert_goal
+  expert_goal: [31, 31]             # [row, col]; must be in terminals
+  anti_goal: [0, 0]                 # [row, col]; must be in terminals (different from expert_goal)
+  tau: 0.1                          # float > 0; softmax temperature (low tau -> sharp policies, larger achievable KL range)
+  mu0_kind: distance_quadratic      # str; "uniform" or "distance_quadratic"
+  mu0_centers: [[0, 0], [31, 31]]   # list of [row, col]; centers for distance_quadratic mu0. mu0(s) ∝ Σ_c ||s − c||² → off-diagonal corners get max mass
+
+# State-action encoding (selects phi: (s,a) -> R^d)
+encoding:
+  type: gaussian_blob               # one of: onehot_joint, onehot_concat, gaussian_blob, flow_pushforward
+  embed_dim: 6                      # int >= 2; latent dim for blob/flow only
+  embed_fn: grid_coord_angle        # encoding function name (e.g., "grid_coord_angle")
+  sigma: 0.2                        # float > 0; Gaussian blob bandwidth (blob/flow only)
+  flow:                             # dict; only used when type == flow_pushforward
+    arch: realnvp                   # informational string; actual class is FrozenFlow
+    layers: 4                       # int >= 1; normalizing flow depth
+    seed: 1729                      # int; reproducibility
+
+# KL divergence target sweep
+kl_targets:
+  k1_values: [1.0, 3.0, 6.0, 9.0, 27.0]   # float list; sorted ascending
+  k2_values: [0.1, 1.0, 10.0]              # float list; sorted ascending
+  hard_corner_threshold: 1.0e+9            # sentinel; hard-corner branch unused since seeds_default == seeds_hard. note: yaml 1.1 requires the explicit `+` for scientific notation to parse as float.
+  seeds_default: 40                        # int > 0; seeds per cell (15 cells total)
+  seeds_hard: 40                           # int > 0; matched to seeds_default (no hard-cell distinction)
+
+# KL grid (precomputed and cached)
+kl_grid:
+  G_alpha: 50                       # int > 0; resolution of KL_1(alpha) table
+  G_beta: 50                        # int > 0; resolution of KL_2(alpha, beta) table
+  cache_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/grid_cache  # NFS-shared; created if missing
+
+# Optional Gaussian-blob sigma sensitivity sweep (Enc-3 only; separate results panel)
+sigma_sweep:
+  enabled: false                    # bool; if true, run extra sigma variants
+  sigmas: [0.05, 0.1, 0.2, 0.5, 1.0]      # float list > 0; sigma values to test
+  cells: [[2, 2], [4, 4]]                 # list of [k1_idx, k2_idx]; indices into k1_values and k2_values
+  seeds: 20                         # int > 0; seeds per (cell, sigma) pair
+
+# Sampling
+num_samples: 5000                   # int > 0; samples per (k1, k2, seed) cell
+
+# Algorithms (filtered at runtime by SUPPORTED_ENCODINGS dict in step2)
+algorithms:
+  - SmoothedTabularPluginDRE       # oracle reference (dashed line, not a competitor)
+  - TabularPluginDRE               # both argmax (onehot) and nn (blob/flow) decodings
+  - BDRE                           # baseline comparison
+  - MDRE                           # baseline comparison
+  - TriangularMDRE                 # proposed method
+  - MultiHeadTriangularTDRE        # proposed method
+  - TSM                            # score-based method
+  - CTSM                           # conditional score-based
+  - TriangularCTSM                 # proposed conditional variant
+  - TriangularVFM                  # variational flow matching variant
+
+# Waypoints (for triangular methods)
+num_waypoints: 15                  # int >= 3; linear interpolation schedule
+
+# Compute
+device: cuda                        # "cuda" or "cpu"; GPU/CPU target
+seed: 1729                          # int; global reproducibility
+
+# Directory paths (env-var-templated; expanded by src.utils.io._load_config)
+data_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/data           # sample HDF5 files
+raw_results_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/raw_results      # per-method outputs
+processed_results_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/processed_results  # aggregated results
+figures_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/figures     # plot outputs
