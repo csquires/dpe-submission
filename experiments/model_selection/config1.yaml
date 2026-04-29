@@ -1,7 +1,7 @@
 data_dir: "${DPE_DATA_ROOT}/model_selection/data"
-raw_results_dir: "${DPE_DATA_ROOT}/model_selection/raw_results"
-processed_results_dir: "${DPE_DATA_ROOT}/model_selection/processed_results"
-figures_dir: "${DPE_DATA_ROOT}/model_selection/figures"
+raw_results_dir: "experiments/model_selection/raw_results"
+processed_results_dir: "experiments/model_selection/processed_results"
+figures_dir: "experiments/model_selection/figures"
 data_dim: 3
 gamma: 0.05
 kl_distances: [0.3, 1, 3, 9, 18, 36, 54]

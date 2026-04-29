@@ -21,7 +21,7 @@ q_grid:
   gamma: 0.99              # float in (0, 1); discount factor
   fqi_max_iter: 1000       # int > 0; fitted-q-iteration loop limit
   fqi_tol: 1.0e-4          # float > 0; bellman residual stopping tolerance
-  cache_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/q_cache  # NFS-shared; hdf5 cache keyed by cfg sha256
+  cache_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/q_cache  # heavy; offloaded; hdf5 cache keyed by cfg sha256
 
 # === Trajectory Horizon ===
 trajectory:
@@ -36,7 +36,7 @@ traj_kl_grid:
   M: 200                   # int > 0; rollouts per (alpha, beta) cell for MC KL estimation
   diagnostic_grid: true    # bool; if true, build coarse G=10 grid first to inspect monotonicity
   kl_se_warn_threshold: 0.1  # float >= 0; warn if relative SE (kl_se / max(|kl_hat|, eps)) > threshold
-  cache_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/traj_kl_cache  # NFS-shared; hdf5 cached
+  cache_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/traj_kl_cache  # heavy; offloaded; hdf5 cached
 
 # === Prescribed KL Targets (Deferred) ===
 kl_targets:
@@ -69,8 +69,8 @@ num_waypoints: 15          # int >= 3; linear interpolation schedule for triangu
 # NOTE: trajectory experiment may support a different algorithm subset than smodice.
 #       these 10 are over-specified for now; downstream step2 filters by trajectory support.
 
-# === Directory Paths === (env-var-templated; expanded by src.utils.io._load_config)
+# === Directory Paths ===
 data_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/data
-raw_results_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/raw_results
-processed_results_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/processed_results
-figures_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/figures
+raw_results_dir: experiments/pendulum_eldr_estimation/raw_results
+processed_results_dir: experiments/pendulum_eldr_estimation/processed_results
+figures_dir: experiments/pendulum_eldr_estimation/figures

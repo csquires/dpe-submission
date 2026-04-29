@@ -1,14 +1,14 @@
 # Gridworld MDP definition
 gridworld:
-  L: 32                             # int, grid side length; |S| = L^2 = 1024 (must be >= 2)
+  L: 8                              # int, grid side length; |S| = L^2 = 64 (must be >= 2)
   p_slip: 0.1                       # float in [0, 1]; stochasticity
   gamma: 0.995                      # float in (0, 1); discount factor; bumped from 0.99 for longer effective horizon
-  terminals: [[0, 0], [31, 31]]     # list of [row, col]; must match anti_goal and expert_goal
-  expert_goal: [31, 31]             # [row, col]; must be in terminals
+  terminals: [[0, 0], [7, 7]]       # list of [row, col]; must match anti_goal and expert_goal
+  expert_goal: [7, 7]               # [row, col]; must be in terminals
   anti_goal: [0, 0]                 # [row, col]; must be in terminals (different from expert_goal)
-  tau: 0.1                          # float > 0; softmax temperature (low tau -> sharp policies, larger achievable KL range)
+  tau: 0.02                         # float > 0; softmax temperature; lowered from 0.1 to lift K1 ceiling from ~1.6 to ~4.8 nats
   mu0_kind: distance_quadratic      # str; "uniform" or "distance_quadratic"
-  mu0_centers: [[0, 0], [31, 31]]   # list of [row, col]; centers for distance_quadratic mu0. mu0(s) ∝ Σ_c ||s − c||² → off-diagonal corners get max mass
+  mu0_centers: [[0, 0], [7, 7]]     # list of [row, col]; centers for distance_quadratic mu0. mu0(s) ∝ Σ_c ||s − c||² → off-diagonal corners get max mass
 
 # State-action encoding (selects phi: (s,a) -> R^d)
 encoding:
@@ -23,17 +23,17 @@ encoding:
 
 # KL divergence target sweep
 kl_targets:
-  k1_values: [1.0, 3.0, 6.0, 9.0, 27.0]   # float list; sorted ascending
-  k2_values: [0.1, 1.0, 10.0]              # float list; sorted ascending
-  hard_corner_threshold: 1.0e+9            # sentinel; hard-corner branch unused since seeds_default == seeds_hard. note: yaml 1.1 requires the explicit `+` for scientific notation to parse as float.
-  seeds_default: 40                        # int > 0; seeds per cell (15 cells total)
-  seeds_hard: 40                           # int > 0; matched to seeds_default (no hard-cell distinction)
+  k1_values: [1.1, 1.3, 1.9, 3.7]   # float list; sorted ascending
+  k2_values: [0.5, 1.0, 2.0]        # float list; sorted ascending
+  hard_corner_threshold: 1.0e+9      # sentinel; hard-corner branch unused since seeds_default == seeds_hard. note: yaml 1.1 requires the explicit `+` for scientific notation to parse as float.
+  seeds_default: 40                  # int > 0; seeds per cell (12 cells total)
+  seeds_hard: 40                     # int > 0; matched to seeds_default (no hard-cell distinction)
 
 # KL grid (precomputed and cached)
 kl_grid:
   G_alpha: 50                       # int > 0; resolution of KL_1(alpha) table
   G_beta: 50                        # int > 0; resolution of KL_2(alpha, beta) table
-  cache_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/grid_cache  # NFS-shared; created if missing
+  cache_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/grid_cache  # heavy; offloaded
 
 # Optional Gaussian-blob sigma sensitivity sweep (Enc-3 only; separate results panel)
 sigma_sweep:
@@ -65,8 +65,8 @@ num_waypoints: 15                  # int >= 3; linear interpolation schedule
 device: cuda                        # "cuda" or "cpu"; GPU/CPU target
 seed: 1729                          # int; global reproducibility
 
-# Directory paths (env-var-templated; expanded by src.utils.io._load_config)
+# Directory paths
 data_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/data           # sample HDF5 files
-raw_results_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/raw_results      # per-method outputs
-processed_results_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/processed_results  # aggregated results
-figures_dir: ${DPE_DATA_ROOT}/smodice_eldr_estimation/figures     # plot outputs
+raw_results_dir: experiments/smodice_eldr_estimation/raw_results      # per-method outputs
+processed_results_dir: experiments/smodice_eldr_estimation/processed_results  # aggregated results
+figures_dir: experiments/smodice_eldr_estimation/figures     # plot outputs
