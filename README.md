@@ -60,15 +60,15 @@ dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipy
 
 Each experiment suite follows a numbered step pipeline. Run steps as modules sequentially from project root.
 
-**example: `experiments.density_ratio_estimation`**
+**example: `experiments.model_selection`**
 ```bash
-python -m experiments.density_ratio_estimation.step1_create_data
-python -m experiments.density_ratio_estimation.step2_run_algorithms
-python -m experiments.density_ratio_estimation.step3_process_results
-python -m experiments.density_ratio_estimation.step4_plot_results
+python -m experiments.model_selection.step1_create_data
+python -m experiments.model_selection.step2_run_algorithms
+python -m experiments.model_selection.step3_process_results
+python -m experiments.model_selection.step4_plot_results
 ```
 
-experiment configurations are in yaml files (e.g., `experiments/density_ratio_estimation/config1.yaml`).
+experiment configurations are in yaml files (e.g., `experiments/model_selection/config1.yaml`).
 
 Assuming default configs (more on configuration in the next section), plots will appear in a subfolder within each experiment folder called `figures`. Raw and plotted data is stored in `.h5` files in subfolders `raw_results` and `processed_results` respectively.
 
@@ -78,10 +78,10 @@ experiments are configured via yaml files. common parameters:
 
 ```yaml
 # directory paths for data and results
-data_dir: "experiments/density_ratio_estimation/data"
-raw_results_dir: "experiments/density_ratio_estimation/raw_results"
-processed_results_dir: "experiments/density_ratio_estimation/processed_results"
-figures_dir: "experiments/density_ratio_estimation/figures"
+data_dir: "experiments/model_selection/data"
+raw_results_dir: "experiments/model_selection/raw_results"
+processed_results_dir: "experiments/model_selection/processed_results"
+figures_dir: "experiments/model_selection/figures"
 
 # experiment parameters
 data_dim: 3                                      # dimensionality of data
@@ -91,7 +91,7 @@ seed: 1729                                       # random seed for reproducibili
 
 Experiment-specific parameters vary by task. Example configs are:
 
-**density_ratio_estimation** ([config1.yaml](experiments/density_ratio_estimation/config1.yaml))
+**model_selection** ([config1.yaml](experiments/model_selection/config1.yaml))
 ```yaml
 gamma: 0.05                                      # covariance scale parameter
 kl_divergences: [0.5, 2, 8, 32, 128]             # kl divergences b/w p_0, p_1 to test
