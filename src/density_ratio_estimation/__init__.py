@@ -9,3 +9,8 @@ from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularT
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.fmdre import FMDRE
 from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
+from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
+from src.density_ratio_estimation.triangular_vfm import TriangularVFM
+from src.density_ratio_estimation.triangular_vfm_2d import TriangularVFM2D
+from src.density_ratio_estimation.triangular_ctsm import TriangularCTSM
+from src.density_ratio_estimation.tabular_plugin import TabularPluginDRE, SmoothedTabularPluginDRE

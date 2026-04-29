@@ -237,3 +237,118 @@ def ratio_ode_s2(
             x_t = x_t + vf * dt
 
     return log_r
+
+
+def ratio_ode_triangular(
+    model: nn.Module,
+    xs: Tensor,
+    steps: int = 10000,
+    eps: float = 0.01,
+    device: str | None = None,
+    div_method: str = "hutch_rademacher",
+) -> Tensor:
+    """
+    integrate the ratio ODE backward from t=1 to t=0 in the one-hot setting.
+
+    the triangular setting uses three discrete classes via one-hot tensors
+    and evolves the log density ratio under all three ODE terms:
+
+      d/dt log r_t = div[v1(x|c_1) - v0(x|c_0)]
+                   + [v*(x|c_*) - v0(x|c_0)]^T s0(x|c_0)
+                   + [v1(x|c_1) - v*(x|c_*)]^T s1(x|c_1)
+
+    spatial state evolves under the class-2 (simulation) velocity v*(x|c_*).
+
+    args:
+        model: nn.Module with forward_from_onehot(t, x, y_onehot) ->
+               (velocity [B, D], score [B, D]) tuple.
+               t: [B, 1] time values
+               x: [B, D] positions
+               y_onehot: [B, 3] one-hot class labels (0, 1, or 2)
+
+        xs: [B, D] query points at t=1 (reference time)
+
+        steps: number of integration steps from t=1-eps to t=eps (default 10000)
+
+        eps: small time offset from boundaries (default 0.01)
+
+        device: optional device override. if none, infers from xs (default none)
+
+        div_method: divergence estimation method (default "hutch_rademacher")
+                    options: "exact" (backprop, slow but accurate)
+                             "hutch_gaussian" (hutchinson with gaussian noise)
+                             "hutch_rademacher" (hutchinson with rademacher noise)
+                    note: defaults to "hutch_rademacher" (not "exact") for
+                    MNIST-scale OOM safety; deviates from ratio_ode_s2 default.
+
+    returns:
+        [B] tensor of log density ratios at query points.
+
+    cost: 3 velocity + 2 score evaluations per step (plus divergence).
+    """
+    from src.models.flow.div_estimators import exact_div, hutch_div
+
+    if device is None:
+        device = xs.device.type if hasattr(xs.device, 'type') else str(xs.device)
+
+    if steps < 2:
+        raise ValueError(f"ratio_ode_triangular requires steps >= 2, got {steps}")
+
+    B, D = xs.shape
+    x_t = xs.clone().to(device)
+    log_r = torch.zeros(B, device=device, dtype=xs.dtype)
+
+    t_vals = torch.linspace(1.0 - eps, eps, steps, device=device, dtype=xs.dtype)
+    dt = t_vals[1] - t_vals[0]
+
+    model.eval()
+
+    # select divergence function once before loop
+    if div_method == "exact":
+        div_fn = exact_div
+    elif div_method == "hutch_gaussian":
+        div_fn = partial(hutch_div, noise="gaussian")
+    elif div_method == "hutch_rademacher":
+        div_fn = partial(hutch_div, noise="rademacher")
+    else:
+        raise ValueError(
+            f"unknown div_method: {div_method}. "
+            f"must be 'exact', 'hutch_gaussian', or 'hutch_rademacher'."
+        )
+
+    # build one-hot conditioning tensors once; eye[k] gives k-th standard basis row
+    eye3 = torch.eye(3, device=device, dtype=xs.dtype)
+    y0 = eye3[0].expand(B, 3).contiguous()  # [B, 3] all ones at index 0
+    y1 = eye3[1].expand(B, 3).contiguous()  # [B, 3] all ones at index 1
+    ystar = eye3[2].expand(B, 3).contiguous()  # [B, 3] all ones at index 2
+    y0_b1, y1_b1 = y0[:1], y1[:1]  # [1, 3] for vecfield closure
+
+    with torch.no_grad():
+        for i in range(steps - 1):
+            t_i = t_vals[i].item()
+            t_batch = torch.full((B, 1), t_i, device=device, dtype=xs.dtype)
+
+            v0, s0 = model.forward_from_onehot(t_batch, x_t, y0)
+            v1, s1 = model.forward_from_onehot(t_batch, x_t, y1)
+            vstar, _ = model.forward_from_onehot(t_batch, x_t, ystar)
+
+            # vecfield closure for divergence of (v1 - v0); single-sample y -> [D]
+            def vecfield(y_pt: Tensor) -> Tensor:
+                y_pt_b = y_pt.unsqueeze(0)
+                t_b = t_batch[:1]
+                v0_s = model.forward_from_onehot(t_b, y_pt_b, y0_b1)[0].squeeze(0)
+                v1_s = model.forward_from_onehot(t_b, y_pt_b, y1_b1)[0].squeeze(0)
+                return v1_s - v0_s
+
+            div = div_fn(vecfield, x_t)
+
+            corr_num = (vstar - v0) * s0  # [B, D]
+            corr_den = (v1 - vstar) * s1  # [B, D]
+            correction = (corr_num + corr_den).sum(dim=-1)  # [B]
+
+            d_log_r = div + correction
+            log_r = log_r + d_log_r * abs(dt)  # [B]
+
+            x_t = x_t + vstar * dt  # [B, D]
+
+    return log_r
