@@ -1,10 +1,11 @@
-"""builders for density ratio estimators sampled from HPO search spaces.
+"""universal builder functions for all DRE methods sampled from HPO.
 
-maps flat scalar hyperparameter dicts (from gen_hpo_configs.py) into fully-instantiated
-DensityRatioEstimator instances. each builder corresponds to one method: six baselines
-(TSM, CTSM, VFM, FMDRE, FMDRE_S2, MHTTDRE) and six triangular variants (TriangularCTSM
-V1/V2/V3, TriangularVFM V1/V2/V3). builders encapsulate estimator instantiation, path/curve
-assembly, and hyperparameter routing. all builders are pure functions with uniform signature.
+maps flat scalar hyperparameter dicts (from hpo_search_spaces.py) into
+fully-instantiated DensityRatioEstimator instances. each builder corresponds
+to one method and encapsulates estimator instantiation, classifier construction,
+path/curve assembly, and hyperparameter routing. all builders are pure functions
+with uniform signature: build_X(input_dim, device, num_waypoints, **flat_hp)
+-> estimator.
 """
 
 import torch
@@ -15,24 +16,32 @@ from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_deno
 from src.density_ratio_estimation.fmdre import FMDRE
 from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
 from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
-
+from src.density_ratio_estimation.bdre import BDRE
+from src.density_ratio_estimation.mdre import MDRE
+from src.density_ratio_estimation.tdre import TDRE
+from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
-from src.models.binary_classification import make_multi_head_binary_classifier
+from src.density_ratio_estimation.tabular_plugin import (
+    TabularPluginDRE,
+    SmoothedTabularPluginDRE,
+)
 
 from src.density_ratio_estimation.triangular_ctsm import TriangularCTSM
-from src.waypoints.piecewise_sb import PiecewiseSBCtsm1D
-from src.waypoints.triangular_continuous import BarycentricCtsm1D
-
 from src.density_ratio_estimation.triangular_ctsm_2d import TriangularCTSM2D
-from src.waypoints.triangular_continuous_2d import Stacked2DCtsm
+from src.density_ratio_estimation.triangular_vfm import TriangularVFM
+from src.density_ratio_estimation.triangular_vfm_2d import TriangularVFM2D
+
+from src.waypoints.piecewise_sb import PiecewiseSBCtsm1D, PiecewiseSBVfm1D
+from src.waypoints.triangular_continuous import BarycentricCtsm1D, BarycentricVfm1D
+from src.waypoints.triangular_continuous_2d import Stacked2DCtsm, Stacked2DVfm
 from src.waypoints.curve_2d import Curve2D
 
-from src.density_ratio_estimation.triangular_vfm import TriangularVFM
-from src.waypoints.piecewise_sb import PiecewiseSBVfm1D
-from src.waypoints.triangular_continuous import BarycentricVfm1D
-
-from src.density_ratio_estimation.triangular_vfm_2d import TriangularVFM2D
-from src.waypoints.triangular_continuous_2d import Stacked2DVfm
+from src.models.binary_classification import (
+    make_binary_classifier,
+    make_pairwise_binary_classifiers,
+    make_multi_head_binary_classifier,
+)
+from src.models.multiclass_classification import make_multiclass_classifier
 
 
 def build_TSM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TSM:
@@ -198,5 +207,96 @@ def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypo
         batch_size=flat_hp["batch_size"],
         eps=flat_hp["eps"],
         integration_steps=flat_hp["integration_steps"],
+        device=device
+    )
+
+
+def build_BDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> BDRE:
+    """return BDRE estimator with binary classifier.
+
+    flat_hp is forwarded to make_binary_classifier; missing keys use class defaults.
+    classifier_name defaults to "default"; override via flat_hp["classifier_name"].
+    """
+    classifier_name = flat_hp.pop("classifier_name", "default")
+    classifier = make_binary_classifier(name=classifier_name, input_dim=input_dim, **flat_hp)
+    return BDRE(classifier=classifier, device=device)
+
+
+def build_MDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> MDRE:
+    """return MDRE estimator with multiclass classifier (num_classes = num_waypoints).
+
+    flat_hp is forwarded to make_multiclass_classifier; missing keys use class defaults.
+    """
+    classifier_name = flat_hp.pop("classifier_name", "default")
+    classifier = make_multiclass_classifier(
+        name=classifier_name, input_dim=input_dim, num_classes=num_waypoints, **flat_hp,
+    )
+    return MDRE(classifier=classifier, device=device)
+
+
+def build_TDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TDRE:
+    """return TDRE estimator with (num_waypoints - 1) pairwise binary classifiers.
+
+    flat_hp is forwarded to make_pairwise_binary_classifiers.
+    """
+    classifier_name = flat_hp.pop("classifier_name", "default")
+    classifiers = make_pairwise_binary_classifiers(
+        name=classifier_name, num_classes=num_waypoints, input_dim=input_dim, **flat_hp,
+    )
+    return TDRE(classifiers=classifiers, num_waypoints=num_waypoints, device=device)
+
+
+def build_TriangularMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularMDRE:
+    """return TriangularMDRE estimator with triangular-path multiclass classifier.
+
+    constructs multiclass classifier with num_waypoints classes and training
+    hyperparams, then wraps in TriangularMDRE with midpoint oversampling and
+    gamma power params. classifier_name defaults to "default"; override via
+    flat_hp["classifier_name"] if needed.
+    """
+    classifier_name = flat_hp.pop("classifier_name", "default")
+    vertex = flat_hp.pop("vertex", 0.5)
+    midpoint_oversample = flat_hp.pop("midpoint_oversample")
+    gamma_power = flat_hp.pop("gamma_power")
+    classifier = make_multiclass_classifier(
+        name=classifier_name, input_dim=input_dim, num_classes=num_waypoints, **flat_hp,
+    )
+    return TriangularMDRE(
+        classifier=classifier,
+        device=device,
+        midpoint_oversample=midpoint_oversample,
+        gamma_power=gamma_power,
+        vertex=vertex,
+    )
+
+
+def build_TabularPluginDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TabularPluginDRE:
+    """return TabularPluginDRE (empirical plug-in) estimator.
+
+    TabularPluginDRE is a counting-based method with no HPO-tunable continuous
+    parameters. all config is passed as fixed kwargs set by the experiment.
+    """
+    return TabularPluginDRE(
+        n_states=flat_hp["n_states"],
+        n_actions=flat_hp["n_actions"],
+        encoding_cfg=flat_hp["encoding_cfg"],
+        decode=flat_hp["decode"],
+        smoothing_alpha=flat_hp.get("smoothing_alpha", 0.5),
+        device=device
+    )
+
+
+def build_SmoothedTabularPluginDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> SmoothedTabularPluginDRE:
+    """return SmoothedTabularPluginDRE (oracle smoothed plug-in) estimator.
+
+    SmoothedTabularPluginDRE is an oracle estimator with no HPO-tunable
+    continuous parameters. all config is passed as fixed kwargs set by the
+    experiment.
+    """
+    return SmoothedTabularPluginDRE(
+        n_states=flat_hp["n_states"],
+        n_actions=flat_hp["n_actions"],
+        encoding_cfg=flat_hp["encoding_cfg"],
+        smoothing_alpha=flat_hp.get("smoothing_alpha", 0.5),
         device=device
     )

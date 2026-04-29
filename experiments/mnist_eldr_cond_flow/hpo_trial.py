@@ -1,8 +1,10 @@
 """
-run a single hpo trial for tsm, ctsm, or vfm on pre-generated mnist eldr data.
+run a single hpo trial for the cond-flow experiment.
 
-loads hdf5 data for eval pairs, creates estimator with hyperparams from json,
-fits, predicts ldr, computes mae. saves results json.
+loads hdf5 data for eval pairs, creates estimator from SEARCH_SPACES (sourced
+from mnist_eldr_estimation), fits, predicts ldr, computes mae. saves results
+json. cond-flow port of mnist_eldr_estimation.hpo_trial; differs only in the
+config.yaml path it reads.
 """
 
 import argparse
@@ -30,15 +32,7 @@ def parse_args():
 
 
 def parse_eval_pairs(s):
-    """
-    split on comma, split each on colon, return list of (alpha_idx, pair_idx).
-
-    Args:
-        s: string like "0:0,1:0,2:0"
-
-    Returns:
-        list of (alpha_idx, pair_idx) tuples
-    """
+    """split comma+colon string into list of (alpha_idx, pair_idx) int tuples."""
     pairs = []
     for pair_str in s.split(","):
         alpha_idx, pair_idx = pair_str.split(":")
@@ -47,21 +41,7 @@ def parse_eval_pairs(s):
 
 
 def load_pair_data(data_dir, alpha_idx, pair_idx, device):
-    """
-    open {data_dir}/alpha_{alpha_idx}_pair_{pair_idx}.h5 and load data.
-
-    Args:
-        data_dir: directory containing hdf5 files
-        alpha_idx: alpha index
-        pair_idx: pair index
-        device: torch device
-
-    Returns:
-        dict with keys: pstar [N, 14], p0 [N, 14], p1 [N, 14], true_ldrs [N]
-
-    Raises:
-        FileNotFoundError: if file missing
-    """
+    """open {data_dir}/alpha_{a}_pair_{p}.h5 and load samples + true_ldrs onto device."""
     filename = f"{data_dir}/alpha_{alpha_idx}_pair_{pair_idx}.h5"
 
     if not os.path.exists(filename):
@@ -82,17 +62,7 @@ def load_pair_data(data_dir, alpha_idx, pair_idx, device):
 
 
 def eval_pair(estimator, data, requires_pstar):
-    """
-    fit estimator on p0/p1, predict on pstar, return mae.
-
-    Args:
-        estimator: density ratio estimator
-        data: dict with keys pstar, p0, p1, true_ldrs
-        requires_pstar: bool indicating whether fit() is called with three tensors
-
-    Returns:
-        mae as float
-    """
+    """fit estimator (with or without pstar), predict on pstar, return mae."""
     if requires_pstar:
         estimator.fit(data["p0"], data["p1"], data["pstar"])
     else:
@@ -103,15 +73,11 @@ def eval_pair(estimator, data, requires_pstar):
 
 
 def main():
-    """
-    main entry point.
-
-    parse args -> load configs -> create estimator per pair -> compute mae -> save json
-    """
+    """parse args -> load configs -> per-pair build+fit+eval -> save trial json."""
     args = parse_args()
 
-    # load experiment config
-    with open("experiments/mnist_eldr_estimation/config.yaml", "r") as f:
+    # load cond-flow experiment config
+    with open("experiments/mnist_eldr_cond_flow/config.yaml", "r") as f:
         exp_config = yaml.safe_load(f)
 
     data_dir = exp_config["data_dir"]
@@ -138,13 +104,11 @@ def main():
     requires_pstar = entry["requires_pstar"]
 
     for alpha_idx, pair_idx in eval_pairs:
-        # load data
         data = load_pair_data(data_dir, alpha_idx, pair_idx, device)
 
-        # create fresh estimator
+        # fresh estimator per pair
         estimator = builder_fn(input_dim=input_dim, device=device, num_waypoints=num_waypoints, **hyperparams)
 
-        # compute mae
         mae = eval_pair(estimator, data, requires_pstar)
 
         print(f"pair ({alpha_idx},{pair_idx}): MAE={mae:.4f}")
@@ -153,7 +117,6 @@ def main():
     elapsed = time.time() - t0
     mean_mae = np.mean(list(per_pair_mae.values()))
 
-    # save result json
     os.makedirs(args.output_dir, exist_ok=True)
     result = {
         "method": args.method,

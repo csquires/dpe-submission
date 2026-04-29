@@ -36,12 +36,16 @@ def load_trials(results_dir: Path, method: str, source: str, alpha: int) -> list
 
 	trials = []
 	for trial_json in sorted(trial_dir.glob("trial_*.json")):
-		with open(trial_json) as f:
-			trial = json.load(f)
-			trials.append(trial)
+		try:
+			with open(trial_json) as f:
+				trial = json.load(f)
+		except (json.JSONDecodeError, OSError) as e:
+			print(f"warning: skipping corrupt trial {trial_json}: {e}")
+			continue
+		trials.append(trial)
 
-	# sort by trial_id (string sort, lexicographic)
-	trials.sort(key=lambda t: t["trial_id"])
+	# sort by trial_id (numeric: trial_id is stored as int by gen_hpo_configs)
+	trials.sort(key=lambda t: int(t["trial_id"]))
 	return trials
 
 
@@ -59,36 +63,45 @@ def best_trial_for_alpha(trials: list[dict], alpha: int) -> dict | None:
 	# compute median MAE for each trial
 	trial_scores = []
 	for trial in trials:
-		per_pair_mae = trial.get("per_pair_mae", {})
-
-		# collect all MAE values for this alpha, filter NaN/Inf
-		mae_values = []
-		for p in range(100):  # upper bound on pair indices
-			key = f"{alpha}:{p}"
-			if key in per_pair_mae:
-				val = per_pair_mae[key]
-				# skip NaN and Inf
-				if isinstance(val, (int, float)) and math.isfinite(val):
-					mae_values.append(val)
-
-		# skip trial if no usable entries
+		mae_values = _alpha_maes(trial, alpha)
 		if not mae_values:
 			continue
-
-		# compute median
-		mae_median = sorted(mae_values)[len(mae_values) // 2]
-		if len(mae_values) % 2 == 0:
-			mae_median = (mae_median + sorted(mae_values)[len(mae_values) // 2 - 1]) / 2
-
-		trial_scores.append((mae_median, trial["trial_id"], trial))
+		trial_scores.append((_median(mae_values), int(trial["trial_id"]), trial))
 
 	if not trial_scores:
 		return None
 
-	# min by median MAE, then by trial_id (lexicographic)
+	# min by median MAE, then by trial_id (numeric)
 	trial_scores.sort(key=lambda x: (x[0], x[1]))
 	_, _, best = trial_scores[0]
 	return best
+
+
+def _alpha_maes(trial: dict, alpha: int) -> list:
+	"""extract finite per_pair_mae values for the given alpha by parsing keys.
+
+	the per_pair_mae dict is keyed by "<alpha>:<pair>" strings. discover all
+	such pairs dynamically (no hardcoded upper bound).
+	"""
+	per_pair_mae = trial.get("per_pair_mae", {})
+	prefix = f"{alpha}:"
+	out = []
+	for key, val in per_pair_mae.items():
+		if not key.startswith(prefix):
+			continue
+		if isinstance(val, (int, float)) and math.isfinite(val):
+			out.append(val)
+	return out
+
+
+def _median(values: list) -> float:
+	"""standard median over a non-empty list of floats."""
+	s = sorted(values)
+	n = len(s)
+	mid = n // 2
+	if n % 2 == 1:
+		return s[mid]
+	return (s[mid] + s[mid - 1]) / 2
 
 
 def collect_winners(
@@ -101,12 +114,19 @@ def collect_winners(
 	methods/alphas absent from disk are absent from output.
 	"""
 	if not methods:
-		# auto-discover: list immediate subdirs of results_dir, exclude 'refined'
-		methods = [
+		# auto-discover: list immediate subdirs of results_dir, exclude 'refined',
+		# and intersect with registered methods so stray dirs do not pollute winners.
+		from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
+		registered = set(SEARCH_SPACES.keys())
+		discovered = [
 			d.name
 			for d in results_dir.iterdir()
 			if d.is_dir() and d.name != "refined"
 		]
+		methods = [m for m in discovered if m in registered]
+		stray = [m for m in discovered if m not in registered]
+		if stray:
+			print(f"warning: ignoring unregistered method dirs: {sorted(stray)}")
 
 	winners = {}
 
@@ -130,23 +150,8 @@ def collect_winners(
 				continue
 
 			# compute best median MAE for output
-			per_pair_mae = best.get("per_pair_mae", {})
-			mae_values = []
-			for p in range(100):
-				key = f"{alpha}:{p}"
-				if key in per_pair_mae:
-					val = per_pair_mae[key]
-					if isinstance(val, (int, float)) and math.isfinite(val):
-						mae_values.append(val)
-
-			if mae_values:
-				mae_median = sorted(mae_values)[len(mae_values) // 2]
-				if len(mae_values) % 2 == 0:
-					mae_median = (
-						mae_median + sorted(mae_values)[len(mae_values) // 2 - 1]
-					) / 2
-			else:
-				mae_median = float("nan")
+			mae_values = _alpha_maes(best, alpha)
+			mae_median = _median(mae_values) if mae_values else float("nan")
 
 			method_winners[alpha] = {
 				"trial_id": int(best["trial_id"]),
@@ -183,11 +188,14 @@ def main():
 	parser = argparse.ArgumentParser(
 		description="Select best HPO trials per (method, alpha) and write to YAML"
 	)
+	default_results_dir = os.path.expandvars(
+		"/data/user_data/$USER/dpe-submission/mnist_eldr_estimation/hpo_results"
+	)
 	parser.add_argument(
 		"--results-dir",
 		type=str,
-		default="experiments/mnist_eldr_estimation/hpo_results",
-		help="root HPO results directory",
+		default=default_results_dir,
+		help="root HPO results directory (default: $DATA_ROOT/hpo_results)",
 	)
 	parser.add_argument(
 		"--output",
