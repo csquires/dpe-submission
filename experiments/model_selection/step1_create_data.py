@@ -1,7 +1,7 @@
 import os
 
 import h5py  # HDF5
-import yaml
+from src.utils.io import _load_config
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -10,7 +10,7 @@ from torch.distributions import MultivariateNormal
 from experiments.utils.prescribed_kls import create_two_gaussians_kl_range
 
 
-config = yaml.load(open('experiments/model_selection/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = _load_config('experiments/model_selection/config.yaml')
 # directories
 DATA_DIR = config['data_dir']
 # dataset parameters

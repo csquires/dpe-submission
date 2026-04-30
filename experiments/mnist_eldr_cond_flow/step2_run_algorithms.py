@@ -3,6 +3,7 @@ import h5py
 import numpy as np
 import os
 import torch
+import warnings
 import yaml
 from pathlib import Path
 
@@ -89,6 +90,10 @@ def create_estimator(method, config, device, alpha_idx=0, winners=None):
     HPO methods (in SEARCH_SPACES) route through the registered builder with
     per-(method, alpha) hyperparams from winners.yaml. missing entries fall
     back to class defaults (with a warning). non-HPO methods stay in if/elif.
+
+    winners.yaml format: {method: {alpha_idx: [{rank0}, {rank1}, {rank2}]}}
+    (after F_mnist_pick changes to top-3 list). extracts rank-0 entry (best).
+    backwards compat: dict format triggers deprecation warning.
     """
     input_dim = config["latent_dim"]
     num_waypoints = config["num_waypoints"]
@@ -96,7 +101,21 @@ def create_estimator(method, config, device, alpha_idx=0, winners=None):
 
     if method in SEARCH_SPACES:
         entry = winners.get(method, {}).get(alpha_idx, {})
-        hp = entry.get("hyperparams", {})
+
+        # extract rank-0 from top-3 list format; fallback to dict format with warning
+        if isinstance(entry, list):
+            hp = entry[0].get("hyperparams", {}) if entry else {}
+        elif isinstance(entry, dict):
+            warnings.warn(
+                f"winners.yaml uses old single-winner dict format; "
+                f"re-run pick_winners with top-K logic",
+                DeprecationWarning,
+                stacklevel=3
+            )
+            hp = entry.get("hyperparams", {})
+        else:
+            hp = {}
+
         if not hp:
             print(
                 f"warning: no winners.yaml entry for ({method}, alpha={alpha_idx}); "
