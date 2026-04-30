@@ -135,7 +135,7 @@ def flow_state_hash(ckpt_path: str) -> str:
         skip non-tensor entries defensively.
         return first 8 chars of sha256 digest.
     """
-    state = torch.load(ckpt_path, map_location='cpu')
+    state = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     if isinstance(state, dict) and 'state_dict' in state:
         state = state['state_dict']
 

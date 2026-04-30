@@ -63,7 +63,7 @@ def load_or_encode(
 	        'labels': int64 torch.Tensor [N] on CPU
 	"""
 	if os.path.exists(cache_path) and not force:
-		data = torch.load(cache_path, map_location='cpu')
+		data = torch.load(cache_path, map_location='cpu', weights_only=False)
 		return data
 
 	embeddings = encode_corpus(texts, **encode_kwargs)
