@@ -21,14 +21,48 @@ DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 processed_results_filename = f'{PROCESSED_RESULTS_DIR}/errors_d={DATA_DIM},nsamples={NSAMPLES}.h5'
 
 colors = {
+    # base methods
     "BDRE": "#1f77b4",
     "TDRE": "#ff7f0e",
     "MDRE": "#2ca02c",
     "TSM": "#d62728",
-    "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
+    "TriangularMDRE": "#aec7e8",
+    # named variants
+    "MDRE_15": "#2ca02c",
+    "TDRE_5": "#ff7f0e",
+    # ctsm family
+    "CTSM": "#e377c2",
+    "TriangularCTSM_V1": "#e377c2",
+    "TriangularCTSM_V2": "#f7b6d2",
+    "TriangularCTSM_V3": "#c5b0d5",
+    # fmdre family
+    "FMDRE": "#7f7f7f",
+    "FMDRE_S2": "#c7c7c7",
+    "TriangularFMDRE": "#b5a8c0",
+    # triangular tsm
+    "TriangularTSM": "#ff9897",
+    # triangular vfm variants
+    "TriangularVFM_V1": "#9467bd",
+    "TriangularVFM_V2": "#c5b0d5",
+    "TriangularVFM_V3": "#bcbd22",
+    # multi-head variant
+    "MultiHeadTriangularTDRE": "#17becf",
+    # aliases (for backward compatibility)
+    "MHTTDRE": "#17becf",
+    "TriangularCTSM": "#e377c2",
+    "TriangularVFM": "#9467bd",
 }
-legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
+legend_order = [
+    "BDRE", "TDRE", "MDRE", "TSM", "VFM",
+    "TriangularMDRE",
+    "MDRE_15", "TDRE_5",
+    "CTSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3",
+    "FMDRE", "FMDRE_S2", "TriangularFMDRE",
+    "TriangularTSM",
+    "TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3",
+    "MultiHeadTriangularTDRE",
+]
 
 # Load processed results
 with h5py.File(processed_results_filename, 'r') as f:
@@ -56,7 +90,7 @@ for i, alpha in enumerate(ALPHAS):
             DESIGN_EIG_PERCENTAGES,
             mae[:, i],
             label=alg_name,
-            color=colors.get(alg_name, "#333333"),
+            color=colors.get(alg_name, f"#{hash(alg_name) % 0xffffff:06x}"),
             linewidth=1.0,
         )
     axes[i].set_title(fr"$\alpha = {alpha}$")

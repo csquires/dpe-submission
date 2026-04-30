@@ -4,10 +4,11 @@ import h5py
 from einops import reduce
 import numpy as np
 from scipy import stats
-import yaml
+
+from src.utils.io import _load_config
 
 
-config = yaml.load(open('experiments/model_selection/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = _load_config('experiments/model_selection/config.yaml')
 
 # directories
 DATA_DIR = config['data_dir']

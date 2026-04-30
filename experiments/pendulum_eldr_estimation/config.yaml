@@ -57,8 +57,6 @@ seed: 1729                 # int; global reproducibility seed
 
 # === Algorithms (List + Waypoints) ===
 algorithms:
-  - SmoothedTabularPluginDRE
-  - TabularPluginDRE
   - BDRE
   - MDRE
   - TriangularMDRE

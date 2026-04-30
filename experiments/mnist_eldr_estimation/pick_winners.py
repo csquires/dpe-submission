@@ -1,10 +1,13 @@
 """
-pick_winners.py: aggregate HPO trial results and select best per (method, alpha).
+pick_winners.py: aggregate HPO trial results and select top-K per (method, bucket).
 
-main loop: discover methods from hpo_results/ subdirs → for each (method, alpha):
-check refined dir first, fallback to broad → load all trials → compute median MAE
-over per-pair entries for that alpha → select trial with min median (tie-break by
-trial_id) → write hierarchical winners.yaml with trial info and hyperparams.
+main loop: discover methods from hpo_results/ subdirs → apply legacy alias resolution
+→ for each (method, bucket): check refined dir first, fallback to broad → load all trials
+→ compute median MAE over per-bucket entries → select top-k by mae (sorted ascending) →
+write hierarchical winners.yaml as lists of trial dicts with trial_id, mae, hyperparams.
+
+shared by mnist_eldr_estimation, mnist_eldr_cond_flow, dbpedia_eldr_cond_flow via
+import from experiments.mnist_eldr_estimation.pick_winners.
 """
 
 import argparse
@@ -15,17 +18,23 @@ from pathlib import Path
 
 import yaml
 
+from experiments.utils.hpo.registry import LEGACY_ALIASES
 
-def load_trials(results_dir: Path, method: str, source: str, alpha: int) -> list[dict]:
+
+def load_trials(results_dir: Path, method: str, source: str, bucket_idx: int, bucket_axis: str) -> list[dict]:
 	"""
-	load all trial JSONs for (method, source, alpha).
-	source in {'refined', 'broad'}. refined → hpo_results/refined/<method>/alpha_<alpha>/.
-	broad → hpo_results/<method>/ (ignores alpha, returns all broad trials).
-	returns trials sorted by trial_id (ascending, lexicographic).
+	load all trial JSONs for (method, source, bucket_idx, bucket_axis).
+
+	source in {'refined', 'broad'}.
+	refined → hpo_results/refined/<method>/<bucket_axis>_<bucket_idx>/.
+	broad → hpo_results/<method>/ (ignores bucket, returns all broad trials).
+	bucket_axis in {'alpha_idx', 'kl_idx', ...} (used to construct path).
+
+	returns trials sorted by trial_id (ascending, numeric).
 	returns empty list if dir does not exist.
 	"""
 	if source == "refined":
-		trial_dir = results_dir / "refined" / method / f"alpha_{alpha}"
+		trial_dir = results_dir / "refined" / method / f"{bucket_axis}_{bucket_idx}"
 	elif source == "broad":
 		trial_dir = results_dir / method
 	else:
@@ -44,47 +53,49 @@ def load_trials(results_dir: Path, method: str, source: str, alpha: int) -> list
 			continue
 		trials.append(trial)
 
-	# sort by trial_id (numeric: trial_id is stored as int by gen_hpo_configs)
 	trials.sort(key=lambda t: int(t["trial_id"]))
 	return trials
 
 
-def best_trial_for_alpha(trials: list[dict], alpha: int) -> dict | None:
+def top_trials_for_alpha(trials: list[dict], bucket_idx: int, k: int, bucket_axis: str = "alpha_idx") -> list[dict]:
 	"""
-	select best trial for given alpha.
+	select top-k trials for given bucket, sorted ascending by mae (best first).
+
 	filter per-pair MAEs: remove NaN and Inf before computing median.
-	compute median MAE for each trial over keys matching f"{alpha}:{pair_idx}".
-	return trial with min median MAE (tie-break: smallest trial_id).
-	return None if all trials have zero usable MAE entries for alpha.
+	compute median MAE for each trial over keys matching f"{bucket_idx}:<pair_idx>".
+	return list of k trial dicts sorted by (mae, trial_id), ascending (best first).
+	return all trials if fewer than k have finite MAE entries.
+	return empty list if all trials have zero usable MAE entries for bucket.
+
+	bucket_axis argument is kept for compatibility but not used in key parsing
+	(keys are always f"{bucket_idx}:<pair_idx>" regardless of bucket_axis name).
 	"""
 	if not trials:
-		return None
+		return []
 
-	# compute median MAE for each trial
 	trial_scores = []
 	for trial in trials:
-		mae_values = _alpha_maes(trial, alpha)
+		mae_values = _alpha_maes(trial, bucket_idx)
 		if not mae_values:
 			continue
 		trial_scores.append((_median(mae_values), int(trial["trial_id"]), trial))
 
 	if not trial_scores:
-		return None
+		return []
 
-	# min by median MAE, then by trial_id (numeric)
 	trial_scores.sort(key=lambda x: (x[0], x[1]))
-	_, _, best = trial_scores[0]
-	return best
+	return [t for _, _, t in trial_scores[:k]]
 
 
-def _alpha_maes(trial: dict, alpha: int) -> list:
-	"""extract finite per_pair_mae values for the given alpha by parsing keys.
+def _alpha_maes(trial: dict, bucket_idx: int) -> list:
+	"""
+	extract finite per_pair_mae values for the given bucket by parsing keys.
 
-	the per_pair_mae dict is keyed by "<alpha>:<pair>" strings. discover all
-	such pairs dynamically (no hardcoded upper bound).
+	the per_pair_mae dict is keyed by "<bucket_idx>:<pair>" strings.
+	discover all such pairs dynamically (no hardcoded upper bound).
 	"""
 	per_pair_mae = trial.get("per_pair_mae", {})
-	prefix = f"{alpha}:"
+	prefix = f"{bucket_idx}:"
 	out = []
 	for key, val in per_pair_mae.items():
 		if not key.startswith(prefix):
@@ -105,60 +116,121 @@ def _median(values: list) -> float:
 
 
 def collect_winners(
-	results_dir: Path, methods: list[str], alphas: list[int]
+	hpo_results_dir: Path,
+	methods: list[str],
+	alphas: list[int],
+	search_spaces: dict,
+	top_k: int = 3,
+	bucket_axis: str = "alpha_idx",
+	legacy_aliases: dict[str, str] | None = None,
 ) -> dict:
 	"""
-	aggregate winners across all (method, alpha) pairs.
-	auto-discover methods if methods list is empty: list immediate subdirs of results_dir.
-	returns hierarchical dict {method: {alpha: {trial_id, mae_median, source, hyperparams}}}.
-	methods/alphas absent from disk are absent from output.
+	aggregate winners across all (method, bucket) pairs.
+
+	auto-discover methods if methods list is empty: list immediate subdirs of hpo_results_dir,
+	apply legacy alias resolution, and intersect with search_spaces keys.
+
+	args:
+		hpo_results_dir: root HPO results directory.
+		methods: list of method names to process. if empty, auto-discover.
+		alphas: list of bucket indices (alpha_idx, kl_idx, etc).
+		search_spaces: dict of canonical method names (used for intersection in auto-discovery).
+		top_k: number of top trials to retain per (method, bucket). default 3.
+		bucket_axis: name of bucket axis for path construction (e.g., "alpha_idx", "kl_idx").
+		legacy_aliases: dict mapping old dir names to canonical names (e.g., MHTTDRE → MultiHeadTriangularTDRE).
+			if None, uses LEGACY_ALIASES from registry. this parameter allows tests to override.
+
+	returns:
+		hierarchical dict {method: {bucket: [{trial_id, mae, source, hyperparams}, ...]}}
+		where each bucket maps to a sorted list of top-k trial dicts (ascending by mae).
+		methods/buckets absent from disk are absent from output.
 	"""
-	if not methods:
-		# auto-discover: list immediate subdirs of results_dir, exclude 'refined',
-		# and intersect with registered methods so stray dirs do not pollute winners.
-		from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
-		registered = set(SEARCH_SPACES.keys())
+	if legacy_aliases is None:
+		legacy_aliases = LEGACY_ALIASES
+
+	auto_discover = not methods
+	alias_dirs = {}  # alias_name -> canonical_name for this run
+
+	if auto_discover:
+		# auto-discover: list immediate subdirs of hpo_results_dir, exclude 'refined',
+		# apply legacy alias resolution, and intersect with search_spaces.
+		canonical = set(search_spaces.keys())
 		discovered = [
 			d.name
-			for d in results_dir.iterdir()
+			for d in hpo_results_dir.iterdir()
 			if d.is_dir() and d.name != "refined"
 		]
-		methods = [m for m in discovered if m in registered]
-		stray = [m for m in discovered if m not in registered]
-		if stray:
-			print(f"warning: ignoring unregistered method dirs: {sorted(stray)}")
+
+		# re-key alias dirs to canonical; collect all canonical dirs to process
+		dirs_by_canonical = {}
+		for d in discovered:
+			if d in canonical:
+				# already canonical
+				canonical_name = d
+			elif d in legacy_aliases:
+				# alias: map to canonical
+				canonical_name = legacy_aliases[d]
+				alias_dirs[d] = canonical_name
+				if canonical_name in canonical:
+					print(f"info: treating legacy alias {d}/ as {canonical_name}")
+				else:
+					# canonical not in search_spaces; skip
+					print(f"warning: legacy alias {d} maps to {canonical_name}, not in search_spaces; skipping")
+					continue
+			else:
+				# stray dir, not canonical and not aliased
+				continue
+
+			if canonical_name not in dirs_by_canonical:
+				dirs_by_canonical[canonical_name] = []
+			dirs_by_canonical[canonical_name].append(d)
+
+		methods = sorted(dirs_by_canonical.keys())
 
 	winners = {}
 
 	for method in sorted(methods):
 		method_winners = {}
 
-		for alpha in alphas:
+		for bucket_idx in alphas:
 			# try refined first, then broad
-			trials = load_trials(results_dir, method, "refined", alpha)
+			trials = load_trials(hpo_results_dir, method, "refined", bucket_idx, bucket_axis)
 			source = "refined"
 
 			if not trials:
-				trials = load_trials(results_dir, method, "broad", alpha)
+				trials = load_trials(hpo_results_dir, method, "broad", bucket_idx, bucket_axis)
 				source = "broad"
 
 			if not trials:
 				continue
 
-			best = best_trial_for_alpha(trials, alpha)
-			if best is None:
+			# also check if legacy alias dirs exist; merge their trials (auto-discover mode only)
+			if auto_discover:
+				for old_name, canonical_name in alias_dirs.items():
+					if canonical_name == method:
+						alias_trials = load_trials(hpo_results_dir, old_name, "broad", bucket_idx, bucket_axis)
+						if alias_trials:
+							# deduplicate by trial_id: keep first occurrence
+							existing_ids = {int(t["trial_id"]) for t in trials}
+							for t in alias_trials:
+								tid = int(t["trial_id"])
+								if tid not in existing_ids:
+									trials.append(t)
+									existing_ids.add(tid)
+
+			top = top_trials_for_alpha(trials, bucket_idx, top_k, bucket_axis)
+			if not top:
 				continue
 
-			# compute best median MAE for output
-			mae_values = _alpha_maes(best, alpha)
-			mae_median = _median(mae_values) if mae_values else float("nan")
-
-			method_winners[alpha] = {
-				"trial_id": int(best["trial_id"]),
-				"mae_median": float(mae_median),
-				"source": source,
-				"hyperparams": best.get("hyperparams", {}),
-			}
+			method_winners[bucket_idx] = [
+				{
+					"trial_id": int(t["trial_id"]),
+					"mae": float(_median(_alpha_maes(t, bucket_idx))),
+					"source": source,
+					"hyperparams": t.get("hyperparams", {}),
+				}
+				for t in top
+			]
 
 		if method_winners:
 			winners[method] = method_winners
@@ -185,8 +257,10 @@ def main():
 	parse CLI args, auto-discover methods from results_dir, collect winners,
 	write YAML, print summary.
 	"""
+	from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
+
 	parser = argparse.ArgumentParser(
-		description="Select best HPO trials per (method, alpha) and write to YAML"
+		description="Select top-K HPO trials per (method, alpha) and write to YAML"
 	)
 	default_results_dir = os.path.expandvars(
 		"/data/user_data/$USER/dpe-submission/mnist_eldr_estimation/hpo_results"
@@ -209,6 +283,12 @@ def main():
 		default="0,1,2,3",
 		help="comma-separated alpha indices",
 	)
+	parser.add_argument(
+		"--top-k",
+		type=int,
+		default=3,
+		help="number of top trials to retain per (method, alpha) (default 3)",
+	)
 
 	args = parser.parse_args()
 
@@ -219,12 +299,20 @@ def main():
 	# auto-discover methods
 	methods = []
 
-	winners = collect_winners(results_dir, methods, alphas)
+	winners = collect_winners(
+		results_dir,
+		methods,
+		alphas,
+		search_spaces=SEARCH_SPACES,
+		top_k=args.top_k,
+		bucket_axis="alpha_idx",
+	)
 	write_winners_yaml(winners, output_path)
 
 	method_count = len(winners)
-	alpha_count = sum(len(v) for v in winners.values())
-	print(f"wrote {method_count} methods, {alpha_count} total (method, alpha) pairs")
+	bucket_count = sum(len(v) for v in winners.values())
+	total_trials = sum(len(trials) for d in winners.values() for trials in d.values())
+	print(f"wrote {method_count} methods, {bucket_count} total (method, alpha) pairs, {total_trials} total winners")
 	print(f"output: {output_path}")
 
 

@@ -12,6 +12,7 @@ import torch
 
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.ctsm import CTSM
+from src.density_ratio_estimation.triangular_tsm import TriangularTSM
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 from src.density_ratio_estimation.fmdre import FMDRE
 from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
@@ -52,6 +53,11 @@ def build_TSM(input_dim: int, device: str | torch.device, num_waypoints: int, **
 def build_CTSM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> CTSM:
     """return CTSM estimator initialized from flat_hp dict."""
     return CTSM(input_dim=input_dim, device=device, **flat_hp)
+
+
+def build_TriangularTSM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularTSM:
+    """return TriangularTSM estimator initialized from flat_hp dict."""
+    return TriangularTSM(input_dim=input_dim, device=device, **flat_hp)
 
 
 def build_VFM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp):

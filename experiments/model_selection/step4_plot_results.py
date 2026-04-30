@@ -1,4 +1,5 @@
 import os
+import logging
 
 import h5py
 import numpy as np
@@ -6,8 +7,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import yaml
 
+from src.utils.io import _load_config
 
-config = yaml.load(open('experiments/model_selection/config1.yaml', 'r'), Loader=yaml.FullLoader)
+logger = logging.getLogger(__name__)
+
+config = _load_config('experiments/model_selection/config.yaml')
 # directories
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']
@@ -43,27 +47,30 @@ with h5py.File(filename, 'r') as f:
 
 # colors - consistent across all experiments
 colors = {
+    # canonical names (new results.h5)
     "BDRE": "#1f77b4",
-    "MDRE": "#2ca02c",
+    "TDRE_5": "#ff7f0e",
+    "MDRE_15": "#2ca02c",
+    "MultiHeadTriangularTDRE": "#c3d922",
+    "TriangularCTSM_V1": "#17becf",
+    "TriangularVFM_V1": "#9467bd",
     "TSM": "#d62728",
+    # legacy aliases (backward compat for old results.h5)
+    "TriangularTDRE": "#c3d922",       # alias for MultiHeadTriangularTDRE
     "TriangularTSM": "#17becf",
-    "TriangularTDRE": "#c3d922",
-    "TriangularTDRE_Gauss": "#000000",
     "TriangularMDRE": "#aec7e8",
     "TriangularMDRE_Gauss": "#9edae5",
-    "TDRE_5": "#ff7f0e",
-    "TDRE_10": "#8c564b",  # default TDRE
+    "TriangularTDRE_Gauss": "#000000",
+    "TDRE_10": "#8c564b",
     "TDRE_15": "#9467bd",
     "TDRE_20": "#e377c2",
     "TDRE_30": "#7f7f7f",
     "MDRE_5": "#17becf",
-    "MDRE_10": "#7f7f7f",  # default MDRE
-    "MDRE_15": "#2ca02c",
-    "MDRE_15_Gauss": "#98df8a",
+    "MDRE_10": "#7f7f7f",
     "MDRE_20": "#8c564b",
     "MDRE_30": "#e377c2",
+    "MDRE_15_Gauss": "#98df8a",
     "VFM": "#9467bd",
-    # "Spatial": "#9467bd",
 }
 
 tdre_order = ["TDRE_5"]
@@ -121,6 +128,7 @@ def plot_metric(data_by_kl, ylabel, figure_name, stats_file, use_log_y=True, hig
     sns.set_style('whitegrid')
     plt.style.use('full-width.mplstyle')
     fig, axes = plt.subplots(figsize=(10, 3), nrows=1, ncols=NTEST_SETS)
+    axes = np.atleast_1d(axes)
 
     algorithms = get_algorithms_to_plot(avg_by_kl)
 
@@ -138,6 +146,8 @@ def plot_metric(data_by_kl, ylabel, figure_name, stats_file, use_log_y=True, hig
                 y_vals = avg_by_kl[alg_key][:, i]
                 axes[i].plot(KL_DISTANCES, y_vals, label=alg_label, color=colors.get(alg_key, "#333333"), linewidth=1.0)
                 stats_file.write(f"  {alg_label} ({alg_key}): {y_vals.tolist()}\n")
+            else:
+                logger.info(f"Method {alg_key} not found in {ylabel} data; skipping.")
         stats_file.write("\n")
 
         if use_log_y and not higher_is_better:
@@ -179,6 +189,7 @@ def plot_stratified_mae(stratified_data, stats_file):
         sns.set_style('whitegrid')
         plt.style.use('full-width.mplstyle')
         fig, axes = plt.subplots(figsize=(12, 3), nrows=1, ncols=4)
+        axes = np.atleast_1d(axes)
 
         algorithms = get_algorithms_to_plot(stratified_data)
 
@@ -247,15 +258,17 @@ with open(stats_filename, 'w') as stats_file:
     if maes_by_kl:
         plot_metric(maes_by_kl, 'Mean Absolute Error\n(Test Set)', 'Completed', stats_file)
 
-    # Other plots disabled for paper-ready output
-    # if median_aes_by_kl:
-    #     plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
-    # if spearman_by_kl:
-    #     plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
-    #                 use_log_y=False, higher_is_better=True)
-    # if trimmed_mae_iqr_by_kl:
-    #     plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
-    # if stratified_mae_by_kl:
-    #     plot_stratified_mae(stratified_mae_by_kl, stats_file)
+    if median_aes_by_kl:
+        plot_metric(median_aes_by_kl, 'Median Absolute Error\n(Test Set)', 'median_ae', stats_file)
+
+    if spearman_by_kl:
+        plot_metric(spearman_by_kl, 'Spearman Correlation', 'spearman_correlation', stats_file,
+                    use_log_y=False, higher_is_better=True)
+
+    if trimmed_mae_iqr_by_kl:
+        plot_metric(trimmed_mae_iqr_by_kl, 'Trimmed MAE (IQR)\n(Test Set)', 'trimmed_mae_iqr', stats_file)
+
+    if stratified_mae_by_kl:
+        plot_stratified_mae(stratified_mae_by_kl, stats_file)
 
 print(f"Stats written to: {stats_filename}")

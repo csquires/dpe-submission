@@ -18,6 +18,7 @@ import json
 import logging
 import math
 import os
+import random
 import time
 from typing import Callable
 
@@ -61,13 +62,20 @@ def run_trial(
             (e.g. 'per_design_eig_abs_err', 'per_cell_ldr_mae').
 
     returns: the result dict that was written to disk.
+
+    note: per-cell seeding covers torch, numpy, and python random; subprocess workers
+        inherit the parent's PRNG state but may diverge if they fork. for distributed
+        multi-worker reproducibility, seed workers explicitly in their initialization code.
     """
     per_cell: dict[str, float] = {}
     t0 = time.perf_counter()
 
     for cell in eval_cells:
         cs = cell_id(cell)
-        torch.manual_seed(hash((experiment, trial_id, cs)) & 0xFFFFFFFF)
+        seed_int = hash((experiment, trial_id, cs)) & 0xFFFFFFFF
+        torch.manual_seed(seed_int)
+        np.random.seed(seed_int)
+        random.seed(seed_int)
         try:
             metric = eval_cell(cell)
         except FileNotFoundError as e:

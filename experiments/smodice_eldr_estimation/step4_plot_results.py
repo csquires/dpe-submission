@@ -22,13 +22,24 @@ import warnings
 METHOD_COLORS = {
     'TabularPluginDRE': '#1f77b4',           # blue
     'BDRE': '#2ca02c',                       # green
-    'MDRE': '#d62728',                       # red
+    'MDRE_15': '#d62728',                    # red (renamed from MDRE)
     'TriangularMDRE': '#ff7f0e',             # orange
     'MultiHeadTriangularTDRE': '#9467bd',   # purple
     'TSM': '#8c564b',                        # brown
     'CTSM': '#e377c2',                       # pink
-    'TriangularCTSM': '#7f7f7f',             # gray
-    'TriangularVFM': '#bcbd22',              # olive
+    'TriangularCTSM_V1': '#7f7f7f',          # gray (renamed from TriangularCTSM)
+    'TriangularVFM_V1': '#bcbd22',           # olive (renamed from TriangularVFM)
+    # new methods (distinct colors from standard palette)
+    'TriangularTSM': '#17becf',              # cyan
+    'FMDRE': '#ff9896',                      # light red
+    'FMDRE_S2': '#aec7e8',                   # light blue
+    'TriangularFMDRE': '#c5b0d5',            # light purple
+    'VFM': '#c49c94',                        # light brown
+    'TDRE_5': '#f7b6d2',                     # light pink
+    'TriangularCTSM_V2': '#c7c7c7',          # light gray
+    'TriangularCTSM_V3': '#9edae5',          # light cyan
+    'TriangularVFM_V2': '#393b79',           # dark blue
+    'TriangularVFM_V3': '#637939',           # dark green
 }
 
 # oracle reference: rendered as separate annotation, not a "method"
