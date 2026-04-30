@@ -5,25 +5,26 @@ import torchvision.transforms as transforms
 from scipy.special import xlogy
 
 
-def sample_dirichlet_weights(alpha: float, n_draws: int, seed: int | None = None) -> np.ndarray:
+def sample_dirichlet_weights(alpha: float, n_draws: int, seed: int | None = None, K: int = 10) -> np.ndarray:
     """
     draw weight vectors from Dirichlet distribution for 10 MNIST classes.
 
     args:
-        alpha: concentration parameter for Dirichlet(alpha * ones(10))
+        alpha: concentration parameter for Dirichlet(alpha * ones(K))
         n_draws: number of weight vectors to draw
         seed: random seed for reproducibility (default: None)
+        K: number of classes / dimensionality of Dirichlet (default: 10)
 
     returns:
-        [n_draws, 10] numpy array where each row sums to 1.0
+        [n_draws, K] numpy array where each row sums to 1.0
 
     procedure:
         create local rng (seeded if seed is not None).
-        call rng.dirichlet(alpha * ones(10), size=n_draws).
+        call rng.dirichlet(alpha * ones(K), size=n_draws).
         return result.
     """
     rng = np.random.RandomState(seed)
-    return rng.dirichlet(alpha * np.ones(10), size=n_draws)
+    return rng.dirichlet(alpha * np.ones(K), size=n_draws)
 
 
 def subsample_mnist(dataset, weights: np.ndarray, min_per_class: int = 10) -> list[int]:
