@@ -1,14 +1,16 @@
 # Gridworld MDP definition
 gridworld:
-  L: 8                              # int, grid side length; |S| = L^2 = 64 (must be >= 2)
+  L: 16                             # int, grid side length; |S| = L^2 = 256 (must be >= 2)
   p_slip: 0.1                       # float in [0, 1]; stochasticity
-  gamma: 0.995                      # float in (0, 1); discount factor; bumped from 0.99 for longer effective horizon
-  terminals: [[0, 0], [7, 7]]       # list of [row, col]; must match anti_goal and expert_goal
-  expert_goal: [7, 7]               # [row, col]; must be in terminals
+  gamma: 0.995                      # float in (0, 1); discount factor
+  terminals: [[0, 0], [15, 15]]     # list of [row, col]; must match anti_goal and expert_goal
+  expert_goal: [15, 15]             # [row, col]; must be in terminals
   anti_goal: [0, 0]                 # [row, col]; must be in terminals (different from expert_goal)
-  tau: 0.02                         # float > 0; softmax temperature; lowered from 0.1 to lift K1 ceiling from ~1.6 to ~4.8 nats
+  tau: 0.1                          # float > 0; softmax temperature
+  reward_kind: gaussian             # str; "sparse" (1 at goal entry) or "gaussian" (dense; r ∝ exp(-d²/σ²))
+  reward_sigma: 1.0                 # float > 0; bandwidth of gaussian reward shaping (only used if reward_kind=gaussian)
   mu0_kind: distance_quadratic      # str; "uniform" or "distance_quadratic"
-  mu0_centers: [[0, 0], [7, 7]]     # list of [row, col]; centers for distance_quadratic mu0. mu0(s) ∝ Σ_c ||s − c||² → off-diagonal corners get max mass
+  mu0_centers: [[0, 0], [15, 15]]   # list of [row, col]; centers for distance_quadratic mu0
 
 # State-action encoding (selects phi: (s,a) -> R^d)
 encoding:
@@ -23,10 +25,10 @@ encoding:
 
 # KL divergence target sweep
 kl_targets:
-  k1_values: [1.1, 1.3, 1.9, 3.7]   # float list; sorted ascending
-  k2_values: [0.5, 1.0, 2.0]        # float list; sorted ascending
+  k1_values: [1.2, 1.6, 2.8, 6.4]   # float list; sorted ascending. all 12 (K1, K2) cells feasible
+  k2_values: [0.5, 1.0, 2.0]         # float list; sorted ascending
   hard_corner_threshold: 1.0e+9      # sentinel; hard-corner branch unused since seeds_default == seeds_hard. note: yaml 1.1 requires the explicit `+` for scientific notation to parse as float.
-  seeds_default: 40                  # int > 0; seeds per cell (12 cells total)
+  seeds_default: 40                  # int > 0; seeds per cell (12 cells; all feasible)
   seeds_hard: 40                     # int > 0; matched to seeds_default (no hard-cell distinction)
 
 # KL grid (precomputed and cached)
