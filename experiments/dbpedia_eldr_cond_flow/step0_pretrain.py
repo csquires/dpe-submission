@@ -68,6 +68,17 @@ def mode_encode(config: dict, device: str, force: bool) -> None:
     texts = list(ds["content"])
     labels = list(ds["label"])
 
+    # optional smoke-mode subsampling: keep first N (stratified-ish since
+    # dbpedia_14 train split is class-blocked, we shuffle first with the
+    # config seed to retain class balance).
+    n_keep = config.get("corpus_subsample_size")
+    if n_keep is not None and n_keep < len(texts):
+        rng = np.random.default_rng(config.get("seed", 0))
+        idx = rng.permutation(len(texts))[:n_keep]
+        texts = [texts[int(i)] for i in idx]
+        labels = [labels[int(i)] for i in idx]
+        print(f"corpus_subsample_size={n_keep}; using {len(texts)} texts")
+
     data = load_or_encode(
         texts,
         labels,
@@ -96,7 +107,7 @@ def mode_pca(config: dict, force: bool) -> None:
     """
     data = torch.load(
         f"{config['data_dir']}/embeddings.pt", map_location="cpu"
-    )
+    , weights_only=False)
     emb_t = data["embeddings"]
 
     pca_path = f"{config['data_dir']}/pca_basis.pt"
@@ -133,8 +144,8 @@ def mode_separability(config: dict, device: str, force: bool) -> None:
     """
     data = torch.load(
         f"{config['data_dir']}/embeddings.pt", map_location="cpu"
-    )
-    basis = torch.load(f"{config['data_dir']}/pca_basis.pt")
+    , weights_only=False)
+    basis = torch.load(f"{config['data_dir']}/pca_basis.pt", weights_only=False)
 
     emb_t = data["embeddings"]
     labels_t = data["labels"]
@@ -239,8 +250,8 @@ def mode_cond_flow(config: dict, device: str, force: bool) -> None:
     """
     data = torch.load(
         f"{config['data_dir']}/embeddings.pt", map_location="cpu"
-    )
-    basis = torch.load(f"{config['data_dir']}/pca_basis.pt")
+    , weights_only=False)
+    basis = torch.load(f"{config['data_dir']}/pca_basis.pt", weights_only=False)
 
     codes = apply_basis(data["embeddings"], basis).float().cpu()
     labels_t = data["labels"].long().cpu()
@@ -287,8 +298,8 @@ def mode_log_p_y(config: dict, device: str, force: bool) -> None:
         atomic save.
         print confirmation.
     """
-    state = torch.load(f"{config['ckpt_dir']}/cond_flow.pt", map_location="cpu")
-    basis = torch.load(f"{config['data_dir']}/pca_basis.pt")
+    state = torch.load(f"{config['ckpt_dir']}/cond_flow.pt", map_location="cpu", weights_only=False)
+    basis = torch.load(f"{config['data_dir']}/pca_basis.pt", weights_only=False)
 
     model = ClassCondVelocityMLP(
         latent_dim=config["latent_dim"],
@@ -301,7 +312,7 @@ def mode_log_p_y(config: dict, device: str, force: bool) -> None:
     # load or compute pstar_codes
     pstar_cache = f"{config['data_dir']}/pstar_codes.pt"
     if Path(pstar_cache).exists() and not force:
-        pstar_codes = torch.load(pstar_cache, map_location="cpu")
+        pstar_codes = torch.load(pstar_cache, map_location="cpu", weights_only=False)
     else:
         ds = get_dbpedia_dataset("train", cache_dir=config["hf_cache_dir"])
         balanced = np.ones(14) / 14.0
@@ -330,7 +341,7 @@ def mode_log_p_y(config: dict, device: str, force: bool) -> None:
     log_p_y_path = f"{config['data_dir']}/log_p_y.{fh}.pt"
 
     if Path(log_p_y_path).exists() and not force:
-        log_p_y = torch.load(log_p_y_path)
+        log_p_y = torch.load(log_p_y_path, weights_only=False)
         print("loaded cached log_p_y")
         return
 
@@ -397,9 +408,15 @@ if __name__ == "__main__":
         action="store_true",
         help="force recompute (ignore cache)",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="experiments/dbpedia_eldr_cond_flow/config.yaml",
+        help="path to config yaml",
+    )
     args = parser.parse_args()
 
-    config = yaml.safe_load(open("experiments/dbpedia_eldr_cond_flow/config.yaml"))
+    config = yaml.safe_load(open(args.config))
     config = expand_paths(config)
 
     Path(config["data_dir"]).mkdir(parents=True, exist_ok=True)

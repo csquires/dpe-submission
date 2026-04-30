@@ -53,7 +53,7 @@ def load_pstar_codes(config):
     path = f"{config['data_dir']}/pstar_codes.pt"
     if not os.path.exists(path):
         raise FileNotFoundError(f"Run step0 --mode log_p_y first to compute {path}")
-    return torch.load(path, map_location='cpu').float()
+    return torch.load(path, map_location='cpu', weights_only=False).float()
 
 
 def load_log_p_y(config, flowhash):
@@ -72,7 +72,7 @@ def load_log_p_y(config, flowhash):
     path = f"{config['data_dir']}/log_p_y.{flowhash}.pt"
     if not os.path.exists(path):
         raise FileNotFoundError(f"Run step0 --mode log_p_y first to compute {path}")
-    return torch.load(path, map_location='cpu').float()
+    return torch.load(path, map_location='cpu', weights_only=False).float()
 
 
 def process_pair(
@@ -208,11 +208,13 @@ def main():
                         help='pair index (for SLURM dispatch)')
     parser.add_argument('--force', action='store_true',
                         help='force recomputation (ignore cache)')
+    parser.add_argument('--config', type=str,
+                        default='experiments/dbpedia_eldr_cond_flow/config.yaml',
+                        help='path to config yaml')
     args = parser.parse_args()
 
     # load config
-    config_path = 'experiments/dbpedia_eldr_cond_flow/config.yaml'
-    with open(config_path, 'r') as f:
+    with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
     # expand paths
@@ -221,8 +223,11 @@ def main():
     # create data directory
     os.makedirs(config['data_dir'], exist_ok=True)
 
-    # set device and seeds
+    # set device and seeds (fallback to cpu if cuda requested but unavailable)
     device_str = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+    if device_str.startswith('cuda') and not torch.cuda.is_available():
+        print('warning: cuda not available, falling back to cpu')
+        device_str = 'cpu'
     device = torch.device(device_str)
     print(f"using device: {device}")
 
@@ -239,7 +244,7 @@ def main():
     )
     cond_flow.load_state_dict(torch.load(
         f"{ckpt_dir}/cond_flow.pt", map_location='cpu'
-    ))
+    , weights_only=False))
     cond_flow.to(device).eval()
 
     # compute flowhash and load precomputed data
