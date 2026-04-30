@@ -5,6 +5,7 @@ Plots alpha vs MAE with translucent error bands for all methods.
 Loads results from mae_summary.h5 and creates PDF and PNG outputs.
 """
 import yaml
+import argparse
 import os
 import h5py
 import numpy as np
@@ -20,11 +21,27 @@ METHODS = {
     'MultiHeadTriangularTDRE': 'orange',
     'VFM': 'green',
     'TSM': 'red',
-    'CTSM': 'purple'
+    'CTSM': 'purple',
+    'TriangularCTSM': 'brown',
 }
 FIGURE_SIZE = (8, 5)
 FONT_SIZE = 12
 ERROR_BAND_ALPHA = 0.2
+
+
+def parse_args():
+    """
+    parse command-line arguments for config path.
+
+    returns: argparse.Namespace with config attribute.
+    """
+    parser = argparse.ArgumentParser(description='plot mnist eldr estimation results')
+    parser.add_argument(
+        '--config',
+        default='experiments/mnist_eldr_estimation/config.yaml',
+        help='path to config yaml',
+    )
+    return parser.parse_args()
 
 
 def main():
@@ -41,9 +58,10 @@ def main():
     - configure axes (log scale, labels, legend, grid)
     - save figures (pdf and png)
     """
+    args = parse_args()
 
     # load config
-    with open('experiments/mnist_eldr_estimation/config.yaml', 'r') as f:
+    with open(args.config, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
     processed_results_dir = config['processed_results_dir']
@@ -75,28 +93,24 @@ def main():
             kl_mean = f['kl_mean'][:] if 'kl_mean' in f else None
             results['kl_mean'] = kl_mean
 
-            # load method results
-            for method in METHODS.keys():
-                mae_key = f'mae_{method}'
+            # load method results: discover from HDF5 keys (mae_*) so partial runs work
+            for key in f.keys():
+                if not key.startswith('mae_'):
+                    continue
+                method = key[len('mae_'):]
                 std_key = f'std_{method}'
-
-                if mae_key not in f:
-                    raise KeyError(f'{mae_key} dataset missing in HDF5 file')
                 if std_key not in f:
-                    raise KeyError(f'{std_key} dataset missing in HDF5 file')
-
-                mae = f[mae_key][:]
+                    print(f'warning: {std_key} missing for {method}; skipping')
+                    continue
+                mae = f[key][:]
                 std = f[std_key][:]
-
-                # verify shapes match alphas
                 if mae.shape != alphas.shape:
                     raise ValueError(f'{method} mae shape {mae.shape} does not match alphas {alphas.shape}')
                 if std.shape != alphas.shape:
                     raise ValueError(f'{method} std shape {std.shape} does not match alphas {alphas.shape}')
-
                 results[method] = (mae, std)
 
-    except h5py.Error as e:
+    except OSError as e:
         raise IOError(f'error reading HDF5 file: {e}')
 
     # configure plot style
@@ -106,10 +120,12 @@ def main():
     # create figure
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
 
-    # plot each method
+    # plot each loaded method, falling back to gray if not in METHODS color map
     alphas = results['alphas']
-    for method, color in METHODS.items():
+    method_keys = [m for m in results if m not in ('alphas', 'kl_mean')]
+    for method in sorted(method_keys):
         mae, std = results[method]
+        color = METHODS.get(method, 'gray')
         ax.plot(alphas, mae, label=method, color=color, linewidth=2)
         ax.fill_between(alphas, mae - std, mae + std, color=color, alpha=ERROR_BAND_ALPHA)
 
