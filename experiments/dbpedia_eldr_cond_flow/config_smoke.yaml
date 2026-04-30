@@ -1,0 +1,46 @@
+# DBpedia ELDR Cond-Flow Smoke Configuration
+# Mirrors config.yaml but with reduced sizes for end-to-end code-path validation.
+# Runs in ~5-10 min on a single GPU.
+
+# Experimental Grid (small)
+alphas: [0.3, 2.7]
+num_pairs_per_alpha: 2
+num_samples: 500
+
+# Encoder + Reduction
+sbert_model: 'sentence-transformers/all-mpnet-base-v2'
+sbert_batch_size: 256
+embedding_dim: 768
+pca_dim: 64
+corpus_subsample_size: 2000   # smoke-mode only: encode 2K texts, not 560K
+
+# Class-Conditional Flow Training (tiny, just exercises the path)
+latent_dim: 64
+num_classes: 14
+cond_flow_total_steps: 200
+cond_flow_lr: 0.01
+cond_flow_batch_size: 64
+cond_flow_hidden_dim: 256
+cond_flow_weight_decay: 0.0001
+cond_flow_ema_decay: 0.99
+cond_flow_warmup_frac: 0.05
+
+# Estimation (unused in smoke)
+algorithms: [TriangularMDRE]
+num_waypoints: 5
+
+# Log-Density Evaluation (reduced)
+log_prob_steps: 50
+log_prob_chunk_size: 100
+
+# Directory Configuration (separate sub-tree from real run)
+ckpt_dir: "${DPE_CKPT_ROOT}/dbpedia_smoke/ckpt"
+data_dir: "${DPE_DATA_ROOT}/dbpedia_smoke/data"
+hf_cache_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/data/hf_cache"
+raw_results_dir: "experiments/dbpedia_eldr_cond_flow/raw_results_smoke"
+processed_results_dir: "experiments/dbpedia_eldr_cond_flow/processed_results_smoke"
+figures_dir: "experiments/dbpedia_eldr_cond_flow/figures/smoke"
+
+# Compute Configuration
+device: "cuda"
+seed: 1729
