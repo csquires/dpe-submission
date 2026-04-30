@@ -154,7 +154,9 @@ def collect_winners(
 	if auto_discover:
 		# auto-discover: list immediate subdirs of hpo_results_dir, exclude 'refined',
 		# apply legacy alias resolution, and intersect with search_spaces.
-		canonical = set(search_spaces.keys())
+		# search_spaces contains both canonical and alias keys (alias auto-injection
+		# in registry.py); subtract aliases so dir-name matching prefers canonical.
+		canonical = set(search_spaces.keys()) - set(legacy_aliases.keys())
 		discovered = [
 			d.name
 			for d in hpo_results_dir.iterdir()
@@ -201,22 +203,24 @@ def collect_winners(
 				trials = load_trials(hpo_results_dir, method, "broad", bucket_idx, bucket_axis)
 				source = "broad"
 
-			if not trials:
-				continue
-
-			# also check if legacy alias dirs exist; merge their trials (auto-discover mode only)
+			# merge legacy alias dirs unconditionally (auto-discover mode only).
+			# do this BEFORE the "no trials" check so a method that exists only
+			# under an alias dir is still discovered.
 			if auto_discover:
+				existing_ids = {int(t["trial_id"]) for t in trials}
 				for old_name, canonical_name in alias_dirs.items():
 					if canonical_name == method:
 						alias_trials = load_trials(hpo_results_dir, old_name, "broad", bucket_idx, bucket_axis)
-						if alias_trials:
-							# deduplicate by trial_id: keep first occurrence
-							existing_ids = {int(t["trial_id"]) for t in trials}
-							for t in alias_trials:
-								tid = int(t["trial_id"])
-								if tid not in existing_ids:
-									trials.append(t)
-									existing_ids.add(tid)
+						for t in alias_trials:
+							tid = int(t["trial_id"])
+							if tid not in existing_ids:
+								trials.append(t)
+								existing_ids.add(tid)
+				if trials and source == "broad" and not (hpo_results_dir / method).exists():
+					source = "broad"
+
+			if not trials:
+				continue
 
 			top = top_trials_for_alpha(trials, bucket_idx, top_k, bucket_axis)
 			if not top:

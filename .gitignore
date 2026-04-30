@@ -38,3 +38,17 @@ data/*
 experiments/mnist_eldr_estimation/hpo_configs/
 **/submit_*.sh
 **/trial_*.json
+experiments/smodice_eldr_estimation/build_task_manifest.py
+experiments/utils/check_smodice_feasibility.py
+experiments/utils/check_smodice_targets.py
+src/utils/missing_array.py
+tests/integration_test_step2a.py
+experiments/mnist_eldr_estimation/scrape_hpo.sh
+experiments/dbpedia_eldr_cond_flow/run_pipeline.sh
+experiments/dbpedia_eldr_cond_flow/run_smoke.sh
+.gitignore
+experiments/gen_tramp.sh
+experiments/mnist_eldr_cond_flow/diagnostic_mem_profile.py
+experiments/mnist_eldr_cond_flow/step5_compare.py
+# experiments/mnist_eldr_estimation/diagnostic_mem_profile.py
+# experiments/mnist_eldr_estimation/diagnostic_mem_profile.py

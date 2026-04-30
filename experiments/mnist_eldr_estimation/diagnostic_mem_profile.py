@@ -65,9 +65,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--alpha-idx", type=int, default=0)
     parser.add_argument("--pair-idx", type=int, default=0)
+    parser.add_argument("--config",
+                        default="experiments/mnist_eldr_estimation/config.yaml",
+                        help="path to config yaml")
     args = parser.parse_args()
 
-    with open("experiments/mnist_eldr_estimation/config.yaml") as f:
+    with open(args.config) as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
     device = config["device"]
