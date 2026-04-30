@@ -1,5 +1,5 @@
 """
-Step 4: Plot Results for MNIST ELDR Estimation
+Step 4: Plot Results for Pendulum ELDR Estimation
 
 Plots alpha vs MAE with translucent error bands for all methods.
 Loads results from mae_summary.h5 and creates PDF and PNG outputs.
@@ -15,20 +15,33 @@ matplotlib.use('Agg')
 import seaborn as sns
 
 
-# method colors
+# method colors: canonical palette for pendulum continuous-control methods
+# renamed (V1 variants of historical names) + core unchanged + new methods
 METHODS = {
+    # four core methods unchanged
     'TriangularMDRE': 'blue',
     'MultiHeadTriangularTDRE': 'orange',
-    'MHTTDRE': 'orange',  # alias for MultiHeadTriangularTDRE (backward compat for old results)
-    'VFM': 'green',
     'TSM': 'red',
     'CTSM': 'purple',
-    'TriangularCTSM': 'brown',
-    'BDRE': 'cyan',
-    'MDRE_15': 'magenta',
-    'TDRE_5': 'pink',
-    'TriangularTSM': 'gray',
+
+    # renamed entries (old names with _V1 suffix)
+    'TriangularCTSM_V1': 'brown',
+    'TriangularVFM_V1': 'green',
+    'MDRE_15': 'cyan',
+
+    # new methods (distinct colors from extended palette)
+    'TriangularTSM': 'magenta',
+    'FMDRE': 'teal',
+    'FMDRE_S2': 'olive',
+    'TriangularFMDRE': 'maroon',
+    'VFM': 'navy',
+    'TDRE_5': 'lime',
+    'TriangularCTSM_V2': 'aquamarine',
+    'TriangularCTSM_V3': 'coral',
+    'TriangularVFM_V2': 'darkgreen',
+    'TriangularVFM_V3': 'goldenrod',
 }
+
 FIGURE_SIZE = (8, 5)
 FONT_SIZE = 12
 ERROR_BAND_ALPHA = 0.2
@@ -40,10 +53,10 @@ def parse_args():
 
     returns: argparse.Namespace with config attribute.
     """
-    parser = argparse.ArgumentParser(description='plot mnist eldr estimation results')
+    parser = argparse.ArgumentParser(description='plot pendulum eldr estimation results')
     parser.add_argument(
         '--config',
-        default='experiments/mnist_eldr_estimation/config.yaml',
+        default='experiments/pendulum_eldr_estimation/config.yaml',
         help='path to config yaml',
     )
     return parser.parse_args()

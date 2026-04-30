@@ -20,21 +20,34 @@ with h5py.File(processed_results_filename, 'r') as f:
 
 colors = {
     "BDRE": "#1f77b4",
-    "TDRE": "#ff7f0e",
-    "MDRE": "#2ca02c",
+    "TDRE_5": "#ff7f0e",
+    "MDRE_15": "#2ca02c",
     "TSM": "#d62728",
     "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
+    "MultiHeadTriangularTDRE": "#bcbd22",
+    "TriangularCTSM_V1": "#17becf",
+    "TriangularVFM_V1": "#e377c2",
 }
-legend_order = ["BDRE", "TDRE", "MDRE", "TSM", "TriangularMDRE", "VFM"]
+# legacy aliases for backward compatibility with old h5 datasets
+colors["MDRE"] = colors["MDRE_15"]
+colors["TDRE"] = colors["TDRE_5"]
+
+legend_order = ["BDRE", "TDRE_5", "MDRE_15", "TSM", "TriangularMDRE", "MultiHeadTriangularTDRE", "TriangularCTSM_V1", "TriangularVFM_V1", "VFM"]
 
 plt.clf()
 sns.set_style('whitegrid')
 plt.style.use('half-width.mplstyle')
 label_map = {
-    "TDRE": "TDRE",
-    "MDRE": "MDRE",
+    "TDRE_5": "TDRE_5",
+    "MDRE_15": "MDRE_15",
     "TriangularMDRE": "TriangularMDRE",
+    "MultiHeadTriangularTDRE": "MultiHeadTriangularTDRE",
+    "TriangularCTSM_V1": "TriangularCTSM_V1",
+    "TriangularVFM_V1": "TriangularVFM_V1",
+    # legacy aliases
+    "TDRE": "TDRE_5",
+    "MDRE": "MDRE_15",
 }
 
 for alg_name, maes in mae_by_beta.items():

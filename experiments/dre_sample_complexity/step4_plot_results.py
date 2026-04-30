@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import yaml
 
+from experiments.utils.hpo.registry import LEGACY_ALIASES
+
 
 config = yaml.load(open('experiments/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
@@ -19,13 +21,20 @@ NSAMPLES_TEST = config['nsamples_test']
 
 filename = f'{PROCESSED_RESULTS_DIR}/metrics.h5'
 
+
+def _apply_alias(method_name):
+    """apply legacy alias mapping to canonicalize method names."""
+    return LEGACY_ALIASES.get(method_name, method_name)
+
+
 # Load all metrics from file
 with h5py.File(filename, 'r') as f:
     # Shape: (n_kl, n_instances, n_nsamples_train)
-    maes_by_alg = {key.replace('maes_', ''): f[key][:] for key in f.keys() if key.startswith('maes_')}
-    median_aes_by_alg = {key.replace('median_aes_', ''): f[key][:] for key in f.keys() if key.startswith('median_aes_')}
-    spearman_by_alg = {key.replace('spearman_', ''): f[key][:] for key in f.keys() if key.startswith('spearman_')}
-    trimmed_mae_iqr_by_alg = {key.replace('trimmed_mae_iqr_', ''): f[key][:] for key in f.keys() if key.startswith('trimmed_mae_iqr_')}
+    # apply aliases at load time to transform old keys to canonical names
+    maes_by_alg = {_apply_alias(key.replace('maes_', '')): f[key][:] for key in f.keys() if key.startswith('maes_')}
+    median_aes_by_alg = {_apply_alias(key.replace('median_aes_', '')): f[key][:] for key in f.keys() if key.startswith('median_aes_')}
+    spearman_by_alg = {_apply_alias(key.replace('spearman_', '')): f[key][:] for key in f.keys() if key.startswith('spearman_')}
+    trimmed_mae_iqr_by_alg = {_apply_alias(key.replace('trimmed_mae_iqr_', '')): f[key][:] for key in f.keys() if key.startswith('trimmed_mae_iqr_')}
     # Stratified MAE by quartiles
     stratified_mae_by_alg = {}
     for key in f.keys():
@@ -35,40 +44,53 @@ with h5py.File(filename, 'r') as f:
             # parts = ['stratified', 'mae', 'q1', 'ALGNAME']
             quartile = parts[2]  # 'q1', 'q2', etc.
             alg_name = '_'.join(parts[3:])  # handle algorithm names with underscores
+            alg_name = _apply_alias(alg_name)  # apply alias to canonicalize
             if alg_name not in stratified_mae_by_alg:
                 stratified_mae_by_alg[alg_name] = {}
             stratified_mae_by_alg[alg_name][quartile] = f[key][:]
 
-# colors - consistent across all experiments
+# colors - consistent across all experiments (canonical names + legacy aliases)
 colors = {
     "BDRE": "#1f77b4",
-    "TDRE": "#ff7f0e",
     "TDRE_5": "#ff7f0e",
-    "MDRE": "#2ca02c",
+    "TDRE": "#ff7f0e",  # legacy alias for backward compat
     "MDRE_15": "#2ca02c",
+    "MDRE": "#2ca02c",  # legacy alias for backward compat
     "TSM": "#d62728",
     "TriangularMDRE": "#aec7e8",
     "VFM": "#9467bd",
+    "TriangularCTSM_V1": "#17becf",
+    "TriangularVFM_V1": "#bcbd22",
+    "MultiHeadTriangularTDRE": "#e377c2",
 }
 
 KL_TITLES = [rf'KL$(p_0 \| p_1) = {kl}$' for kl in KL_DIVERGENCES]
 
 
 def get_algorithms_to_plot(data_dict):
-    """Get list of algorithms in standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM."""
+    """Get list of algorithms in standard order: BDRE -> TDRE_5 -> MDRE_15 -> TSM -> TriangularMDRE -> VFM -> new methods.
+
+    Returns tuples of (canonical_key, canonical_label) after aliasing at load time.
+    """
     algs = []
     if "BDRE" in data_dict:
         algs.append(("BDRE", "BDRE"))
     if "TDRE_5" in data_dict:
-        algs.append(("TDRE_5", "TDRE"))
+        algs.append(("TDRE_5", "TDRE_5"))
     if "MDRE_15" in data_dict:
-        algs.append(("MDRE_15", "MDRE"))
+        algs.append(("MDRE_15", "MDRE_15"))
     if "TSM" in data_dict:
         algs.append(("TSM", "TSM"))
     if "TriangularMDRE" in data_dict:
         algs.append(("TriangularMDRE", "TriangularMDRE"))
     if "VFM" in data_dict:
         algs.append(("VFM", "VFM"))
+    if "TriangularCTSM_V1" in data_dict:
+        algs.append(("TriangularCTSM_V1", "TriangularCTSM_V1"))
+    if "TriangularVFM_V1" in data_dict:
+        algs.append(("TriangularVFM_V1", "TriangularVFM_V1"))
+    if "MultiHeadTriangularTDRE" in data_dict:
+        algs.append(("MultiHeadTriangularTDRE", "MultiHeadTriangularTDRE"))
     return algs
 
 
