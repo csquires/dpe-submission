@@ -31,6 +31,9 @@ def parse_args(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--compute-kl", action="store_true",
                         help="heavy mode: load flows, compute latent-space KL")
+    parser.add_argument("--config",
+                        default="experiments/mnist_eldr_estimation/config.yaml",
+                        help="path to config yaml")
     return parser.parse_args(args)
 
 
@@ -374,17 +377,17 @@ def load_models(ckpt_dir, latent_dim, ai, pi, device):
     return vae_global, vae_0, vae_1, flow_0, flow_1
 
 
-def plot_kl_figure(data, config, alphas):
-    """create heavy kl diagnostic figure covering all pairs.
+def plot_kl_figure(data, config, alphas, heavy_stats):
+    """create heavy kl diagnostic figure: qq plots + correlation panels.
 
-    loads models per (alpha, pair), computes latent kl.
-    qq plots: num_pairs rows x n_alphas cols.
-    correlation panels: 1 row x 2 wide panels.
+    uses precomputed latent KLs from heavy_stats. only reloads models
+    for qq plots (needs flow log-probs at pstar).
 
     args:
         data: nested dict from load_all_pairs
         config: config dict
         alphas: list of alpha values
+        heavy_stats: dict with kl_p0_p1, kl_p1_p0 arrays [n_alphas, num_pairs]
     """
     device = torch.device(config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     ckpt_dir = config["ckpt_dir"]
@@ -392,71 +395,55 @@ def plot_kl_figure(data, config, alphas):
     num_pairs = config["num_pairs_per_alpha"]
     n_alphas = len(alphas)
 
-    # collect kl estimates across all (alpha, pair)
-    kls_latent_p0_p1 = []
-    kls_latent_p1_p0 = []
-    kls_categorical = []
-    alphas_for_plot = []
-    pairs_for_plot = []
-
     total_rows = num_pairs + 1  # qq rows + correlation row
     fig2 = plt.figure(figsize=(4 * n_alphas, 2.5 * total_rows))
     gs2 = gridspec.GridSpec(total_rows, n_alphas, figure=fig2, hspace=0.4, wspace=0.3)
 
-    n_eval = 2000  # subsample for speed across 40 pairs
+    n_eval = 2000
 
     for pi in range(num_pairs):
         for ai, alpha in enumerate(alphas):
-            print(f"heavy kl: alpha_idx={ai} pair_idx={pi}")
+            print(f"qq plot: alpha_idx={ai} pair_idx={pi}")
             models = load_models(ckpt_dir, latent_dim, ai, pi, device)
             vae_global, vae_0, vae_1, flow_0, flow_1 = models
 
             rng = np.random.RandomState(42 + ai * 1000 + pi)
             pstar_full = torch.from_numpy(data[ai][pi]["pstar"]).float()
-            p0_full = torch.from_numpy(data[ai][pi]["p0"]).float()
-            p1_full = torch.from_numpy(data[ai][pi]["p1"]).float()
             idx = rng.choice(len(pstar_full), n_eval, replace=False)
 
-            # qq plot from pstar log-probs
             _, logprobs = compute_ldr_at_points(
                 pstar_full[idx], vae_0, vae_1, flow_0, flow_1, vae_global, config, device)
             ax_qq = fig2.add_subplot(gs2[pi, ai])
             plot_qq(ax_qq, logprobs["log_p0"], logprobs["log_p1"], alpha, pi)
 
-            # kl estimates from p0/p1 log-density-ratios
-            ldrs_p0, _ = compute_ldr_at_points(
-                p0_full[idx], vae_0, vae_1, flow_0, flow_1, vae_global, config, device)
-            ldrs_p1, _ = compute_ldr_at_points(
-                p1_full[idx], vae_0, vae_1, flow_0, flow_1, vae_global, config, device)
-
-            kls_latent_p0_p1.append(ldrs_p0.mean().item())
-            kls_latent_p1_p0.append(-ldrs_p1.mean().item())
-            kls_categorical.append(data[ai][pi]["kl_weights"])
-            alphas_for_plot.append(alpha)
-            pairs_for_plot.append(pi)
-
             del vae_global, vae_0, vae_1, flow_0, flow_1
             torch.cuda.empty_cache()
 
-    # correlation panels (bottom row, 2 wide panels)
+    # correlation panels from precomputed heavy_stats
+    kl_fwd = heavy_stats["kl_p0_p1"]   # [n_alphas, num_pairs]
+    kl_rev = heavy_stats["kl_p1_p0"]
+
     ax_corr = fig2.add_subplot(gs2[num_pairs, 0:n_alphas // 2])
-    colors = [plt.cm.viridis(ai / (n_alphas - 1)) for ai, _ in enumerate(alphas)]
-    for i in range(len(kls_categorical)):
-        ai = alphas.index(alphas_for_plot[i])
-        ax_corr.scatter(kls_categorical[i], kls_latent_p0_p1[i], s=15, alpha=0.7, color=colors[ai])
-    lo = min(kls_categorical + kls_latent_p0_p1)
-    hi = max(kls_categorical + kls_latent_p0_p1)
+    colors = [plt.cm.viridis(ai / (n_alphas - 1)) for ai in range(n_alphas)]
+    for ai, alpha in enumerate(alphas):
+        for pi in range(num_pairs):
+            ax_corr.scatter(data[ai][pi]["kl_weights"], kl_fwd[ai, pi],
+                            s=15, alpha=0.7, color=colors[ai])
+    all_cat = [data[ai][pi]["kl_weights"] for ai in range(n_alphas) for pi in range(num_pairs)]
+    lo = min(min(all_cat), kl_fwd.min())
+    hi = max(max(all_cat), kl_fwd.max())
     ax_corr.plot([lo, hi], [lo, hi], "k--", alpha=0.3)
     ax_corr.set_xlabel("KL(w0 || w1)")
     ax_corr.set_ylabel("KL(p0 || p1) latent")
     ax_corr.set_title("categorical vs latent KL")
 
     ax_sym = fig2.add_subplot(gs2[num_pairs, n_alphas // 2:n_alphas])
-    for i in range(len(kls_latent_p0_p1)):
-        ai = alphas.index(alphas_for_plot[i])
-        ax_sym.scatter(kls_latent_p0_p1[i], kls_latent_p1_p0[i], s=15, alpha=0.7, color=colors[ai])
-    lo_s = min(kls_latent_p0_p1 + kls_latent_p1_p0)
-    hi_s = max(kls_latent_p0_p1 + kls_latent_p1_p0)
+    for ai in range(n_alphas):
+        for pi in range(num_pairs):
+            ax_sym.scatter(kl_fwd[ai, pi], kl_rev[ai, pi],
+                           s=15, alpha=0.7, color=colors[ai])
+    lo_s = min(kl_fwd.min(), kl_rev.min())
+    hi_s = max(kl_fwd.max(), kl_rev.max())
     ax_sym.plot([lo_s, hi_s], [lo_s, hi_s], "k--", alpha=0.3)
     ax_sym.set_xlabel("KL(p0 || p1)")
     ax_sym.set_ylabel("KL(p1 || p0)")
@@ -469,12 +456,12 @@ def plot_kl_figure(data, config, alphas):
 
     # summary table
     print("\nalpha  pair  KL(w0||w1)  KL(p0||p1)  KL(p1||p0)  E_p*[LDR]")
-    for i in range(len(kls_categorical)):
-        ai = alphas.index(alphas_for_plot[i])
-        mean_ldr = np.mean(data[ai][pairs_for_plot[i]]["true_ldrs"])
-        print(f"{alphas_for_plot[i]:<5.1f}  {pairs_for_plot[i]:<4d}  "
-              f"{kls_categorical[i]:<10.2f}  {kls_latent_p0_p1[i]:<10.2f}  "
-              f"{kls_latent_p1_p0[i]:<10.2f}  {mean_ldr:<10.4f}")
+    for ai, alpha in enumerate(alphas):
+        for pi in range(num_pairs):
+            mean_ldr = np.mean(data[ai][pi]["true_ldrs"])
+            print(f"{alpha:<5.1f}  {pi:<4d}  "
+                  f"{data[ai][pi]['kl_weights']:<10.2f}  {kl_fwd[ai, pi]:<10.2f}  "
+                  f"{kl_rev[ai, pi]:<10.2f}  {mean_ldr:<10.4f}")
 
 
 def compute_hardness(data, alphas, num_pairs):
@@ -508,13 +495,16 @@ def compute_hardness(data, alphas, num_pairs):
     return stats
 
 
-def compute_flow_velocities(data, config, alphas, num_pairs):
-    """compute mean initial flow velocity norms per pair (heavy).
+def compute_heavy_stats(data, config, alphas, num_pairs):
+    """compute per-pair flow velocity norms and latent-space KL estimates (heavy).
 
-    evaluates ||v(z, t=0)||_2 for z ~ pstar (subsampled), both flows.
+    for each (alpha, pair):
+      - loads flow models, evaluates ||v(z, t=0)||_2 at pstar samples
+      - loads all models, computes KL(p0||p1) and KL(p1||p0) in latent space
 
     returns:
-        dict with "v0_norm" and "v1_norm", each [n_alphas, num_pairs]
+        dict with keys: v0_norm, v1_norm, kl_p0_p1, kl_p1_p0
+        each [n_alphas, num_pairs]
     """
     from src.models.flow import VelocityMLP
 
@@ -523,14 +513,22 @@ def compute_flow_velocities(data, config, alphas, num_pairs):
     latent_dim = config["latent_dim"]
     n_eval = 2000
 
-    v_stats = {
+    out = {
         "v0_norm": np.zeros((len(alphas), num_pairs)),
         "v1_norm": np.zeros((len(alphas), num_pairs)),
+        "kl_p0_p1": np.zeros((len(alphas), num_pairs)),
+        "kl_p1_p0": np.zeros((len(alphas), num_pairs)),
     }
 
     for ai in range(len(alphas)):
         for pi in range(num_pairs):
-            # load flows only (no vae needed)
+            rng = np.random.RandomState(42 + ai * 1000 + pi)
+            pstar = torch.from_numpy(data[ai][pi]["pstar"]).float()
+            p0_full = torch.from_numpy(data[ai][pi]["p0"]).float()
+            p1_full = torch.from_numpy(data[ai][pi]["p1"]).float()
+            idx = rng.choice(len(pstar), n_eval, replace=False)
+
+            # flow velocities (only needs flows)
             flow_0 = VelocityMLP(latent_dim=latent_dim)
             flow_0.load_state_dict(torch.load(
                 f"{ckpt_dir}/flow_alpha_{ai}_pair_{pi}_side0.pt", map_location="cpu"))
@@ -541,42 +539,54 @@ def compute_flow_velocities(data, config, alphas, num_pairs):
                 f"{ckpt_dir}/flow_alpha_{ai}_pair_{pi}_side1.pt", map_location="cpu"))
             flow_1.to(device).eval()
 
-            rng = np.random.RandomState(42 + ai * 1000 + pi)
-            pstar = torch.from_numpy(data[ai][pi]["pstar"]).float()
-            idx = rng.choice(len(pstar), n_eval, replace=False)
             z = pstar[idx].to(device)
             t_zero = torch.zeros(len(z), device=device)
-
             with torch.no_grad():
-                v0 = flow_0(z, t_zero)  # [n_eval, latent_dim]
+                v0 = flow_0(z, t_zero)
                 v1 = flow_1(z, t_zero)
-                v_stats["v0_norm"][ai, pi] = v0.norm(dim=1).mean().item()
-                v_stats["v1_norm"][ai, pi] = v1.norm(dim=1).mean().item()
+                out["v0_norm"][ai, pi] = v0.norm(dim=1).mean().item()
+                out["v1_norm"][ai, pi] = v1.norm(dim=1).mean().item()
 
-            del flow_0, flow_1
+            # latent KL (needs full model stack)
+            models = load_models(ckpt_dir, latent_dim, ai, pi, device)
+            vae_global, vae_0, vae_1, _, _ = models
+
+            idx_kl = rng.choice(len(p0_full), n_eval, replace=False)
+            ldrs_p0, _ = compute_ldr_at_points(
+                p0_full[idx_kl], vae_0, vae_1, flow_0, flow_1, vae_global, config, device)
+            ldrs_p1, _ = compute_ldr_at_points(
+                p1_full[idx_kl], vae_0, vae_1, flow_0, flow_1, vae_global, config, device)
+
+            out["kl_p0_p1"][ai, pi] = ldrs_p0.mean().item()
+            out["kl_p1_p0"][ai, pi] = -ldrs_p1.mean().item()
+
+            del flow_0, flow_1, vae_global, vae_0, vae_1
             torch.cuda.empty_cache()
-            print(f"flow velocity: alpha_idx={ai} pair_idx={pi}  "
-                  f"||v0||={v_stats['v0_norm'][ai, pi]:.3f}  "
-                  f"||v1||={v_stats['v1_norm'][ai, pi]:.3f}")
 
-    return v_stats
+            print(f"heavy stats: alpha_idx={ai} pair_idx={pi}  "
+                  f"||v0||={out['v0_norm'][ai, pi]:.3f}  "
+                  f"||v1||={out['v1_norm'][ai, pi]:.3f}  "
+                  f"KL(p0||p1)={out['kl_p0_p1'][ai, pi]:.3f}  "
+                  f"KL(p1||p0)={out['kl_p1_p0'][ai, pi]:.3f}")
+
+    return out
 
 
-def print_hardness_table(stats, alphas, v_stats=None):
+def print_hardness_table(stats, alphas, heavy_stats=None):
     """print per-alpha summary of hardness metrics.
 
     for each metric, shows median, iqr, mean, std across pairs.
     """
     metrics = list(stats.keys())
-    if v_stats is not None:
-        metrics += list(v_stats.keys())
+    if heavy_stats is not None:
+        metrics += list(heavy_stats.keys())
 
     print("\n" + "=" * 80)
     print("HARDNESS VARIANCE SUMMARY (per alpha, across pairs)")
     print("=" * 80)
 
     for name in metrics:
-        vals = stats[name] if name in stats else v_stats[name]
+        vals = stats[name] if name in stats else heavy_stats[name]
         print(f"\n--- {name} ---")
         print(f"{'alpha':<8} {'median':>8} {'IQR':>8} {'mean':>8} {'std':>8} {'min':>8} {'max':>8}")
         for ai, alpha in enumerate(alphas):
@@ -586,14 +596,14 @@ def print_hardness_table(stats, alphas, v_stats=None):
                   f"{np.std(row):>8.3f} {np.min(row):>8.3f} {np.max(row):>8.3f}")
 
 
-def plot_hardness_figure(stats, alphas, config, v_stats=None):
+def plot_hardness_figure(stats, alphas, config, heavy_stats=None):
     """box plot grid of hardness metrics per alpha.
 
     saves to figures_dir/datagen_variance.png
     """
     all_metrics = dict(stats)
-    if v_stats is not None:
-        all_metrics.update(v_stats)
+    if heavy_stats is not None:
+        all_metrics.update(heavy_stats)
 
     names = list(all_metrics.keys())
     n = len(names)
@@ -607,7 +617,7 @@ def plot_hardness_figure(stats, alphas, config, v_stats=None):
         vals = all_metrics[name]  # [n_alphas, num_pairs]
         # box plot: one box per alpha
         bp = ax.boxplot([vals[ai] for ai in range(len(alphas))],
-                        labels=[str(a) for a in alphas],
+                        tick_labels=[str(a) for a in alphas],
                         patch_artist=True, showfliers=True,
                         medianprops=dict(color="black", linewidth=1.5))
         for patch in bp["boxes"]:
@@ -637,7 +647,7 @@ def plot_hardness_figure(stats, alphas, config, v_stats=None):
 def main():
     """main entry point."""
     args = parse_args()
-    config = yaml.safe_load(open("experiments/mnist_eldr_estimation/config.yaml"))
+    config = yaml.safe_load(open(args.config))
     alphas = config["alphas"]
     num_pairs = config["num_pairs_per_alpha"]
     data_dir = config["data_dir"]
@@ -653,15 +663,15 @@ def main():
 
     # hardness variance analysis
     stats = compute_hardness(data, alphas, num_pairs)
-    v_stats = None
+    heavy_stats = None
     if args.compute_kl:
-        v_stats = compute_flow_velocities(data, config, alphas, num_pairs)
-    print_hardness_table(stats, alphas, v_stats)
-    plot_hardness_figure(stats, alphas, config, v_stats)
+        heavy_stats = compute_heavy_stats(data, config, alphas, num_pairs)
+    print_hardness_table(stats, alphas, heavy_stats)
+    plot_hardness_figure(stats, alphas, config, heavy_stats)
 
-    # figure 2: heavy kl diagnostic
+    # figure 2: heavy kl diagnostic (qq plots + correlation)
     if args.compute_kl:
-        plot_kl_figure(data, config, alphas)
+        plot_kl_figure(data, config, alphas, heavy_stats)
 
 
 if __name__ == "__main__":
