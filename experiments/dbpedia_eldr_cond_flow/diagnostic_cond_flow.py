@@ -90,11 +90,11 @@ def load_artifacts(config, device):
         hidden_dim=config["cond_flow_hidden_dim"],
     )
     flow.load_state_dict(torch.load(f"{ckpt_dir}/cond_flow.pt",
-                                    map_location="cpu"))
+                                    map_location="cpu", weights_only=False))
     flow.to(device).eval()
 
-    basis = torch.load(f"{data_dir}/pca_basis.pt", map_location="cpu")
-    emb_data = torch.load(f"{data_dir}/embeddings.pt", map_location="cpu")
+    basis = torch.load(f"{data_dir}/pca_basis.pt", map_location="cpu", weights_only=False)
+    emb_data = torch.load(f"{data_dir}/embeddings.pt", map_location="cpu", weights_only=False)
     return flow, basis, emb_data
 
 

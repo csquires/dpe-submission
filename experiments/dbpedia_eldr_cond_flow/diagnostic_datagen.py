@@ -30,7 +30,6 @@ import yaml
 
 from experiments.mnist_eldr_estimation.diagnostic_datagen import (
     load_all_pairs,
-    plot_weight_bars,
     plot_ldr_histograms,
     plot_pca,
     plot_kl_scatter,
@@ -125,20 +124,12 @@ def plot_lightweight_figure(data, alphas, config):
     """
     num_pairs = config["num_pairs_per_alpha"]
     n_alphas = len(alphas)
-    total_rows = 3 * num_pairs + 2
+    total_rows = 2 * num_pairs + 2
     fig = plt.figure(figsize=(4 * n_alphas, 2 * total_rows))
     gs = gridspec.GridSpec(total_rows, n_alphas, figure=fig,
                            hspace=0.55, wspace=0.3)
 
     r = 0
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[r, ai])
-            plot_weight_bars(ax, data[ai][pi]["w0"], data[ai][pi]["w1"],
-                             alpha, pi)
-            ax.set_xlabel("entity-type id")
-        r += 1
-
     for pi in range(num_pairs):
         for ai, alpha in enumerate(alphas):
             ax = fig.add_subplot(gs[r, ai])
@@ -221,8 +212,11 @@ def compute_heavy(data, config, alphas, num_pairs, n_eval, steps):
          p0/p1 samples; estimate KL(p_a || p_b) by mean log-ratio.
       6. mix log_p_y_pstar with log w_0/log w_1 per pair for QQ panel.
     """
-    device = torch.device(config.get("device",
-                                     "cuda" if torch.cuda.is_available() else "cpu"))
+    device_str = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+    if device_str.startswith("cuda") and not torch.cuda.is_available():
+        print("warning: cuda not available, falling back to cpu")
+        device_str = "cpu"
+    device = torch.device(device_str)
     ckpt_dir = config["ckpt_dir"]
     data_dir = config["data_dir"]
 
@@ -232,7 +226,7 @@ def compute_heavy(data, config, alphas, num_pairs, n_eval, steps):
         hidden_dim=config["cond_flow_hidden_dim"],
     )
     ckpt_path = f"{ckpt_dir}/cond_flow.pt"
-    flow.load_state_dict(torch.load(ckpt_path, map_location="cpu"))
+    flow.load_state_dict(torch.load(ckpt_path, map_location="cpu", weights_only=False))
     flow.to(device).eval()
 
     fh = flow_state_hash(ckpt_path)
@@ -240,7 +234,7 @@ def compute_heavy(data, config, alphas, num_pairs, n_eval, steps):
     if not Path(log_p_y_path).exists():
         raise FileNotFoundError(
             f"missing {log_p_y_path}; run step0 --mode log_p_y first")
-    log_p_y_pstar_full = torch.load(log_p_y_path, map_location="cpu")  # [N, K]
+    log_p_y_pstar_full = torch.load(log_p_y_path, map_location="cpu", weights_only=False)  # [N, K]
     rng_pstar = np.random.RandomState(42)
     pstar_idx = rng_pstar.choice(log_p_y_pstar_full.shape[0],
                                  n_eval, replace=False)
