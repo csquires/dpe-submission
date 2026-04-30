@@ -23,8 +23,14 @@ class TriangularTSM(DensityRatioEstimator):
         device: Optional[str] = None,
         rtol: float = 1e-6,
         atol: float = 1e-6,
+        vertex: float = 0.5,
+        peak_max: float = 1.0,
     ):
         super().__init__(input_dim)
+        if not 0.0 < vertex < 1.0:
+            raise ValueError(f"vertex must be in (0, 1), got {vertex}")
+        if not 0.0 < peak_max <= 1.0:
+            raise ValueError(f"peak_max must be in (0, 1], got {peak_max}")
         self.hidden_dim = hidden_dim
         self.n_epochs = n_epochs
         self.batch_size = batch_size
@@ -33,6 +39,8 @@ class TriangularTSM(DensityRatioEstimator):
         self.eps = eps
         self.rtol = rtol
         self.atol = atol
+        self.vertex = vertex
+        self.peak_max = peak_max
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -46,10 +54,17 @@ class TriangularTSM(DensityRatioEstimator):
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
     def path_t_tprime(self, tau: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        # define the curve path
-        t = tau
-        t_prime = 4.0 * tau * (1.0 - tau) 
-        t = torch.clamp(t, min=self.eps, max=1.0)
+        """piecewise-quadratic deterministic bell with peak (vertex, peak_max).
+
+        t' is c^1 at tau=v: both pieces hit peak_max with zero slope. recovers
+        the original 4 tau (1-tau) when vertex=0.5, peak_max=1.
+        """
+        t = torch.clamp(tau, min=self.eps, max=1.0)
+        v = self.vertex
+        m = self.peak_max
+        left = m * (2.0 * (tau / v) - (tau / v) ** 2)
+        right = m * (1.0 - ((tau - v) / (1.0 - v)) ** 2)
+        t_prime = torch.where(tau <= v, left, right)
         t_prime = torch.clamp(t_prime, min=0.0, max=1.0)
         return t, t_prime
 
