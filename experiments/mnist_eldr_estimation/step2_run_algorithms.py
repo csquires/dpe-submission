@@ -4,36 +4,36 @@ import numpy as np
 import os
 import torch
 import yaml
+from pathlib import Path
 
-from src.density_ratio_estimation import BDRE, MDRE, TSM, CTSM
+from src.density_ratio_estimation import BDRE, MDRE
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
 from src.models.binary_classification import make_binary_classifier, make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
+from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
 
 
-# per-alpha hyperparameters from HPO (round 2 filtered median)
-HPO_PARAMS = {
-    "TSM": {
-        0: {"n_epochs": 1300, "lr": 1.27e-3, "batch_size": 128, "eps": 5.06e-6},
-        1: {"n_epochs": 1412, "lr": 6.84e-4, "batch_size": 128, "eps": 2.40e-6},
-        2: {"n_epochs": 1445, "lr": 6.21e-4, "batch_size": 256, "eps": 1.66e-5},
-        3: {"n_epochs": 1047, "lr": 4.18e-4, "batch_size": 128, "eps": 1.52e-5},
-    },
-    "CTSM": {
-        0: {"n_epochs": 1030, "lr": 1.51e-3, "batch_size": 128, "sigma": 0.518, "eps": 1.82e-3},
-        1: {"n_epochs": 1289, "lr": 2.58e-3, "batch_size": 128, "sigma": 0.575, "eps": 6.27e-4},
-        2: {"n_epochs": 1152, "lr": 8.96e-4, "batch_size": 64, "sigma": 0.687, "eps": 2.53e-3},
-        3: {"n_epochs": 1039, "lr": 1.45e-3, "batch_size": 128, "sigma": 1.156, "eps": 6.09e-4},
-    },
-    "VFM": {
-        0: {"n_epochs": 1057, "lr": 7.74e-4, "batch_size": 256, "k": 40, "eps": 1.01e-3, "integration_steps": 1373},
-        1: {"n_epochs": 1125, "lr": 8.64e-4, "batch_size": 256, "k": 10, "eps": 1.40e-3, "integration_steps": 1872},
-        2: {"n_epochs": 1203, "lr": 8.32e-4, "batch_size": 256, "k": 10, "eps": 1.23e-3, "integration_steps": 1144},
-        3: {"n_epochs": 965, "lr": 6.69e-4, "batch_size": 128, "k": 20, "eps": 2.64e-3, "integration_steps": 3378},
-    },
-}
+def load_winners(path):
+    """
+    load winners from yaml file, return empty dict if missing, empty, or malformed.
+
+    returns yaml.safe_load() result if file exists and parses successfully;
+    otherwise returns {} and prints a warning. malformed yaml does not crash step2.
+    """
+    path_obj = Path(path)
+    if not path_obj.exists():
+        return {}
+
+    try:
+        with open(path_obj, "r") as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f"warning: {path} is malformed yaml ({e}); falling back to class defaults")
+        return {}
+
+    return data if data is not None else {}
 
 
 def parse_args(args=None):
@@ -82,16 +82,36 @@ def load_existing_results(results_filename):
     return existing_results
 
 
-def create_estimator(method, config, device, alpha_idx=0):
+def create_estimator(method, config, device, alpha_idx=0, winners=None):
     """
     instantiate estimator for given method.
 
-    methods with HPO_PARAMS entries use per-alpha hyperparameters.
+    hpo methods (keyed in SEARCH_SPACES) extract per-alpha hyperparams from winners.
+    non-hpo methods use inline classifier construction.
     """
+    if winners is None:
+        winners = {}
+
     input_dim = config["latent_dim"]
     num_waypoints = config["num_waypoints"]
 
-    if method == "TriangularMDRE":
+    if method in SEARCH_SPACES:
+        # hpo method: retrieve winner hyperparams, pass to builder
+        entry = winners.get(method, {}).get(alpha_idx, {})
+        hp = entry.get("hyperparams", {})
+        if not hp:
+            print(
+                f"warning: no winners.yaml entry for ({method}, alpha={alpha_idx}); "
+                f"falling back to class defaults"
+            )
+        return SEARCH_SPACES[method]["builder"](
+            input_dim=input_dim,
+            device=device,
+            num_waypoints=num_waypoints,
+            **hp,
+        )
+
+    elif method == "TriangularMDRE":
         classifier = make_multiclass_classifier(
             name="default",
             input_dim=input_dim,
@@ -110,17 +130,8 @@ def create_estimator(method, config, device, alpha_idx=0):
             device=device,
         )
 
-    elif method == "VFM":
-        hp = HPO_PARAMS["VFM"][alpha_idx]
-        return make_spatial_velo_denoiser(input_dim=input_dim, device=device, **hp)
-
-    elif method == "TSM":
-        hp = HPO_PARAMS["TSM"][alpha_idx]
-        return TSM(input_dim=input_dim, device=device, **hp)
-
-    elif method == "CTSM":
-        hp = HPO_PARAMS["CTSM"][alpha_idx]
-        return CTSM(input_dim=input_dim, device=device, **hp)
+    elif method == "TriangularFMDRE":
+        return TriangularFMDRE(input_dim=input_dim, device=device)
 
     elif method == "BDRE":
         classifier = make_binary_classifier(
@@ -141,8 +152,11 @@ def create_estimator(method, config, device, alpha_idx=0):
         raise ValueError(f"Unknown method: {method}")
 
 
-def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, config, device, alpha_idx=0, force=False):
+def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, config, device, alpha_idx=0, force=False, winners=None):
     """run single method, save results, return whether method ran."""
+    if winners is None:
+        winners = {}
+
     dataset_key = f"est_ldrs_{method}"
     existing_results = load_existing_results(results_filename)
 
@@ -153,10 +167,16 @@ def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, 
     print(f"Running {method}...")
 
     # instantiate and fit estimator
-    estimator = create_estimator(method, config, device, alpha_idx=alpha_idx)
+    estimator = create_estimator(method, config, device, alpha_idx=alpha_idx, winners=winners)
 
-    # triangular methods require pstar during fit
-    if method in ["TriangularMDRE", "MultiHeadTriangularTDRE"]:
+    # determine whether method requires pstar
+    if method in SEARCH_SPACES:
+        requires_pstar = SEARCH_SPACES[method]["requires_pstar"]
+    else:
+        # non-hpo fallback: only triangular methods require pstar
+        requires_pstar = method in ["TriangularMDRE", "MultiHeadTriangularTDRE", "TriangularFMDRE"]
+
+    if requires_pstar:
         estimator.fit(p0_samples, p1_samples, pstar_samples)
     else:
         estimator.fit(p0_samples, p1_samples)
@@ -184,6 +204,10 @@ def main():
     DEVICE = config["device"]
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
+
+    # load winners from hpo winners.yaml
+    winners_path = "experiments/mnist_eldr_estimation/winners.yaml"
+    winners = load_winners(winners_path)
 
     # build filenames
     data_filename, results_filename = build_data_paths(config, args.alpha_idx, args.pair_idx)
@@ -214,7 +238,8 @@ def main():
             config,
             DEVICE,
             alpha_idx=args.alpha_idx,
-            force=args.force
+            force=args.force,
+            winners=winners
         )
 
 

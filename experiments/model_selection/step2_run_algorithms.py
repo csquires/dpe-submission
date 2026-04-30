@@ -86,7 +86,13 @@ for num_waypoints_mdre in mdre_waypoints:
 # instantiate tsm
 tsm = TSM(DATA_DIM, device=DEVICE)
 # instantiate triangular tsm
-triangular_tsm = TriangularTSM(DATA_DIM, device=DEVICE)
+ttsm_cfg = config.get('triangular_tsm', {})
+triangular_tsm = TriangularTSM(
+    DATA_DIM,
+    device=DEVICE,
+    vertex=ttsm_cfg.get('vertex', 0.5),
+    peak_max=ttsm_cfg.get('peak_max', 1.0),
+)
 # instantiate triangular mdre
 triangular_mdre_waypoints = 15
 triangular_mdre_classifier = make_multiclass_classifier(

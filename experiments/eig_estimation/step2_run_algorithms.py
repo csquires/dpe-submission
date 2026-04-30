@@ -107,7 +107,13 @@ tsm = TSM(DATA_DIM + 1, device=DEVICE)
 tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
 
 # instantiate triangular tsm plugin
-triangular_tsm = TriangularTSM(DATA_DIM + 1, device=DEVICE)
+ttsm_cfg = config.get('triangular_tsm', {})
+triangular_tsm = TriangularTSM(
+    DATA_DIM + 1,
+    device=DEVICE,
+    vertex=ttsm_cfg.get('vertex', 0.5),
+    peak_max=ttsm_cfg.get('peak_max', 1.0),
+)
 triangular_tsm_adapter = TriangularTSMEIGAdapter(triangular_tsm)
 triangular_tsm_plugin = EIGPlugin(density_ratio_estimator=triangular_tsm_adapter)
 

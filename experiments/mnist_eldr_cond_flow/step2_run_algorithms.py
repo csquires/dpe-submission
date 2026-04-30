@@ -4,39 +4,36 @@ import numpy as np
 import os
 import torch
 import yaml
+from pathlib import Path
 
-from src.density_ratio_estimation import BDRE, MDRE, TSM, CTSM
+from src.density_ratio_estimation import BDRE, MDRE
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
 from src.models.binary_classification import make_binary_classifier, make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
 
+from experiments.mnist_eldr_estimation.hpo_search_spaces import SEARCH_SPACES
 
-# default params pending HPO re-run; medians of old per-alpha values
-DEFAULT_PARAMS = {
-    "TSM": {
-        "n_epochs": 1300,
-        "lr": 7e-4,
-        "batch_size": 128,
-        "eps": 5e-6,
-    },
-    "CTSM": {
-        "n_epochs": 1110,
-        "lr": 1.5e-3,
-        "batch_size": 128,
-        "sigma": 0.65,
-        "eps": 1.3e-3,
-    },
-    "VFM": {
-        "n_epochs": 1140,
-        "lr": 8e-4,
-        "batch_size": 256,
-        "k": 20,
-        "eps": 1.4e-3,
-        "integration_steps": 1500,
-    },
-}
+
+def load_winners(path):
+    """
+    load winners from yaml file, return empty dict if missing, empty, or malformed.
+
+    returns yaml.safe_load() result if file exists and parses successfully;
+    otherwise returns {} and prints a warning. malformed yaml does not crash step2.
+    """
+    path_obj = Path(path)
+    if not path_obj.exists():
+        return {}
+
+    try:
+        with open(path_obj, "r") as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f"warning: {path} is malformed yaml ({e}); falling back to class defaults")
+        return {}
+
+    return data if data is not None else {}
 
 
 def parse_args(args=None):
@@ -85,16 +82,34 @@ def load_existing_results(results_filename):
     return existing_results
 
 
-def create_estimator(method, config, device):
+def create_estimator(method, config, device, alpha_idx=0, winners=None):
     """
     instantiate estimator for given method.
 
-    methods with DEFAULT_PARAMS entries use default hyperparameters.
+    HPO methods (in SEARCH_SPACES) route through the registered builder with
+    per-(method, alpha) hyperparams from winners.yaml. missing entries fall
+    back to class defaults (with a warning). non-HPO methods stay in if/elif.
     """
     input_dim = config["latent_dim"]
     num_waypoints = config["num_waypoints"]
+    winners = winners or {}
 
-    if method == "TriangularMDRE":
+    if method in SEARCH_SPACES:
+        entry = winners.get(method, {}).get(alpha_idx, {})
+        hp = entry.get("hyperparams", {})
+        if not hp:
+            print(
+                f"warning: no winners.yaml entry for ({method}, alpha={alpha_idx}); "
+                f"falling back to class defaults"
+            )
+        return SEARCH_SPACES[method]["builder"](
+            input_dim=input_dim,
+            device=device,
+            num_waypoints=num_waypoints,
+            **hp,
+        )
+
+    elif method == "TriangularMDRE":
         classifier = make_multiclass_classifier(
             name="default",
             input_dim=input_dim,
@@ -112,18 +127,6 @@ def create_estimator(method, config, device):
             num_waypoints=num_waypoints,
             device=device,
         )
-
-    elif method == "VFM":
-        hp = DEFAULT_PARAMS["VFM"]
-        return make_spatial_velo_denoiser(input_dim=input_dim, device=device, **hp)
-
-    elif method == "TSM":
-        hp = DEFAULT_PARAMS["TSM"]
-        return TSM(input_dim=input_dim, device=device, **hp)
-
-    elif method == "CTSM":
-        hp = DEFAULT_PARAMS["CTSM"]
-        return CTSM(input_dim=input_dim, device=device, **hp)
 
     elif method == "BDRE":
         classifier = make_binary_classifier(
@@ -144,7 +147,7 @@ def create_estimator(method, config, device):
         raise ValueError(f"Unknown method: {method}")
 
 
-def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, config, device, force=False):
+def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, config, device, winners, alpha_idx=0, force=False):
     """run single method, save results, return whether method ran."""
     dataset_key = f"est_ldrs_{method}"
     existing_results = load_existing_results(results_filename)
@@ -156,10 +159,16 @@ def run_method(method, pstar_samples, p0_samples, p1_samples, results_filename, 
     print(f"Running {method}...")
 
     # instantiate and fit estimator
-    estimator = create_estimator(method, config, device)
+    estimator = create_estimator(method, config, device, alpha_idx=alpha_idx, winners=winners)
 
-    # triangular methods require pstar during fit
-    if method in ["TriangularMDRE", "MultiHeadTriangularTDRE"]:
+    # resolve requires_pstar: SEARCH_SPACES first, else hardcoded list of pstar-needing
+    # non-HPO methods. fit dispatches accordingly.
+    if method in SEARCH_SPACES:
+        requires_pstar = SEARCH_SPACES[method]["requires_pstar"]
+    else:
+        requires_pstar = method in ["TriangularMDRE", "MultiHeadTriangularTDRE"]
+
+    if requires_pstar:
         estimator.fit(p0_samples, p1_samples, pstar_samples)
     else:
         estimator.fit(p0_samples, p1_samples)
@@ -187,6 +196,9 @@ def main():
     DEVICE = config["device"]
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
+
+    # load winners (cond-flow)
+    winners = load_winners("experiments/mnist_eldr_cond_flow/winners.yaml")
 
     # build filenames
     data_filename, results_filename = build_data_paths(config, args.alpha_idx, args.pair_idx)
@@ -216,6 +228,8 @@ def main():
             results_filename,
             config,
             DEVICE,
+            winners,
+            alpha_idx=args.alpha_idx,
             force=args.force
         )
 
