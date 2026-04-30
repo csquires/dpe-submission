@@ -41,6 +41,7 @@ from src.sampling.pendulum_traj import traj_kl_mc
 from experiments.pendulum_eldr_estimation.step1_create_data import (
     _build_env_and_q_cfg, _resolve_reward,
 )
+from experiments.utils.alpha_grid import make_alphas
 from experiments.utils.prescribed_kls import hash_pendulum_cfg
 
 
@@ -63,7 +64,7 @@ def make_r_O(alpha_val: float, r_E_fn, r_anti_fn):
 def build_grid_cfg(config: Dict[str, Any]) -> Dict[str, Any]:
     """assemble the cfg dict consumed by hash_pendulum_cfg; must match step1."""
     env_cfg, q_cfg = _build_env_and_q_cfg(config)
-    alphas = np.linspace(0, 1, config["traj_kl_grid"]["G_alpha"]).tolist()
+    alphas = make_alphas(config["traj_kl_grid"]).tolist()
     betas = np.linspace(0, 1, config["traj_kl_grid"]["G_beta"]).tolist()
     return {
         "env_cfg": env_cfg,
