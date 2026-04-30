@@ -740,11 +740,15 @@ def prescribe_traj(grid: Dict[str, Any], K1: float, K2: float) -> Dict[str, Any]
         beta_star = float(grid['betas'][j_star])
         realized_K2 = float(grid['KL2'][i_star, j_star])
 
-        # compute tolerance: mean step in grids
-        k1_step = np.mean(np.diff(grid['KL1']))
-        k2_step = np.mean(np.diff(grid['KL2'][i_star, :]))
-        tol_k1 = 0.5 * k1_step
-        tol_k2 = 0.5 * k2_step
+        # tolerance: half the larger local neighbor-gap at the snap location.
+        # local gaps are correct for non-uniform (e.g. logspace alpha) grids,
+        # where mean step is dominated by far-apart bins and over-rejects snaps.
+        def _local_gap(arr: np.ndarray, i: int) -> float:
+            left = abs(arr[i] - arr[i - 1]) if i > 0 else 0.0
+            right = abs(arr[i + 1] - arr[i]) if i + 1 < len(arr) else 0.0
+            return float(max(left, right))
+        tol_k1 = 0.5 * _local_gap(grid['KL1'], i_star)
+        tol_k2 = 0.5 * _local_gap(grid['KL2'][i_star, :], j_star)
 
         # check feasibility
         feasible = (
