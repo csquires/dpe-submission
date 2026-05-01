@@ -13,6 +13,7 @@ from experiments.utils.hpo.adapters.model_selection import ModelSelectionAdapter
 from experiments.utils.hpo.adapters.eig_estimation import EIGAdapter
 from experiments.utils.hpo.adapters.elbo_estimation import ELBOAdapter
 from experiments.utils.hpo.adapters.smodice_eldr_estimation import SmodiceAdapter
+from experiments.utils.hpo.adapters.dre_sample_complexity import DreSampleComplexityAdapter
 
 # from experiments.utils.hpo.adapters.pendulum_eldr_estimation import PendulumAdapter
 # from experiments.utils.hpo.adapters.model_selection import ModelSelectionAdapter
@@ -30,6 +31,7 @@ _ADAPTERS: dict[str, type[ExperimentAdapter]] = {
     "eig_estimation": EIGAdapter,
     "elbo_estimation": ELBOAdapter,
     "smodice_eldr_estimation": SmodiceAdapter,
+    "dre_sample_complexity": DreSampleComplexityAdapter,
     # "dbpedia_cond_flow": DbpediaCondFlowAdapter,
     # "pendulum_eldr_estimation": PendulumAdapter,
     # "model_selection": ModelSelectionAdapter,
