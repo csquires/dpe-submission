@@ -1,12 +1,22 @@
-data_dir: "${DPE_DATA_ROOT}/dre_sample_complexity/data"
+data_dir: "experiments/dre_sample_complexity/data"
 raw_results_dir: "experiments/dre_sample_complexity/raw_results"
 processed_results_dir: "experiments/dre_sample_complexity/processed_results"
 figures_dir: "experiments/dre_sample_complexity/figures"
+hpo_configs_dir: "experiments/dre_sample_complexity/hpo_configs"
+hpo_results_dir: "experiments/dre_sample_complexity/hpo_results"
+hpo_summary_dir: "experiments/dre_sample_complexity/hpo_summary"
 data_dim: 3
 gamma: 0.05
 kl_divergences: [0.6, 5.4, 32.4]
 num_instances_per_kl: 20
 nsamples_train_values: [100, 300, 900, 1800, 3600, 5400, 8100]
 nsamples_test: 1024
+# HPO settings
+hpo_nsamples_train: 1800      # mid-range sample size used during HPO evaluation
+hpo_num_trials: 30            # random search trials per (method, kl)
+hpo_num_eval_instances: 5     # instances (of 20) evaluated per HPO trial
+# fixed architecture choices not in search space
+mdre_num_waypoints: 15
+mhtdre_num_waypoints: 10
 device: "cuda"
 seed: 1729

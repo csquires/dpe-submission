@@ -50,19 +50,36 @@ with h5py.File(filename, 'r') as f:
             stratified_mae_by_alg[alg_name][quartile] = f[key][:]
 
 # colors - consistent across all experiments (canonical names + legacy aliases)
+# colors - one per current method
 colors = {
     "BDRE": "#1f77b4",
     "TDRE_5": "#ff7f0e",
     "TDRE": "#ff7f0e",  # legacy alias for backward compat
     "MDRE_15": "#2ca02c",
     "MDRE": "#2ca02c",  # legacy alias for backward compat
+    "MDRE": "#2ca02c",
+    "MHTDRE": "#ff7f0e",
     "TSM": "#d62728",
-    "TriangularMDRE": "#aec7e8",
+    "CTSM": "#8c564b",
     "VFM": "#9467bd",
     "TriangularCTSM_V1": "#17becf",
     "TriangularVFM_V1": "#bcbd22",
     "MultiHeadTriangularTDRE": "#e377c2",
 }
+    "FMDRE": "#e377c2",
+    "FMDRE_S2": "#7f7f7f",
+}
+
+algorithm_order = [
+    "BDRE",
+    "MDRE",
+    "MHTDRE",
+    "TSM",
+    "CTSM",
+    "VFM",
+    "FMDRE",
+    "FMDRE_S2",
+]
 
 KL_TITLES = [rf'KL$(p_0 \| p_1) = {kl}$' for kl in KL_DIVERGENCES]
 
@@ -92,6 +109,8 @@ def get_algorithms_to_plot(data_dict):
     if "MultiHeadTriangularTDRE" in data_dict:
         algs.append(("MultiHeadTriangularTDRE", "MultiHeadTriangularTDRE"))
     return algs
+    """Get list of algorithms in the current experiment order."""
+    return [(alg, alg) for alg in algorithm_order if alg in data_dict]
 
 
 def plot_metric(data_by_alg, ylabel, figure_name, stats_file, use_log_y=True, higher_is_better=False):
@@ -154,6 +173,7 @@ def plot_metric(data_by_alg, ylabel, figure_name, stats_file, use_log_y=True, hi
             else:
                 axes[kl_idx].set_ylim(y_min * 0.9, y_max * 1.1)
         axes[kl_idx].set_xscale('log')
+        axes[kl_idx].set_title(KL_TITLES[kl_idx])
         axes[kl_idx].set_xlabel(r'$n_{\mathrm{train}}$')
 
     axes[0].set_ylabel(ylabel)

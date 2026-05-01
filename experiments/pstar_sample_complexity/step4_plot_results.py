@@ -1,197 +1,183 @@
 """
-Generate publication-quality visualization comparing MAE (Mean Absolute Error)
-across sample complexity values for three triangular density ratio estimation
-methods. Plots sample complexity curve: MAE vs n_pstar with error bands.
+Generate MAE-vs-n_pstar plots from processed pstar sample-complexity metrics.
 
 Data flow:
-- Input: processed_results/metrics.h5 (aggregated metrics from step3)
-- Output: Single PDF figure in figures/ directory
+- Input: processed_results/metrics.h5 from step3_process_results.py
+- Output: figures/mae_vs_nsamples_pstar.pdf
 """
 
 import os
+
 import h5py
-import yaml
-import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import LogFormatterMathtext, LogLocator
+import numpy as np
+import yaml
 import seaborn as sns
 
 
-# 1. Configuration Loading
+config = yaml.load(
+    open("experiments/pstar_sample_complexity/config.yaml", "r"),
+    Loader=yaml.FullLoader,
+)
 
-config = yaml.load(open('experiments/pstar_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
+PROCESSED_RESULTS_DIR = config["processed_results_dir"]
+FIGURES_DIR = config["figures_dir"]
+ALGORITHMS = config.get("algorithms", [])
 
-PROCESSED_RESULTS_DIR = config['processed_results_dir']
-FIGURES_DIR = config['figures_dir']
-ALGORITHMS = config['algorithms']
-
-print(f"Loaded configuration:")
-print(f"  - processed_results_dir: {PROCESSED_RESULTS_DIR}")
-print(f"  - figures_dir: {FIGURES_DIR}")
-print(f"  - algorithms: {ALGORITHMS}")
-
-
-# 2. Style and Color Configuration
-
-COLORS = {
-    'TriangularMDRE': '#1f77b4',
-    'TriangularTDRE': '#ff7f0e',
-    'MultiHeadTriangularTDRE': '#2ca02c',
-    'TSM': '#d62728',
-}
-
-MARKERS = {
-    'TriangularMDRE': 'o',
-    'TriangularTDRE': 's',
-    'MultiHeadTriangularTDRE': '^',
-    'TSM': 'D',
-}
-
-LINEWIDTH = 1.5
-MARKERSIZE = 6
-
-sns.set_style('whitegrid')
-plt.rcParams['figure.figsize'] = (6, 4)
-plt.rcParams['font.size'] = 10
-
-
-# 3. File Path Definition and Validation
-
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/metrics.h5'
+processed_results_filename = f"{PROCESSED_RESULTS_DIR}/metrics.h5"
 
 if not os.path.exists(processed_results_filename):
     print(f"Error: {processed_results_filename} not found.")
     print("Please run step3_process_results.py first.")
-    exit(1)
+    raise SystemExit(1)
 
 
-# 4. Load Metrics from HDF5
+def build_style_maps(algorithms: list[str]) -> tuple[dict[str, tuple], dict[str, str]]:
+    """Assign a stable color to every configured algorithm."""
+    palette = sns.color_palette("colorblind", n_colors=max(len(algorithms), 1))
+    colors = {alg: palette[idx] for idx, alg in enumerate(algorithms)}
+    return colors, {}
 
-with h5py.File(processed_results_filename, 'r') as f:
-    nsamples_pstar_values = f['nsamples_pstar_values'][:]
+
+def display_name(alg: str) -> str:
+    """Compact, plot-friendly method names."""
+    labels = {
+        "MultiHeadTriangularTDRE": "MH-TDRE",
+        "TriangularCTSM": "CTSM",
+        "TriangularCTSM2D": "CTSM-2D",
+        "TriangularFMDRE": "FMDRE",
+        "TriangularMDRE": "MDRE",
+        "TriangularTSM": "TSM",
+        "TriangularVFM": "VFM",
+        "TriangularVFM2D": "VFM-2D",
+    }
+    return labels.get(alg, alg)
+
+
+with h5py.File(processed_results_filename, "r") as f:
+    nsamples_pstar_values = f["nsamples_pstar_values"][:]
 
     mae_by_alg = {}
     mae_std_by_alg = {}
 
     for alg in ALGORITHMS:
-        mae_key = f'mae_{alg}'
-        mae_std_key = f'mae_std_{alg}'
+        mae_key = f"mae_{alg}"
+        mae_std_key = f"mae_std_{alg}"
 
-        if mae_key in f:
-            mae_by_alg[alg] = f[mae_key][:]
-        else:
+        if mae_key not in f:
             print(f"Warning: {mae_key} not found, skipping {alg}")
             continue
 
-        if mae_std_key in f:
-            mae_std_by_alg[alg] = f[mae_std_key][:]
-        else:
-            mae_std_by_alg[alg] = np.zeros_like(mae_by_alg[alg])
+        mae_by_alg[alg] = f[mae_key][:]
+        mae_std_by_alg[alg] = f[mae_std_key][:] if mae_std_key in f else np.zeros_like(mae_by_alg[alg])
 
-
-# 5. Data Validation
 
 if not mae_by_alg:
-    print("Error: No algorithms loaded successfully.")
-    exit(1)
+    print("Error: No algorithms loaded successfully from metrics.h5.")
+    raise SystemExit(1)
 
 for alg in mae_by_alg:
-    assert len(mae_by_alg[alg]) == len(nsamples_pstar_values), \
-        f"Algorithm {alg}: mae array length {len(mae_by_alg[alg])} != nsamples_pstar length {len(nsamples_pstar_values)}"
-    assert len(mae_std_by_alg[alg]) == len(nsamples_pstar_values), \
-        f"Algorithm {alg}: mae_std array length {len(mae_std_by_alg[alg])} != nsamples_pstar length {len(nsamples_pstar_values)}"
-
-print(f"Loaded metrics from {processed_results_filename}")
-print(f"  - nsamples_pstar_values: {nsamples_pstar_values.tolist()}")
-print(f"  - algorithms: {list(mae_by_alg.keys())}")
-
-
-# 6. Create Output Directory
-
-os.makedirs(FIGURES_DIR, exist_ok=True)
+    assert len(mae_by_alg[alg]) == len(nsamples_pstar_values), (
+        f"Algorithm {alg}: mae length {len(mae_by_alg[alg])} != "
+        f"nsamples_pstar length {len(nsamples_pstar_values)}"
+    )
+    assert len(mae_std_by_alg[alg]) == len(nsamples_pstar_values), (
+        f"Algorithm {alg}: mae_std length {len(mae_std_by_alg[alg])} != "
+        f"nsamples_pstar length {len(nsamples_pstar_values)}"
+    )
 
 
-# 7. Plot Function
+def plot_mae_vs_nsamples_pstar(
+    nsamples: np.ndarray,
+    mae_by_alg: dict[str, np.ndarray],
+    mae_std_by_alg: dict[str, np.ndarray],
+    output_dir: str,
+    output_name: str,
+) -> None:
+    """Plot MAE curves for all available algorithms."""
+    plot_algs = [alg for alg in ALGORITHMS if alg in mae_by_alg]
+    colors, _ = build_style_maps(plot_algs)
 
-def plot_mae_vs_nsamples_pstar(nsamples, mae_by_alg, mae_std_by_alg, output_dir, output_name):
-    """plot MAE vs n_pstar with error bands for each algorithm.
+    LINEWIDTH = 1.8
+    MARKERSIZE = 4.5
 
-    args:
-        nsamples: (7,) array of sample sizes
-        mae_by_alg: dict mapping algorithm_name -> (7,) array of MAE values
-        mae_std_by_alg: dict mapping algorithm_name -> (7,) array of MAE std deviations
-        output_dir: directory to save PDF
-        output_name: filename without extension (e.g., 'mae_vs_nsamples_pstar')
+    sns.set_style("whitegrid")
+    plt.rcParams["figure.figsize"] = (6.8, 4.4)
+    plt.rcParams["font.size"] = 10.5
 
-    returns:
-        None; saves figure to {output_dir}/{output_name}.pdf
+    fig, ax = plt.subplots(figsize=(6.8, 4.4))
 
-    procedure:
-        1. create figure with plt.subplots(figsize=(6, 4))
-        2. for each algorithm in sorted order:
-           a. retrieve mae values and std from dictionaries
-           b. plot line: ax.plot(nsamples, mae, label=alg, color, marker, linewidth, markersize)
-           c. plot error band: ax.fill_between(nsamples, mae-std, mae+std, alpha=0.2, color)
-        3. set x/y scales: ax.set_xscale('log'), ax.set_yscale('log')
-        4. set labels: xlabel=r'$n_{p^*}$', ylabel='MAE'
-        5. add legend and call plt.tight_layout()
-        6. save to {output_dir}/{output_name}.pdf with dpi=150, bbox_inches='tight'
-        7. close figure and print save path
-    """
-    fig, ax = plt.subplots(figsize=(6, 4))
-
-    # sort algorithms for consistent order
-    algs_sorted = sorted([alg for alg in mae_by_alg.keys() if alg in COLORS])
-
-    for alg in algs_sorted:
+    plotted_any = False
+    for alg in plot_algs:
         mae = mae_by_alg[alg]
-        mae_std = mae_std_by_alg[alg]
 
-        # skip if all nan
         if np.all(np.isnan(mae)):
             print(f"Warning: {alg} has all-NaN MAE values, skipping")
             continue
 
-        # plot line
+        plotted_any = True
+
         ax.plot(
-            nsamples, mae,
-            label=alg, color=COLORS[alg], marker=MARKERS[alg],
-            linewidth=LINEWIDTH, markersize=MARKERSIZE
+            nsamples,
+            mae,
+            label=display_name(alg),
+            color=colors[alg],
+            linewidth=LINEWIDTH,
+            marker="o",
+            markersize=MARKERSIZE,
         )
 
-        # plot error band
-        ax.fill_between(
-            nsamples, mae - mae_std, mae + mae_std,
-            alpha=0.2, color=COLORS[alg]
-        )
+    if not plotted_any:
+        print("Error: all loaded MAE curves are NaN; no figure was generated.")
+        raise SystemExit(1)
 
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    ax.set_xlabel(r'$n_{p^*}$')
-    ax.set_ylabel('MAE')
-    ax.legend()
+    finite_maes = np.concatenate(
+        [arr[np.isfinite(arr)] for arr in mae_by_alg.values() if np.any(np.isfinite(arr))]
+    )
+    ymin = max(0.5, 10 ** np.floor(np.log10(finite_maes.min())))
+    ymax = 10 ** np.ceil(np.log10(finite_maes.max()))
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_ylim(ymin, ymax)
+    ax.set_xlabel(r"Number of $p^*$ Training Samples ($n_{p^*}$)")
+    ax.set_ylabel("Mean Absolute Error")
+    ax.xaxis.set_major_locator(LogLocator(base=10))
+    ax.yaxis.set_major_locator(LogLocator(base=10))
+    ax.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10) * 0.1))
+    ax.yaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10) * 0.1))
+    ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10))
+    ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10))
+    ax.grid(True, which="major", alpha=0.35, linewidth=0.8)
+    ax.grid(True, which="minor", alpha=0.18, linewidth=0.5)
+    ax.legend(
+        loc="center left",
+        bbox_to_anchor=(0.02, 0.62),
+        frameon=True,
+        ncol=2,
+        fontsize=8.5,
+    )
+    sns.despine()
 
     plt.tight_layout()
-    filepath = f'{output_dir}/{output_name}.pdf'
-    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = f"{output_dir}/{output_name}.pdf"
+    plt.savefig(filepath, dpi=150, bbox_inches="tight")
     plt.close()
 
     print(f"Saved {filepath}")
 
-
-# 8. Generate Figure
 
 plot_mae_vs_nsamples_pstar(
     nsamples=nsamples_pstar_values,
     mae_by_alg=mae_by_alg,
     mae_std_by_alg=mae_std_by_alg,
     output_dir=FIGURES_DIR,
-    output_name='mae_vs_nsamples_pstar'
+    output_name="mae_vs_nsamples_pstar",
 )
 
-
-# 9. Summary Report
-
-print("\n" + "="*80)
+print("\n" + "=" * 80)
 print("Sample complexity figure saved:")
 print(f"{FIGURES_DIR}/mae_vs_nsamples_pstar.pdf")
-print("="*80)
+print("=" * 80)
