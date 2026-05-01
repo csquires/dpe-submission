@@ -16,7 +16,7 @@ from typing import Optional
 WALLTIME_CAPS_PREEMPT = {
     "TSM":                       "0:05:00",  # observed 4-cell 15s
     "CTSM":                      "0:05:00",
-    "VFM":                       "0:10:00",  # has integration_steps loop
+    "VFM":                       "1:15:00",  # int_steps capped at 3000; covers heaviest path at p99 rate
     "BDRE":                      "0:05:00",
     "MDRE":                      "0:05:00",
     "MDRE_15":                   "0:05:00",
@@ -25,18 +25,18 @@ WALLTIME_CAPS_PREEMPT = {
     "MHTTDRE":                   "0:05:00",  # observed 4-cell 14s
     "MultiHeadTriangularTDRE":   "0:05:00",  # canonical alias
     "TriangularMDRE":            "0:05:00",
-    "FMDRE":                     "0:30:00",  # historical 4-cell 516s = 8.6 min; 3.5x slack
-    "FMDRE_S2":                  "0:30:00",
-    "TriangularFMDRE":           "0:30:00",
+    "FMDRE":                     "1:45:00",  # int_steps capped at 3000; 3 flow integrations -> 1.5x VFM cap
+    "FMDRE_S2":                  "1:45:00",
+    "TriangularFMDRE":           "1:45:00",
     "TriangularTSM":             "0:10:00",
     "TriangularCTSM_V1":         "0:05:00",  # historical 4-cell 10s
     "TriangularCTSM":            "0:05:00",  # legacy alias for V1
     "TriangularCTSM_V2":         "0:05:00",
     "TriangularCTSM_V3":         "0:10:00",  # heavier 2D path
-    "TriangularVFM_V1":          "0:30:00",  # observed live: trials need 16-20 min, prior cap 15 min hit 100% timeout
-    "TriangularVFM":             "0:30:00",  # legacy alias for V1
-    "TriangularVFM_V2":          "0:30:00",  # observed live: 81% timeout at 15 min cap
-    "TriangularVFM_V3":          "0:40:00",  # heaviest; observed live: 100% timeout at 20 min cap
+    "TriangularVFM_V1":          "1:15:00",  # int_steps capped at 3000; covers V3 (heaviest) at p99 rate
+    "TriangularVFM":             "1:15:00",  # legacy alias for V1
+    "TriangularVFM_V2":          "1:15:00",
+    "TriangularVFM_V3":          "1:15:00",  # heaviest path; 3000 steps * 1.35 s/step ~= 67 min
     "TabularPluginDRE":          "0:05:00",
     "SmoothedTabularPluginDRE":  "0:05:00",
 }
