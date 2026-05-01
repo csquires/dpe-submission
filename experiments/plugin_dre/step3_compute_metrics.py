@@ -3,21 +3,56 @@ Step 3: Compute Metrics for Plugin DRE Experiment
 
 Computes per-point absolute errors and overall MAE for each algorithm.
 """
+import json
 import os
 
 import h5py
 import numpy as np
 import yaml
 
+from experiments.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+
 
 config = yaml.load(open('experiments/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 RESULTS_DIR = config['results_dir']
+HPO_SUMMARY_DIR = config['hpo_summary_dir']
+ALGORITHMS = config.get('algorithms', [])
 
 dataset_filename = f'{DATA_DIR}/dataset.h5'
 raw_results_filename = f'{RESULTS_DIR}/raw_results.h5'
 metrics_filename = f'{RESULTS_DIR}/metrics.h5'
+
+
+def load_winner_methods(hpo_summary_dir):
+    """Load methods that completed HPO, preserving winners.json order."""
+    winners_path = os.path.join(hpo_summary_dir, 'winners.json')
+    if not os.path.exists(winners_path):
+        return []
+
+    with open(winners_path, 'r') as f:
+        winners = json.load(f)
+
+    return list(winners.keys())
+
+
+def order_methods(available_methods):
+    """Order methods by training/HPO order first, then include any extras."""
+    ordered = []
+    priority_lists = [
+        load_winner_methods(HPO_SUMMARY_DIR),
+        ALGORITHMS,
+        list(SEARCH_SPACES.keys()),
+        sorted(available_methods),
+    ]
+
+    for methods in priority_lists:
+        for method in methods:
+            if method in available_methods and method not in ordered:
+                ordered.append(method)
+
+    return ordered
 
 # Load true LDRs
 with h5py.File(dataset_filename, 'r') as f:
@@ -26,7 +61,8 @@ with h5py.File(dataset_filename, 'r') as f:
 
 # Discover algorithms from raw results
 with h5py.File(raw_results_filename, 'r') as f:
-    alg_names = [key.replace('est_ldrs_grid_', '') for key in f.keys() if key.startswith('est_ldrs_grid_') and 'TriangularTDRE' not in key]
+    available = [key.replace('est_ldrs_grid_', '') for key in f.keys() if key.startswith('est_ldrs_grid_')]
+    alg_names = order_methods(available)
 
 print(f"Found algorithms: {alg_names}")
 print(f"True LDRs shape: {true_ldrs_grid.shape}")  # (nrows, num_grid_points)

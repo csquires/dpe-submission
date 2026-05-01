@@ -1,4 +1,19 @@
+"""
+Full evaluation using HPO winner hyperparams.
+
+For each method, loads the per-KL winner hyperparams from hpo_summary/winners.json,
+then runs the full evaluation across all sample sizes and instances. Output format
+is identical to the pre-HPO version so step3_process_results.py is unchanged.
+
+Usage:
+  python experiments/dre_sample_complexity/step2_run_algorithms.py [--method METHOD] [--force]
+
+  --method: run only this method (default: all)
+  --force:  overwrite existing results
+"""
+
 import argparse
+import json
 import os
 
 import h5py
@@ -7,152 +22,131 @@ import torch
 from tqdm import tqdm
 import yaml
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--force', action='store_true', help='Force re-run of all algorithms, overwriting existing results')
-args = parser.parse_args()
-
-from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
-from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation.bdre import BDRE
-from src.density_ratio_estimation.tdre import TDRE
-from src.density_ratio_estimation.mdre import MDRE
-from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from experiments.dre_sample_complexity.hpo_search_spaces import SEARCH_SPACES
 
 
-config = yaml.load(open('experiments/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
-DEVICE = config['device']
-# directories
-DATA_DIR = config['data_dir']
-RAW_RESULTS_DIR = config['raw_results_dir']
-# dataset parameters
-DATA_DIM = config['data_dim']
-KL_DIVERGENCES = config['kl_divergences']
-NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
-NSAMPLES_TRAIN_VALUES = config['nsamples_train_values']
-NSAMPLES_TEST = config['nsamples_test']
-# random seed
-SEED = config['seed']
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-
-dataset_filename = f'{DATA_DIR}/dataset.h5'
-results_filename = f'{RAW_RESULTS_DIR}/results.h5'
-
-existing_results = set()
-if os.path.exists(results_filename):
-    with h5py.File(results_filename, 'r') as results_file:
-        existing_results = set(results_file.keys())
-        print("Existing results for:", list(results_file.keys()))
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--method", type=str, default=None, choices=list(SEARCH_SPACES.keys()),
+                        help="Run only this method (default: all)")
+    parser.add_argument("--force", action="store_true", help="Overwrite existing results")
+    return parser.parse_args()
 
 
-def make_algorithms():
-    """Create fresh algorithm instances."""
-    # instantiate bdre
-    bdre_classifier = make_binary_classifier(name="default", input_dim=DATA_DIM)
-    bdre = BDRE(bdre_classifier, device=DEVICE)
+def load_winners(hpo_summary_dir: str) -> dict:
+    """Load winners.json; return empty dict with warning if missing."""
+    path = os.path.join(hpo_summary_dir, "winners.json")
+    if not os.path.exists(path):
+        print(f"WARNING: {path} not found. Run step2c_pick_winners.py first.")
+        return {}
+    with open(path) as f:
+        return json.load(f)
 
-    # instantiate tdre variants
-    tdre_waypoints = [5]
-    tdre_variants = []
-    for num_waypoints_tdre in tdre_waypoints:
-        tdre_classifiers = make_pairwise_binary_classifiers(
-            name="default",
-            num_classes=num_waypoints_tdre,
-            input_dim=DATA_DIM,
-        )
-        tdre_variants.append((f"TDRE_{num_waypoints_tdre}", TDRE(tdre_classifiers, num_waypoints=num_waypoints_tdre, device=DEVICE)))
 
-    # instantiate mdre variants
-    mdre_waypoints = [15]
-    mdre_variants = []
-    for num_waypoints_mdre in mdre_waypoints:
-        mdre_classifier = make_multiclass_classifier(
-            name="default",
-            input_dim=DATA_DIM,
-            num_classes=num_waypoints_mdre,
-        )
-        mdre_variants.append((f"MDRE_{num_waypoints_mdre}", MDRE(mdre_classifier, device=DEVICE)))
+def build_estimator(method: str, kl_idx: int, winners: dict, config: dict) -> object:
+    """Instantiate estimator using HPO winner hyperparams for this (method, kl_idx)."""
+    kl_key = f"kl_{kl_idx}"
 
-    # instantiate tsm
-    tsm = TSM(DATA_DIM, device=DEVICE)
+    if method not in winners or kl_key not in winners[method]:
+        raise ValueError(f"No winner found for {method} {kl_key}. Run step2c first.")
 
-    # instantiate triangular mdre
-    triangular_mdre_waypoints = 15
-    triangular_mdre_classifier = make_multiclass_classifier(
-        name="default",
-        input_dim=DATA_DIM,
-        num_classes=triangular_mdre_waypoints,
-    )
-    triangular_mdre = TriangularMDRE(
-        triangular_mdre_classifier,
-        device=DEVICE,
-        midpoint_oversample=7,
-        gamma_power=3.0,
+    hyperparams = winners[method][kl_key]
+    builder = SEARCH_SPACES[method]["builder"]
+    return builder(
+        input_dim=config["data_dim"],
+        device=config["device"],
+        config=config,
+        **hyperparams,
     )
 
-    # instantiate spatial velo denoiser (VFM)
-    spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
 
-    algorithms = [
-        ("BDRE", bdre),
-        *tdre_variants,
-        *mdre_variants,
-        ("TSM", tsm),
-        ("TriangularMDRE", triangular_mdre),
-        ("VFM", spatial),
-    ]
-    return algorithms
+def main():
+    args = parse_args()
+    config = yaml.safe_load(open("experiments/dre_sample_complexity/config.yaml"))
+
+    device = config["device"]
+    data_dir = config["data_dir"]
+    raw_results_dir = config["raw_results_dir"]
+    kl_divergences = config["kl_divergences"]
+    num_instances_per_kl = config["num_instances_per_kl"]
+    nsamples_train_values = config["nsamples_train_values"]
+    nsamples_test = config["nsamples_test"]
+
+    np.random.seed(config["seed"])
+    torch.manual_seed(config["seed"])
+
+    winners = load_winners(config["hpo_summary_dir"])
+
+    os.makedirs(raw_results_dir, exist_ok=True)
+    dataset_path = os.path.join(data_dir, "dataset.h5")
+    results_path = os.path.join(raw_results_dir, "results.h5")
+
+    # check which methods already have results
+    existing = set()
+    if os.path.exists(results_path):
+        with h5py.File(results_path, "r") as f:
+            existing = set(f.keys())
+        print("Existing results:", list(existing))
+
+    methods_to_run = [args.method] if args.method else list(SEARCH_SPACES.keys())
+    nrows = len(kl_divergences) * num_instances_per_kl
+    n_nsamples = len(nsamples_train_values)
+
+    with h5py.File(dataset_path, "r") as dataset_file:
+        for method in methods_to_run:
+            result_key = f"est_ldrs_arr_{method}"
+            if result_key in existing and not args.force:
+                print(f"Skipping {method} (results exist, use --force to overwrite)")
+                continue
+
+            if method not in winners:
+                print(f"Skipping {method}: no HPO winners found")
+                continue
+
+            print(f"\nRunning {method}...")
+
+            # shape: (nrows, n_nsamples_train, nsamples_test)
+            est_ldrs_arr = np.zeros((nrows, n_nsamples, nsamples_test), dtype=np.float32)
+
+            for ntrain_idx, nsamples_train in enumerate(nsamples_train_values):
+                print(f"  nsamples_train={nsamples_train}")
+
+                # iterate by kl block so we build estimator once per kl (not per row)
+                for kl_idx, kl_value in enumerate(kl_divergences):
+                    row_offset = kl_idx * num_instances_per_kl
+
+                    for local_idx in tqdm(range(num_instances_per_kl),
+                                          desc=f"    KL={kl_value}"):
+                        row = row_offset + local_idx
+
+                        # fresh estimator per (kl_idx, instance, nsamples) to avoid
+                        # state leakage across instances after fit()
+                        estimator = build_estimator(method, kl_idx, winners, config)
+
+                        samples_p0 = torch.from_numpy(
+                            dataset_file["samples_p0_arr"][row][:nsamples_train]
+                        ).to(device)
+                        samples_p1 = torch.from_numpy(
+                            dataset_file["samples_p1_arr"][row][:nsamples_train]
+                        ).to(device)
+                        samples_pstar = torch.from_numpy(
+                            dataset_file["samples_pstar_arr"][row]
+                        ).to(device)
+
+                        estimator.fit(samples_p0, samples_p1)
+                        est_ldrs = estimator.predict_ldr(samples_pstar).cpu().numpy()
+                        est_ldrs_arr[row, ntrain_idx] = est_ldrs
+
+            # write result (same key format as original step2 for step3 compatibility)
+            with h5py.File(results_path, "a") as results_file:
+                if result_key in results_file:
+                    del results_file[result_key]
+                results_file.create_dataset(result_key, data=est_ldrs_arr)
+
+            print(f"  saved {result_key} to {results_path}")
+
+    print(f"\nDone. Results in {results_path}")
 
 
-os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
-with h5py.File(dataset_filename, 'r') as dataset_file:
-    nrows = dataset_file['kl_divergence_arr'].shape[0]
-    n_nsamples_train = len(NSAMPLES_TRAIN_VALUES)
-
-    # Get algorithm names
-    algorithms = make_algorithms()
-    alg_names = [name for name, _ in algorithms]
-
-    for alg_name in alg_names:
-        dataset_name = f'est_ldrs_arr_{alg_name}'
-        if dataset_name in existing_results and not args.force:
-            print(f"Skipping {alg_name} (results exist, use --force to overwrite)")
-            continue
-
-        print(f"\nRunning {alg_name}...")
-        # Shape: (nrows, n_nsamples_train, nsamples_test)
-        est_ldrs_arr = np.zeros((nrows, n_nsamples_train, NSAMPLES_TEST))
-
-        for ntrain_idx, nsamples_train in enumerate(NSAMPLES_TRAIN_VALUES):
-            print(f"  nsamples_train = {nsamples_train}")
-
-            # Create fresh algorithm instance for each sample size
-            algorithms = make_algorithms()
-            alg = dict(algorithms)[alg_name]
-
-            for idx in tqdm(range(nrows), desc=f"    instances"):
-                # Subsample training data
-                samples_p0 = torch.from_numpy(dataset_file['samples_p0_arr'][idx][:nsamples_train]).to(DEVICE)
-                samples_p1 = torch.from_numpy(dataset_file['samples_p1_arr'][idx][:nsamples_train]).to(DEVICE)
-
-                # Train algorithm (special handling for TriangularMDRE)
-                if alg_name in {"TriangularMDRE"}:
-                    samples_pstar = torch.from_numpy(dataset_file['samples_pstar_arr'][idx]).to(DEVICE)
-                    alg.fit(samples_p0, samples_p1, samples_pstar)
-                else:
-                    alg.fit(samples_p0, samples_p1)
-
-                # Predict on test set (only q_1)
-                samples_pstar = torch.from_numpy(dataset_file['samples_pstar_arr'][idx]).to(DEVICE)
-                est_ldrs = alg.predict_ldr(samples_pstar)
-                est_ldrs_arr[idx, ntrain_idx] = est_ldrs.cpu().numpy()
-
-        with h5py.File(results_filename, 'a') as results_file:
-            dataset_name = f'est_ldrs_arr_{alg_name}'
-            if dataset_name in results_file:
-                del results_file[dataset_name]
-            results_file.create_dataset(dataset_name, data=est_ldrs_arr)
-
-print(f"\nResults saved to {results_filename}")
+if __name__ == "__main__":
+    main()

@@ -1,8 +1,11 @@
 # directory configuration
-data_dir: "${DPE_DATA_ROOT}/pstar_sample_complexity/data"
+data_dir: "experiments/pstar_sample_complexity/data"
 raw_results_dir: "experiments/pstar_sample_complexity/raw_results"
 processed_results_dir: "experiments/pstar_sample_complexity/processed_results"
 figures_dir: "experiments/pstar_sample_complexity/figures"
+hpo_configs_dir: "experiments/pstar_sample_complexity/hpo_configs"
+hpo_results_dir: "experiments/pstar_sample_complexity/hpo_results"
+hpo_summary_dir: "experiments/pstar_sample_complexity/hpo_summary"
 
 # data generation
 data_dim: 3
@@ -15,19 +18,23 @@ nsamples_p0_p1: 3000
 nsamples_pstar_values: [100, 1000, 3000, 9000]
 nsamples_test: 1024
 
-# model hyperparameters
+# fixed architecture choices
 num_waypoints: 15
-latent_dim: 16
-num_layers: 4
-num_epochs: 100
 
-# tsm-specific hyperparameters
-tsm_n_epochs: 1000
-tsm_batch_size: 512
-tsm_lr: 0.001
+# HPO settings
+hpo_num_trials: 30            # random search trials per (method, pstar_idx)
+hpo_num_eval_instances: 5     # instances (of 20) evaluated per HPO trial
 
-# algorithms to run
-algorithms: [TriangularMDRE, TriangularTDRE, MultiHeadTriangularTDRE, TSM]
+# algorithms to run (used by step3 to discover result files)
+algorithms:
+  - MultiHeadTriangularTDRE
+  - TriangularCTSM
+  - TriangularCTSM2D
+  - TriangularFMDRE
+  - TriangularMDRE
+  - TriangularTSM
+  - TriangularVFM
+  - TriangularVFM2D
 
 # execution
 device: "cuda"

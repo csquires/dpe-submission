@@ -7,6 +7,7 @@ Creates RGB colormap visualization with:
 - All grid points shown for each algorithm
 - Global error scaling across all algorithms and KL distances
 """
+import json
 import os
 
 import h5py
@@ -18,12 +19,15 @@ from torch.distributions import MultivariateNormal
 import yaml
 import seaborn as sns
 
+from experiments.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+
 
 config = yaml.load(open('experiments/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 RESULTS_DIR = config['results_dir']
 FIGURES_DIR = config['figures_dir']
+HPO_SUMMARY_DIR = config['hpo_summary_dir']
 # grid parameters
 GRID_SIZE = config['grid_size']
 RGB_RESOLUTION = config['rgb_resolution']
@@ -31,9 +35,40 @@ MARKER_SIZE_MIN = config['marker_size_min']
 MARKER_SIZE_MAX = config['marker_size_max']
 MARKER_ALPHA_MIN = config['marker_alpha_min']
 MARKER_ALPHA_MAX = config['marker_alpha_max']
+ALGORITHMS = config.get('algorithms', [])
 
 dataset_filename = f'{DATA_DIR}/dataset.h5'
 metrics_filename = f'{RESULTS_DIR}/metrics.h5'
+
+
+def load_winner_methods(hpo_summary_dir):
+    """Load methods that completed HPO, preserving winners.json order."""
+    winners_path = os.path.join(hpo_summary_dir, 'winners.json')
+    if not os.path.exists(winners_path):
+        return []
+
+    with open(winners_path, 'r') as f:
+        winners = json.load(f)
+
+    return list(winners.keys())
+
+
+def order_methods(available_methods):
+    """Order methods by training/HPO order first, then include any extras."""
+    ordered = []
+    priority_lists = [
+        load_winner_methods(HPO_SUMMARY_DIR),
+        ALGORITHMS,
+        list(SEARCH_SPACES.keys()),
+        sorted(available_methods),
+    ]
+
+    for methods in priority_lists:
+        for method in methods:
+            if method in available_methods and method not in ordered:
+                ordered.append(method)
+
+    return ordered
 
 
 def get_2d_subsample_indices(grid_size, step=2):
@@ -133,13 +168,16 @@ with h5py.File(dataset_filename, 'r') as f:
     grid_points_arr = f['grid_points_arr'][:]
     grid_bounds_arr = f['grid_bounds_arr'][:]
 
-# Standard order: BDRE -> TDRE -> MDRE -> TSM -> TriangularMDRE -> VFM
-algorithm_order = ["BDRE", "TDRE_5", "MDRE_15", "TSM", "TriangularMDRE", "VFM"]
-
-# Discover algorithms from metrics file and order them
+# Discover algorithms from metrics file and order them by trained methods first
 with h5py.File(metrics_filename, 'r') as f:
-    available_algs = set([key.replace('abs_errors_', '') for key in f.keys() if key.startswith('abs_errors_') and 'TriangularTDRE' not in key])
-    alg_names = [alg for alg in algorithm_order if alg in available_algs]
+    available_algs = set([key.replace('abs_errors_', '') for key in f.keys() if key.startswith('abs_errors_')])
+    alg_names = order_methods(available_algs)
+
+if not alg_names:
+    raise ValueError(
+        f'No algorithm metrics found in {metrics_filename}. '
+        'Run step3_compute_metrics.py after step2_run_algorithms.py.'
+    )
 
 print(f"Found algorithms: {alg_names}")
 num_algorithms = len(alg_names)
