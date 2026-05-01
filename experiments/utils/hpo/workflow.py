@@ -98,7 +98,7 @@ def _load_recalibrated_spec(exp: str, method: str,
 
     returns None if file missing or method absent.
     """
-    spec_file = output_dir / "recalibrated_specs" / f"{exp}.yaml"
+    spec_file = output_dir.parent / "recalibrated_specs" / f"{exp}.yaml"
     if not spec_file.exists():
         return None
     data = yaml.safe_load(spec_file.read_text()) or {}
@@ -187,9 +187,12 @@ def _build_sbatch_cmd(experiment: str, method: str, config_file: Path,
     output_dir (without stage suffix). watchdog expands {time}/{exclude}.
     """
     workdir = "/home/aviamala/dpe-submission"
+    trial_id = Path(config_file).stem.removeprefix("trial_")
+    job_name = f"{trial_id}_{stage}_{method}"
     return (
         f"sbatch --partition=preempt --time={{time}} --exclude={{exclude}} "
         f"--gpus=1 --cpus-per-task=4 --mem=24G --requeue "
+        f"--job-name={job_name} "
         f"--output={logdir}/%j.out "
         f"--wrap=\"set +u && source ~/.bashrc && conda activate fac && set -u && "
         f"export HDF5_USE_FILE_LOCKING=FALSE && cd {workdir} && "
@@ -222,7 +225,7 @@ def recalibrate(method: str, exp: str, output_dir: Path) -> Dict[str, Any]:
     base_space: Dict[str, Tuple] = METHOD_SPECS[method]["base_search_space"]  # B8
     fallback = {"source": "fallback", "spec": base_space, "num_prior_trials": 0}
 
-    winners_file = output_dir / f"winners.{exp}.yaml"
+    winners_file = output_dir.parent / f"winners.{exp}.yaml"
     if not winners_file.exists():
         return fallback
 
@@ -247,7 +250,7 @@ def recalibrate(method: str, exp: str, output_dir: Path) -> Dict[str, Any]:
         narrowed[param] = narrow_spec(base_spec, values) if values else base_spec
 
     # B7: tmp+replace inside flock; pid-namespaced tmp
-    recal_dir = _ensure_dir(output_dir / "recalibrated_specs")
+    recal_dir = _ensure_dir(output_dir.parent / "recalibrated_specs")
     recal_file = recal_dir / f"{exp}.yaml"
     lock_path = recal_file.with_suffix(".lock")
     with open(lock_path, "a") as lock_fd:
@@ -521,7 +524,7 @@ def persist(method: str, exp: str, holdout_result_file: Path, output_dir: Path,
 
     returns {winners_file, entry_written}.
     """
-    winners_file = output_dir / f"winners.{exp}.yaml"  # M3
+    winners_file = output_dir.parent / f"winners.{exp}.yaml"  # M3
 
     holdout_result = json.loads(holdout_result_file.read_text())
     holdout_score = float(holdout_result["score"])
@@ -630,10 +633,10 @@ def main() -> int:
             print("error: --output-dir not set and DPE_DATA_ROOT not in environ",
                   file=sys.stderr)
             return 1
-        args.output_dir = Path(data_root) / args.experiment
+        args.output_dir = Path(data_root) / args.experiment / args.method
 
     if args.queue_file is None:
-        args.queue_file = args.output_dir / "watchdog_queue.txt"
+        args.queue_file = args.output_dir.parent / "watchdog_queue.txt"
 
     # load adapter (only needed for stages that draw cells)
     adapter = None
