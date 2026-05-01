@@ -14,6 +14,7 @@ skipped.json resolves to $DPE_CKPT_ROOT/watchdog/<run_id>/skipped.json (M2).
 import argparse
 import json
 import logging
+import math
 import os
 import subprocess
 from datetime import datetime
@@ -23,10 +24,74 @@ from typing import Optional
 import experiments.utils.hpo.adapters as adapters
 from experiments.utils.hpo.registry import LEGACY_ALIASES
 from experiments.utils.hpo.method_specs import METHOD_SPECS
+from experiments.utils.walltime_caps import speed_rank, cpu_eligible_methods
 
 logger = logging.getLogger(__name__)
 
 _WORKDIR = "/home/aviamala/dpe-submission"
+
+
+def verify_queue_sort(queue_file: Path, max_wait_sec: int = 60) -> bool:
+    """warn-not-crash check that queue lines are speed-rank monotonic.
+
+    polls queue_file up to max_wait_sec for it to contain at least 50 lines.
+    parses each line: extract method name (first tab-delimited field).
+    computes speed_rank(method) for each line; checks that ranks form a
+    non-decreasing sequence across at least 90% of adjacent pairs.
+
+    returns True if monotonicity condition met, False otherwise.
+    on False: logs warning with up to 5 first-violation indices.
+    """
+    import time
+    start = time.time()
+    lines = []
+
+    while time.time() - start < max_wait_sec:
+        try:
+            text = queue_file.read_text()
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            if len(lines) > 50:
+                break
+        except (FileNotFoundError, OSError):
+            pass
+        time.sleep(0.5)
+
+    if not lines:
+        logger.warning("verify_queue_sort: queue_file is empty or unreadable after %d sec", max_wait_sec)
+        return False
+
+    # extract methods and compute ranks
+    methods = []
+    for line in lines:
+        parts = line.split('\t')
+        if parts:
+            methods.append(parts[0])
+
+    if len(methods) < 2:
+        return True  # trivially monotonic
+
+    ranks = [speed_rank(m) for m in methods]
+
+    # check monotonicity: 90% of adjacent pairs non-decreasing
+    violations = []
+    for i in range(len(ranks) - 1):
+        if ranks[i] > ranks[i + 1]:
+            violations.append(i)
+
+    violation_rate = len(violations) / (len(ranks) - 1)
+    is_monotonic = violation_rate <= 0.1  # <= 10% violations allowed
+
+    if not is_monotonic:
+        first_5 = violations[:5]
+        logger.warning(
+            "queue sort monotonicity check failed: %.1f%% violations. "
+            "first 5 violation indices (line pairs): %s. "
+            "cpu array may pick methods out of intended order.",
+            violation_rate * 100, first_5
+        )
+
+    return is_monotonic
+
 
 # --- step 1 ---
 
@@ -327,11 +392,13 @@ def emit_summary(
     logdir: Path,
     skipped: dict,
     timestamp: str,
+    cpu_record: Optional[dict] = None,
 ) -> None:
     """print summary + write launcher_manifest.json to logdir.
 
     manifest fields: run_id, watchdog_jid, workflow_jids (flat list),
-    wave_jids (nested), skipped_pairs, timestamp.
+    wave_jids (nested), skipped_pairs, timestamp. if cpu_record provided,
+    merges 8 cpu_array_* optional fields for successful dispatch or skip/error details.
     """
     all_jids = [jid for wave in waves_jids for jid in wave]
     manifest = {
@@ -342,6 +409,9 @@ def emit_summary(
         "skipped_pairs": skipped,
         "timestamp": timestamp,
     }
+    # merge cpu array record if provided (spec 05)
+    if cpu_record is not None:
+        manifest.update(cpu_record)
     manifest_path = logdir / "launcher_manifest.json"
     tmp = manifest_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(manifest, indent=2))
@@ -387,6 +457,20 @@ def parse_args() -> argparse.Namespace:
                    help="overwrite non-empty queue_file without error")
     p.add_argument("--dry-run", action="store_true",
                    help="print sbatch commands without submitting")
+    p.add_argument("--no-cpu-drain", action="store_true",
+                   help="skip cpu array job submission (gpu-only campaign)")
+    p.add_argument("--cpu-array-max", type=int, default=200,
+                   help="cap on array size; protects against blast radius")
+    p.add_argument("--cpu-concurrency", type=int, default=100,
+                   help="max concurrent array elements (array_qos cap)")
+    p.add_argument("--cpu-n-per-element", type=int, default=8,
+                   help="trials per array element (jobs per sbatch array index)")
+    p.add_argument("--cpu-walltime", type=str, default="1:30:00",
+                   help="per-element walltime; pass 'auto' to compute via spec 04")
+    p.add_argument("--cpu-cpus-per-task", type=int, default=2,
+                   help="cpus per array element task")
+    p.add_argument("--cpu-mem", type=str, default="8G",
+                   help="memory per array element task")
     return p.parse_args()
 
 
@@ -422,6 +506,11 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
     # 4. build (method, exp) matrix; filter tabular mismatches
     valid_pairs, pair_skipped = build_matrix(methods, adapter_map)
 
+    # 4.5. sort valid_pairs by speed class (slow workflows submit first)
+    # this orders queue entries approximately by method speed (slow at front)
+    # so bidirectional drain (watchdog pops front, cpu pops back) is balanced.
+    valid_pairs.sort(key=lambda p: (speed_rank(p[0]), p[0], p[1]))
+
     # merge skip records: adapter-level + pair-level
     all_skipped: dict = {**{k: [v] for k, v in adapter_skipped.items()}, **pair_skipped}
 
@@ -455,9 +544,87 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
         wave_size=args.wave_size, budget=args.budget,
     )
 
-    # 9. emit summary
+    # 8.5. verify queue sort order (non-blocking check, warn-only)
+    verify_queue_sort(args.queue_file)
+
+    # 8.6. build cpu array submission record
+    # filter to cpu-eligible methods
+    eligible_methods = cpu_eligible_methods()
+    cpu_pairs = [p for p in valid_pairs if p[0] in eligible_methods]
+
+    # compute array_size: ceil(eligible_lines / n_per_element), capped at max
+    # eligible_lines = num_pairs × (broad_lines + refined_lines + holdout_lines)
+    # use 250 budget per pair (standard assumption from spec 01)
+    eligible_lines = len(cpu_pairs) * 250  # standard per-pair budget (broad+refined+holdout)
+    array_size = min(
+        math.ceil(eligible_lines / args.cpu_n_per_element),
+        args.cpu_array_max,
+    )
+
+    # determine cpu submission disposition
+    cpu_record = None
+    if args.no_cpu_drain:
+        cpu_record = {
+            "cpu_array_dispatched": False,
+            "cpu_array_skipped_reason": "user_flag",
+        }
+        logger.info("cpu drain disabled by --no-cpu-drain flag")
+    elif len(cpu_pairs) == 0:
+        cpu_record = {
+            "cpu_array_dispatched": False,
+            "cpu_array_skipped_reason": "no_eligible_methods",
+        }
+        logger.info("no cpu-eligible pairs in matrix")
+    else:
+        # attempt cpu array submission
+        try:
+            # validate preconditions
+            if args.cpu_concurrency * args.cpu_cpus_per_task > 256:
+                raise ValueError(
+                    f"cpu array concurrency overflow: {args.cpu_concurrency} * "
+                    f"{args.cpu_cpus_per_task} cpus_per_task > 256 (array_qos cap)"
+                )
+
+            # import here to avoid circular dependency if submit_cpu_array
+            # is defined in this module or imported from cpu_dispatcher
+            from experiments.utils.hpo.cpu_dispatcher import submit_cpu_array
+
+            array_jid = submit_cpu_array(
+                queue_file=args.queue_file,
+                lock_file=args.queue_file.with_suffix(args.queue_file.suffix + ".lock"),
+                array_size=array_size,
+                log_dir=logdir / "cpu_array_logs",
+                concurrency=args.cpu_concurrency,
+                n_per_element=args.cpu_n_per_element,
+                walltime=args.cpu_walltime,
+                cpus_per_task=args.cpu_cpus_per_task,
+                mem=args.cpu_mem,
+                method_filter=",".join(sorted(eligible_methods)),
+                dependency=f"after:{watchdog_jid}",
+            )
+
+            cpu_record = {
+                "cpu_array_dispatched": True,
+                "cpu_array_jid": array_jid,
+                "cpu_array_size": array_size,
+                "cpu_array_concurrency": args.cpu_concurrency,
+                "cpu_array_walltime": args.cpu_walltime,
+                "cpu_array_n_per_element": args.cpu_n_per_element,
+                "cpu_array_method_filter": sorted(eligible_methods),
+                "cpu_array_log_dir": str(logdir / "cpu_array_logs"),
+            }
+            logger.info("cpu array submitted: jid=%s array_size=%d", array_jid, array_size)
+
+        except ValueError as e:
+            cpu_record = {
+                "cpu_array_dispatched": False,
+                "cpu_array_error": str(e)[:500],
+            }
+            logger.warning("cpu array dispatch failed: %s; gpu campaign continues", e)
+
+    # 9. emit summary + cpu record
     emit_summary(run_id, watchdog_jid, waves_jids, args.queue_file,
-                 logdir, all_skipped, timestamp)
+                 logdir, all_skipped, timestamp, cpu_record=cpu_record)
 
 
 if __name__ == "__main__":

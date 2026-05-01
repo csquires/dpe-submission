@@ -36,15 +36,7 @@ from experiments.utils.hpo.method_specs import METHOD_SPECS
 from experiments.utils.hpo.registry import LEGACY_ALIASES
 from experiments.utils.watchdog import pop_lines_back_atomic
 from experiments.utils.hpo import cpu_runner
-
-
-# methods ineligible for cpu (flow integration too slow on cpu).
-# everything not in this set IS eligible by default.
-_CPU_INELIGIBLE = {
-    "VFM", "FMDRE", "FMDRE_S2", "TriangularFMDRE",
-    "TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3",
-    "TriangularVFM",
-}
+from experiments.utils.walltime_caps import cpu_eligible_methods
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +146,8 @@ def _parse_args() -> argparse.Namespace:
 def _resolve_method_filter(arg: Optional[str]) -> Optional[set[str]]:
     if arg:
         return set(arg.split(","))
-    # default: everything in METHOD_SPECS minus _CPU_INELIGIBLE
-    return set(METHOD_SPECS.keys()) - _CPU_INELIGIBLE
+    # default: all cpu-eligible methods (from walltime_caps)
+    return cpu_eligible_methods()
 
 
 def main() -> int:

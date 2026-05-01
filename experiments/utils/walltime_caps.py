@@ -6,7 +6,91 @@ usage (submit_hpo.sh:TIME_LIMITS).
 """
 
 import re
+from enum import Enum
 from typing import Optional
+
+
+class SpeedClass(Enum):
+    """speed rank for queue sorting and cpu eligibility.
+
+    SLOW (0): gpu-only, long runtimes (flow integration), front of queue.
+    MEDIUM (1): small nn, mid runtimes (~3-10 min per cpu trial), mid queue.
+    FAST (2): cheap methods, short runtimes (~3-5 min per cpu trial), back of queue.
+    """
+    SLOW   = 0
+    MEDIUM = 1
+    FAST   = 2
+
+
+SPEED_CLASS_MAP: dict[str, SpeedClass] = {
+    # SLOW (cpu-ineligible): 7 canonical + 1 alias = 8 entries
+    "VFM":                       SpeedClass.SLOW,
+    "FMDRE":                     SpeedClass.SLOW,
+    "FMDRE_S2":                  SpeedClass.SLOW,
+    "TriangularFMDRE":           SpeedClass.SLOW,
+    "TriangularVFM_V1":          SpeedClass.SLOW,
+    "TriangularVFM_V2":          SpeedClass.SLOW,
+    "TriangularVFM_V3":          SpeedClass.SLOW,
+    "TriangularVFM":             SpeedClass.SLOW,  # legacy alias for TriangularVFM_V1
+
+    # MEDIUM (cpu-eligible): 7 canonical + 1 alias = 8 entries
+    "TSM":                       SpeedClass.MEDIUM,
+    "CTSM":                      SpeedClass.MEDIUM,
+    "BDRE":                      SpeedClass.MEDIUM,
+    "TriangularTSM":             SpeedClass.MEDIUM,
+    "TriangularCTSM_V1":         SpeedClass.MEDIUM,
+    "TriangularCTSM_V2":         SpeedClass.MEDIUM,
+    "TriangularCTSM_V3":         SpeedClass.MEDIUM,
+    "TriangularCTSM":            SpeedClass.MEDIUM,  # legacy alias for TriangularCTSM_V1
+
+    # FAST (cpu-eligible): 6 canonical + 3 aliases = 9 entries
+    "MDRE_15":                   SpeedClass.FAST,
+    "TDRE_5":                    SpeedClass.FAST,
+    "MultiHeadTriangularTDRE":   SpeedClass.FAST,
+    "TriangularMDRE":            SpeedClass.FAST,
+    "TabularPluginDRE":          SpeedClass.FAST,
+    "SmoothedTabularPluginDRE":  SpeedClass.FAST,
+    "MDRE":                      SpeedClass.FAST,  # legacy alias for MDRE_15
+    "TDRE":                      SpeedClass.FAST,  # legacy alias for TDRE_5
+    "MHTTDRE":                   SpeedClass.FAST,  # legacy alias for MultiHeadTriangularTDRE
+}
+
+
+def speed_rank(method: Optional[str]) -> int:
+    """return 0|1|2 (slow|medium|fast). unknown/None/empty -> 1 (neutral).
+
+    used to sort queue at write time: front=slow (0), back=fast (2).
+    alias names are looked up directly in SPEED_CLASS_MAP (safe).
+    """
+    if not method or method not in SPEED_CLASS_MAP:
+        return SpeedClass.MEDIUM.value
+    return SPEED_CLASS_MAP[method].value
+
+
+def cpu_eligible(method: Optional[str]) -> bool:
+    """true iff method is cpu-eligible (MEDIUM or FAST).
+    unknown/None/empty -> False (conservative).
+
+    guards against scheduling gpu-only methods on cpu array.
+    """
+    if not method or method not in SPEED_CLASS_MAP:
+        return False
+    return SPEED_CLASS_MAP[method] != SpeedClass.SLOW
+
+
+def cpu_eligible_methods() -> set[str]:
+    """canonical method names eligible for cpu (no aliases, no SLOW).
+
+    derived from intersection of SPEED_CLASS_MAP keys and METHOD_SPECS keys.
+    aliases (MDRE, TDRE, TriangularCTSM, TriangularVFM, MHTTDRE) are excluded
+    because they don't appear in METHOD_SPECS.keys(); callers should use only
+    canonical names in method_filter.
+
+    expected 13 entries: 7 MEDIUM + 6 FAST.
+    """
+    from experiments.utils.hpo.method_specs import METHOD_SPECS
+    return {m for m in SPEED_CLASS_MAP
+            if m in METHOD_SPECS and cpu_eligible(m)}
 
 
 # 4-cell base preempt caps (recalibrated/broad-sweep convention).
@@ -46,6 +130,34 @@ WALLTIME_CAPS_ARRAY = {k: f"{int(_h)*2}:{_m:02d}:{_s:02d}"
                       for k, v in WALLTIME_CAPS_PREEMPT.items()
                       for _h, _m, _s in [v.split(":")]
                       for _h, _m, _s in [(int(_h), int(_m), int(_s))]}
+
+# cpu-specific per-trial caps. keys must be a subset of cpu_eligible_methods().
+# do not add SLOW methods (gpu-ineligible); do not add aliases (use canonical).
+# calibrated from pilot 7638426 (CTSM_V1: p50=265s ~4.4 min, p90=559s ~9.3 min).
+# extrapolated for related methods; validate before fleet rollout.
+WALLTIME_CAPS_CPU = {
+    # MEDIUM: small NN training; ~5-10 min per trial on cpu
+    "TSM":                       "0:10:00",
+    "CTSM":                      "0:10:00",
+    "BDRE":                      "0:10:00",
+    "TriangularTSM":             "0:10:00",
+    "TriangularCTSM_V1":         "0:10:00",
+    "TriangularCTSM_V2":         "0:10:00",
+    "TriangularCTSM_V3":         "0:12:00",  # heavier 2D path; ~20% slower than V1/V2
+
+    # FAST: small models, expected ~3-5 min per trial on cpu
+    "MDRE_15":                   "0:05:00",
+    "TDRE_5":                    "0:05:00",
+    "MultiHeadTriangularTDRE":   "0:05:00",
+    "TriangularMDRE":            "0:05:00",
+
+    # TABULAR: cpu-only methods, expected fast (no neural training)
+    "TabularPluginDRE":          "0:05:00",
+    "SmoothedTabularPluginDRE":  "0:05:00",
+}
+
+CPU_STARTUP_BUFFER_SECONDS = 60        # conda activate + python import + cell preload
+CPU_WALLTIME_MAX_SECONDS = 28800       # 8:00:00, matches _from_seconds clamp at line 80; array partition allows 12h but helper caps at 8h
 
 WALLTIME_CAPS = WALLTIME_CAPS_PREEMPT
 
@@ -132,3 +244,66 @@ def cap_for(
         return _from_seconds(rounded_secs)
 
     return base_cap
+
+
+def cpu_cap_for(method: str, n_per_element: int = 8,
+                safety_factor: float = 1.3) -> str:
+    """compute per-element walltime: per_trial_cap × n_per_element × safety + startup.
+
+    raises ValueError if method not in WALLTIME_CAPS_CPU (cpu-ineligible).
+    safety_factor < 1.0 is clamped to 1.0. result is clamped to 12:00:00.
+
+    args:
+        method: canonical method name (must be in WALLTIME_CAPS_CPU).
+        n_per_element: number of trials per array element (default 8).
+        safety_factor: multiplicative headroom (default 1.3, clamped to >= 1.0).
+
+    returns:
+        walltime cap as "H:MM:SS" or "HH:MM:SS".
+
+    raises:
+        ValueError: if method not in WALLTIME_CAPS_CPU.
+    """
+    if method not in WALLTIME_CAPS_CPU:
+        raise ValueError(f"{method} not in WALLTIME_CAPS_CPU or cpu-ineligible")
+
+    safety_factor = max(safety_factor, 1.0)
+    per_trial_sec = _to_seconds(WALLTIME_CAPS_CPU[method])
+    total_sec = int(per_trial_sec * n_per_element * safety_factor) + CPU_STARTUP_BUFFER_SECONDS
+    total_sec = min(total_sec, CPU_WALLTIME_MAX_SECONDS)
+
+    return _from_seconds(total_sec)
+
+
+def compute_element_walltime(method_filter: list[str],
+                             n_per_element: int = 8,
+                             safety_factor: float = 1.3) -> str:
+    """take MAX over method_filter's per-method cpu caps, scale to element walltime.
+
+    used by cpu_dispatcher to compute required walltime when --walltime=auto.
+    takes conservative approach: use the slowest (max) method's cap in filter.
+
+    args:
+        method_filter: list of canonical method names (all must be cpu-eligible).
+        n_per_element: number of trials per array element (default 8).
+        safety_factor: multiplicative headroom (default 1.3, clamped to >= 1.0).
+
+    returns:
+        walltime cap as "H:MM:SS" or "HH:MM:SS".
+
+    raises:
+        ValueError: if method_filter is empty OR any method is cpu-ineligible.
+    """
+    if not method_filter:
+        raise ValueError("method_filter is empty")
+
+    bad = [m for m in method_filter if m not in WALLTIME_CAPS_CPU]
+    if bad:
+        raise ValueError(f"cpu-ineligible methods in filter: {bad}")
+
+    max_cap_sec = max(_to_seconds(WALLTIME_CAPS_CPU[m]) for m in method_filter)
+    safety_factor = max(safety_factor, 1.0)
+    total_sec = int(max_cap_sec * n_per_element * safety_factor) + CPU_STARTUP_BUFFER_SECONDS
+    total_sec = min(total_sec, CPU_WALLTIME_MAX_SECONDS)
+
+    return _from_seconds(total_sec)

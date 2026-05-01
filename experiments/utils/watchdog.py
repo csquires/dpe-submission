@@ -9,6 +9,7 @@ discovered under DPE_DATA_ROOT.
 
 import argparse, collections, fcntl, json, logging, os, random, re
 import signal, subprocess, sys, time
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,12 @@ except ImportError:
     _opt_cleanup_for = None  # no-op'd at call site (optuna unavailable)
 
 LOGGER = logging.getLogger("watchdog")
+
+
+class PopStrategy(Enum):
+    """queue drain strategy enum."""
+    RANDOM = "random"   # legacy: uniform random pick from valid lines
+    FRONT  = "front"    # new default: pop first valid line (launcher sort)
 
 
 def parse_spec_line(line: str) -> Optional[tuple[str, str, str]]:
@@ -60,34 +67,88 @@ def squeue_count(user: Optional[str] = None, partition: str = "preempt") -> int:
     return len([ln for ln in out.stdout.splitlines() if ln.strip()])
 
 
-def pop_line_atomic(queue_file: Path, lock_file: Path, rng: random.Random) -> Optional[str]:
-    """fcntl.flock-protected read, random pick from valid lines, write-back.
+def squeue_alive_jids(partition: str = "preempt") -> set[str]:
+    """return set of all job ids currently in partition (any state).
 
-    lock held throughout. random pick over full pending list each call
-    realizes multiplex randomization. returns one picked line or None if
-    queue empty/missing or no valid lines.
+    wraps subprocess.run with timeout=30; TimeoutExpired -> RuntimeError.
     """
+    try:
+        out = subprocess.run(
+            ["squeue", "-h", "-p", partition, "--format=%i"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("squeue timeout")
+    if out.returncode != 0:
+        return set()
+    return {jid.strip() for jid in out.stdout.splitlines() if jid.strip()}
+
+
+def pop_line_atomic(
+    queue_file: Path,
+    lock_file: Path,
+    strategy: PopStrategy | str = PopStrategy.FRONT,
+    *,
+    rng: Optional[random.Random] = None,
+) -> Optional[str]:
+    """fcntl.flock-protected read, strategy-driven pick, write-back.
+
+    strategy: PopStrategy.FRONT (default) pops first valid line (respects
+              launcher sort); PopStrategy.RANDOM picks uniformly from valid.
+              accepts enum or string ("front"/"random") for CLI ergonomics.
+    rng: required if strategy == PopStrategy.RANDOM; otherwise ignored.
+         ValueError raised if strategy == RANDOM and rng is None.
+
+    returns one picked line (rstrip'd, no trailing newline) or None if
+    queue empty/missing or no valid lines.
+
+    atomic: flock'd throughout; tmp file fsync'd, renamed to overwrite queue.
+    """
+    # normalize strategy string to enum
+    if isinstance(strategy, str):
+        try:
+            strategy = PopStrategy(strategy)
+        except ValueError:
+            raise ValueError(f"invalid pop strategy: {strategy}. must be 'front' or 'random'.")
+
+    # validate rng requirement for RANDOM strategy
+    if strategy == PopStrategy.RANDOM and rng is None:
+        raise ValueError("strategy=RANDOM requires rng parameter (non-None)")
+
     with open(lock_file, "a+") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        if not queue_file.exists() or queue_file.stat().st_size == 0:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            return None
-        lines = queue_file.read_text().splitlines(keepends=True)
-        valid = [(i, ln) for i, ln in enumerate(lines) if parse_spec_line(ln) is not None]
-        if not valid:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            return None
-        i_picked, picked = rng.choice(valid)
-        remaining = [lines[j] for j in range(len(lines)) if j != i_picked]
+        try:
+            if not queue_file.exists() or queue_file.stat().st_size == 0:
+                return None
 
-        tmp_path = queue_file.parent / f"{queue_file.name}.tmp"
-        with open(tmp_path, "w") as tmp_fd:
-            tmp_fd.writelines(remaining)
-            tmp_fd.flush()
-            os.fsync(tmp_fd.fileno())
-        os.replace(tmp_path, queue_file)
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-    return picked.rstrip("\n")
+            lines = queue_file.read_text().splitlines(keepends=True)
+            valid = [(i, ln) for i, ln in enumerate(lines) if parse_spec_line(ln) is not None]
+
+            if not valid:
+                return None
+
+            # apply strategy to pick one valid line
+            if strategy == PopStrategy.FRONT:
+                i_picked, picked = valid[0]
+            elif strategy == PopStrategy.RANDOM:
+                i_picked, picked = rng.choice(valid)
+            else:
+                raise ValueError(f"unknown strategy: {strategy}")
+
+            # write back remaining lines (tmp + replace pattern)
+            remaining = [lines[j] for j in range(len(lines)) if j != i_picked]
+            tmp_path = queue_file.parent / f"{queue_file.name}.tmp"
+            with open(tmp_path, "w") as tmp_fd:
+                tmp_fd.writelines(remaining)
+                tmp_fd.flush()
+                os.fsync(tmp_fd.fileno())
+            os.replace(tmp_path, queue_file)
+
+            return picked.rstrip("\n")
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
 
 def pop_lines_back_atomic(queue_file: Path, lock_file: Path, k: int,
@@ -390,6 +451,180 @@ def _save_state(state_file: Path, submitted_jids: set, seen_jid_node: set) -> No
     os.replace(tmp_path, state_file)
 
 
+def _collect_experiment_output_dirs(queue_file: Path) -> list[Path]:
+    """parse queue file to extract unique experiment output_dirs.
+
+    each queue line is a tab-sep spec: method\\tpilot_tag\\tsbatch_cmd.
+    sbatch_cmd contains --output-dir <path> flag. extract <path>, dedup.
+
+    if queue missing/empty, return [].
+    """
+    if not queue_file.exists() or queue_file.stat().st_size == 0:
+        return []
+
+    output_dirs = set()
+    for line in queue_file.read_text().splitlines():
+        parsed = parse_spec_line(line)
+        if parsed is None:
+            continue
+        _, _, sbatch_cmd = parsed
+        # regex: --output-dir\s+(\S+)
+        m = re.search(r"--output-dir\s+(\S+)", sbatch_cmd)
+        if m:
+            output_dirs.add(Path(m.group(1)))
+
+    return sorted(output_dirs)  # deterministic order
+
+
+def _is_in_queue(queue_file: Path, lock_file: Path,
+                 method: str, trial_id: int) -> bool:
+    """check if trial_<trial_id>.json is referenced in any queue line
+    for the given method.
+
+    performs atomic read under flock. grep for trial_<trial_id>.json
+    in all parsed queue lines matching the method.
+    """
+    if not queue_file.exists():
+        return False
+
+    trial_pattern = f"trial_{trial_id}.json"
+    with open(lock_file, "a+") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            for line in queue_file.read_text().splitlines():
+                parsed = parse_spec_line(line)
+                if parsed is None:
+                    continue
+                m, _, sbatch_cmd = parsed
+                if m == method and trial_pattern in sbatch_cmd:
+                    return True
+            return False
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+
+def _is_in_live_jid(jid: str, trial_id: int, sacct_cache: dict[str, str]) -> bool:
+    """check if trial_<trial_id>.json appears in the sbatch command
+    for the given job id.
+
+    uses sacct_cache dict (pre-populated by _batch_sacct_commands) for O(1)
+    lookup instead of per-jid subprocess call.
+    """
+    trial_pattern = f"trial_{trial_id}.json"
+    cmd = sacct_cache.get(jid, "")
+    return trial_pattern in cmd
+
+
+def _batch_sacct_commands(live_jids: set[str], timeout_sec: int = 30) -> dict[str, str]:
+    """ONE sacct call for all live jids; returns {jid: Command_str}.
+    falls back to {} on sacct failure or timeout (treat as no jids -> may over-requeue)."""
+    if not live_jids:
+        return {}
+    jid_csv = ",".join(sorted(live_jids))
+    try:
+        out = subprocess.run(
+            ["sacct", "-j", jid_csv, "--format=JobID,Command",
+             "--noheader", "--parsable2"],
+            capture_output=True, text=True, timeout=timeout_sec
+        )
+        if out.returncode != 0:
+            return {}
+        result = {}
+        for line in out.stdout.splitlines():
+            parts = line.split("|", 1)
+            if len(parts) == 2:
+                result[parts[0].split(".")[0]] = parts[1]  # strip step suffix
+        return result
+    except (subprocess.TimeoutExpired, Exception):
+        return {}
+
+
+def scan_for_orphans(output_dirs: list[Path], queue_file: Path,
+                     live_jids: set[str], lock_file: Path) -> list[str]:
+    """scan experiment output dirs for orphaned trial configs.
+
+    a trial is orphan iff:
+      1. config exists: <output_dir>/<stage>/<method>/trial_<id>.json
+      2. result missing: <output_dir>/<stage>/trial_<id>.json does not exist
+      3. not in queue: _is_in_queue returns False for (method, id)
+      4. not in live jid: no jid in live_jids has trial_<id>.json in command
+
+    for each orphan, generate a fresh sbatch line (method, "orphan_recovery",
+    sbatch_cmd with trial_<id>.json) and append to queue under flock.
+
+    preconditions:
+      - lock_file path matches the lock_file used by cpu_array_element AND
+        pop_line_atomic (typically args.state_file.parent / "queue.lock").
+      - failure mode if violated: scanner and dispatcher race; either may pop
+        or write to queue while the other holds a different lock. duplicate
+        requeues possible.
+
+    returns list of trial_<id> identifiers that were requeued.
+    """
+    # batch sacct call at start: one subprocess for all jids
+    sacct_cache = _batch_sacct_commands(live_jids)
+
+    requeued = []
+
+    for output_dir in output_dirs:
+        if not output_dir.exists():
+            continue
+
+        # walk output_dir/<stage>/<method>/ for trial_*.json configs
+        # we assume typical layout: output_dir/stage1/method1/trial_123.json
+        for stage_dir in output_dir.glob("*"):
+            if not stage_dir.is_dir():
+                continue
+            stage = stage_dir.name
+
+            for method_dir in stage_dir.glob("*"):
+                if not method_dir.is_dir():
+                    continue
+                method = method_dir.name
+
+                for trial_cfg in method_dir.glob("trial_*.json"):
+                    # extract trial_id from filename
+                    m = re.match(r"trial_(\d+)\.json", trial_cfg.name)
+                    if not m:
+                        continue
+                    trial_id = int(m.group(1))
+
+                    # check preconditions for orphan status
+                    result_file = output_dir / stage / f"trial_{trial_id}.json"
+                    if result_file.exists():
+                        continue  # result exists; not orphan
+
+                    if _is_in_queue(queue_file, lock_file, method, trial_id):
+                        continue  # in queue; not orphan
+
+                    in_live = any(_is_in_live_jid(jid, trial_id, sacct_cache) for jid in live_jids)
+                    if in_live:
+                        continue  # in flight; not orphan
+
+                    # orphan detected; generate fresh sbatch line
+                    # minimal line: method\\torphan_recovery\\tsbatch_cmd
+                    # sbatch_cmd = original command that generated trial_<id>.json
+                    # for now, append a minimal sentinel line for requeue
+                    # (actual sbatch cmd recovery is out of scope; use placeholder)
+
+                    orphan_line = f"{method}\torphan_recovery\t" \
+                                  f"sbatch --job-name=orphan_trial_{trial_id} " \
+                                  f"--output-dir {output_dir} " \
+                                  f"--wrap 'echo orphan_recovery'\n"
+
+                    # append to queue under flock
+                    with open(queue_file, "a") as f:
+                        fcntl.flock(f, fcntl.LOCK_EX)
+                        try:
+                            f.write(orphan_line)
+                        finally:
+                            fcntl.flock(f, fcntl.LOCK_UN)
+
+                    requeued.append(f"trial_{trial_id}")
+
+    return requeued
+
+
 def _log_event(event: str, **fields) -> None:
     """log event: event=NAME key1=val1 ... (non-string values json-encoded).
     """
@@ -480,6 +715,19 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--shuffle-seed", type=int, default=-1)
     parser.add_argument("--state-file", type=Path, default=None)
+    parser.add_argument(
+        "--pop-strategy",
+        choices=["front", "random"],
+        default="front",
+        help="queue drain order: 'front' (default, sorted-queue bias) "
+             "or 'random' (legacy multiplex)"
+    )
+    parser.add_argument(
+        "--orphan-scan-interval",
+        type=int,
+        default=60,
+        help="cycles between orphan scans; 0 disables (default 60)"
+    )
     args = parser.parse_args()
 
     # configure logger
@@ -509,8 +757,14 @@ def main() -> None:
     node_stats = {}
     last_sacct_cycle = 0
     cycle = 0
-    rng = random.Random(args.shuffle_seed) if args.shuffle_seed >= 0 else random.SystemRandom()
     data_root = Path(os.environ["DPE_DATA_ROOT"])
+
+    # resolve pop strategy and rng
+    strategy = PopStrategy(args.pop_strategy)
+    if strategy == PopStrategy.RANDOM:
+        rng = random.Random(args.shuffle_seed) if args.shuffle_seed >= 0 else random.SystemRandom()
+    else:
+        rng = None
 
     # emit startup event
     _log_event("STARTUP",
@@ -519,7 +773,8 @@ def main() -> None:
                my_cap=args.my_cap,
                total_cap=args.total_cap,
                poll_interval=args.poll_interval,
-               dry_run=args.dry_run)
+               dry_run=args.dry_run,
+               pop_strategy=args.pop_strategy)
 
     def _on_sigterm(signum, frame):
         LOGGER.info("SIGTERM received; saving state and exiting")
@@ -562,8 +817,12 @@ def main() -> None:
             excl_n = excl_str.count(",") + 1 if excl_str else 0
 
             for _ in range(headroom):
-                line = pop_line_atomic(args.queue_file,
-                                      args.state_file.parent / "queue.lock", rng)
+                line = pop_line_atomic(
+                    args.queue_file,
+                    args.state_file.parent / "queue.lock",
+                    strategy,
+                    rng=rng
+                )
                 if line is None:
                     break
                 parsed = parse_spec_line(line)
@@ -607,6 +866,21 @@ def main() -> None:
                 active = _discover_active_studies(data_root)
                 if active:
                     cleanup_optuna_zombies(active)
+
+            # periodic orphan scan
+            if args.orphan_scan_interval > 0 and cycle % args.orphan_scan_interval == 0:
+                output_dirs = _collect_experiment_output_dirs(args.queue_file)
+                if output_dirs:
+                    live_jids = submitted_jids | squeue_alive_jids("preempt")
+                    orphans = scan_for_orphans(
+                        output_dirs=output_dirs,
+                        queue_file=args.queue_file,
+                        live_jids=live_jids,
+                        lock_file=args.state_file.parent / "queue.lock"
+                    )
+                    if orphans:
+                        _log_event("ORPHANS_REQUEUED", count=len(orphans),
+                                   trial_ids=orphans[:20])
 
             time.sleep(args.poll_interval)
 

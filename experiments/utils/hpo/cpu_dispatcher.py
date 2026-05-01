@@ -60,7 +60,7 @@ def _build_sbatch(queue_file: Path, lock_file: Path,
                   walltime: str, cpus_per_task: int, mem: str,
                   n_per_element: int, method_filter: str,
                   inner_threads: int, log_dir: Path,
-                  jobname: str) -> list[str]:
+                  jobname: str, dependency: str = "") -> list[str]:
     wrap = _build_wrap_cmd(queue_file, lock_file, n_per_element,
                            method_filter, inner_threads)
     cmd = [
@@ -73,9 +73,88 @@ def _build_sbatch(queue_file: Path, lock_file: Path,
         f"--array=0-{array_size - 1}%{concurrency}",
         f"--job-name={jobname}",
         f"--output={log_dir}/%A_%a.out",
-        f"--wrap={wrap}",
     ]
+    if dependency:
+        cmd.append(f"--dependency={dependency}")
+    cmd.append(f"--wrap={wrap}")
     return cmd
+
+
+def submit_cpu_array(
+    queue_file: Path,
+    lock_file: Path,
+    array_size: int,
+    log_dir: Path,
+    *,
+    concurrency: int = 100,
+    n_per_element: int = 8,
+    walltime: str = "1:30:00",
+    cpus_per_task: int = 2,
+    mem: str = "8G",
+    inner_threads: int = 2,
+    method_filter: str = "",
+    dependency: str = "",
+    job_name: str = "cpu_drain",
+) -> str:
+    """sbatch a slurm array job to partition=array; returns array_jid string.
+
+    validates resource constraints and submits via sbatch --parsable.
+    raises ValueError on sbatch failure (rc != 0) with detailed error message
+    including return code, stderr, and command text.
+
+    constraints:
+    - array_size > 0 (raises ValueError if not)
+    - concurrency * cpus_per_task <= 256 (array_qos cap; raises ValueError if not)
+
+    dependency: optional slurm dependency spec (e.g. "after:12345"). forwarded
+    as --dependency=<spec> if non-empty; if empty, no dependency flag added.
+    """
+    # validate array_size > 0
+    if array_size <= 0:
+        raise ValueError(f"array_size must be > 0, got {array_size}")
+
+    # validate concurrency * cpus_per_task <= 256
+    max_concurrent_cpus = concurrency * cpus_per_task
+    if max_concurrent_cpus > 256:
+        raise ValueError(
+            f"concurrency * cpus_per_task = {concurrency} * {cpus_per_task} "
+            f"= {max_concurrent_cpus} exceeds array_qos limit of 256"
+        )
+
+    # ensure log_dir exists
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # build sbatch cmd (use refactored _build_sbatch with dependency)
+    cmd = _build_sbatch(
+        queue_file=queue_file,
+        lock_file=lock_file,
+        array_size=array_size,
+        concurrency=concurrency,
+        walltime=walltime,
+        cpus_per_task=cpus_per_task,
+        mem=mem,
+        n_per_element=n_per_element,
+        method_filter=method_filter,
+        inner_threads=inner_threads,
+        log_dir=log_dir,
+        jobname=job_name,
+        dependency=dependency,
+    )
+
+    # run sbatch
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    # parse output or raise ValueError on failure
+    if result.returncode != 0:
+        raise ValueError(
+            f"sbatch failed (rc={result.returncode})\n"
+            f"stderr: {result.stderr}\n"
+            f"cmd: {' '.join(shlex.quote(str(c)) for c in cmd)}"
+        )
+
+    # extract and return array_jid from --parsable output
+    array_jid = result.stdout.strip().splitlines()[0]
+    return array_jid
 
 
 def _parse_args() -> argparse.Namespace:
@@ -92,7 +171,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--n-per-element", type=int, default=4,
                    help="trials per array element (default 4)")
     p.add_argument("--walltime", type=str, default="02:00:00",
-                   help="per-element walltime HH:MM:SS (default 02:00:00)")
+                   help="per-element walltime HH:MM:SS or 'auto' to compute; default 02:00:00")
     p.add_argument("--cpus-per-task", type=int, default=4,
                    help="cpus per element (default 4 -> 2 workers x 2 inner threads)")
     p.add_argument("--mem", type=str, default="16G",
@@ -115,6 +194,35 @@ def main() -> int:
     log_dir = args.log_dir or queue_file.parent / "cpu_array_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    # validate constraints before submission
+    max_concurrent_cpus = args.concurrency * args.cpus_per_task
+    if max_concurrent_cpus > 256:
+        print(
+            f"[cpu_dispatcher] ERROR: concurrency * cpus_per_task "
+            f"= {args.concurrency} * {args.cpus_per_task} = {max_concurrent_cpus} "
+            f"exceeds array_qos limit of 256",
+            file=sys.stderr
+        )
+        return 1
+
+    if args.array_size <= 0:
+        print(
+            f"[cpu_dispatcher] ERROR: array_size must be > 0, got {args.array_size}",
+            file=sys.stderr
+        )
+        return 1
+
+    # resolve --walltime auto
+    if args.walltime == "auto":
+        from experiments.utils.walltime_caps import compute_element_walltime
+        method_list = args.method_filter.split(",") if args.method_filter else []
+        try:
+            args.walltime = compute_element_walltime(method_list, args.n_per_element)
+            print(f"[cpu_dispatcher] resolved --walltime auto to {args.walltime}")
+        except ValueError as e:
+            print(f"[cpu_dispatcher] --walltime auto failed: {e}", file=sys.stderr)
+            return 1
+
     cmd = _build_sbatch(
         queue_file=queue_file, lock_file=lock_file,
         array_size=args.array_size, concurrency=args.concurrency,
@@ -123,6 +231,7 @@ def main() -> int:
         method_filter=args.method_filter or "",
         inner_threads=args.inner_threads, log_dir=log_dir,
         jobname=args.jobname,
+        dependency="",
     )
 
     print("[cpu_dispatcher] sbatch command:")
