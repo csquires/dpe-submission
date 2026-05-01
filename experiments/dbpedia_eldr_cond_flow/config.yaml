@@ -33,7 +33,10 @@ log_prob_steps: 200
 log_prob_chunk_size: 250
 
 # Directory Configuration
-ckpt_dir: "${DPE_CKPT_ROOT}/dbpedia_eldr_cond_flow/ckpt"
+# ckpt_dir on DPE_DATA_ROOT (NFS, all-node-visible) rather than the
+# DPE_CKPT_ROOT default (node-local /scratch) because the chain spans
+# multiple slurm jobs/nodes and they all need to read cond_flow.pt.
+ckpt_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/ckpt"
 data_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/data"
 hf_cache_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/data/hf_cache"
 raw_results_dir: "experiments/dbpedia_eldr_cond_flow/raw_results"
