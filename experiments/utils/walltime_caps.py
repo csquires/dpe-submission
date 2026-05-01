@@ -33,10 +33,10 @@ WALLTIME_CAPS_PREEMPT = {
     "TriangularCTSM":            "0:05:00",  # legacy alias for V1
     "TriangularCTSM_V2":         "0:05:00",
     "TriangularCTSM_V3":         "0:10:00",  # heavier 2D path
-    "TriangularVFM_V1":          "0:15:00",  # has integration_steps + path
-    "TriangularVFM":             "0:15:00",  # legacy alias for V1
-    "TriangularVFM_V2":          "0:15:00",
-    "TriangularVFM_V3":          "0:20:00",  # heaviest
+    "TriangularVFM_V1":          "0:30:00",  # observed live: trials need 16-20 min, prior cap 15 min hit 100% timeout
+    "TriangularVFM":             "0:30:00",  # legacy alias for V1
+    "TriangularVFM_V2":          "0:30:00",  # observed live: 81% timeout at 15 min cap
+    "TriangularVFM_V3":          "0:40:00",  # heaviest; observed live: 100% timeout at 20 min cap
     "TabularPluginDRE":          "0:05:00",
     "SmoothedTabularPluginDRE":  "0:05:00",
 }

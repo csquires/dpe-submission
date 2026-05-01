@@ -278,7 +278,7 @@ def submit_workflow(
         "sbatch",
         "--parsable",
         "--partition=cpu",
-        "--time=4:00:00",
+        "--time=24:00:00",
         "--mem=2G",
         "--cpus-per-task=1",
         f"--job-name=hpo_{method}_{exp}",
