@@ -570,6 +570,18 @@ def main() -> None:
                 if parsed is None:
                     continue
                 method, tag, raw_cmd = parsed
+                # defensive: skip if a competing consumer (cpu array element)
+                # already produced trial_<id>.json. atomic claim should make this
+                # impossible in normal flow, but covers restarts / queue edits.
+                m_cfg = re.search(r"trial_(\d+)\.json", raw_cmd)
+                m_out = re.search(r"--output-dir\s+(\S+)", raw_cmd)
+                m_stg = re.search(r'--stage\s+([^\s"]+)', raw_cmd)
+                if m_cfg and m_out and m_stg:
+                    expected = Path(m_out.group(1)) / m_stg.group(1) / f"trial_{m_cfg.group(1)}.json"
+                    if expected.exists():
+                        _log_event("DUPLICATE_SKIP", trial_id=m_cfg.group(1),
+                                   method=method, stage=m_stg.group(1))
+                        continue
                 walltime = cap_for(method, partition="preempt", pilot_tag=tag)
                 cmd = render_sbatch(raw_cmd, walltime, excl_str)
                 jid = submit_sbatch(cmd, dry_run=args.dry_run)
