@@ -1,5 +1,11 @@
 """multiprocessed hpo runner for interactive cpu-only jobs.
 
+IMPORTANT: BLAS thread counts are read at numpy/torch import time. setting
+OMP_NUM_THREADS et al here (before any heavy import) is the only way to
+constrain BLAS oversubscription in worker processes. callers wanting a
+non-default inner thread count must set these env vars BEFORE invoking
+this module (e.g., in the slurm submit script).
+
 preloads all eval cell data once in the parent process; workers inherit via
 fork (linux copy-on-write, no re-serialization per trial). dispatches n_trials
 hpo trials with n_jobs concurrent workers using multiprocessing.Pool.
@@ -22,6 +28,7 @@ monitoring while running (separate terminal):
 
 import argparse
 import functools
+import gc
 import json
 import math
 import multiprocessing as mp
@@ -31,6 +38,11 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+# BLAS thread caps must be set BEFORE numpy/torch import. respect any caller
+# override; default to 2 (matches conventional inner_threads default).
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+    os.environ.setdefault(_v, "2")
 
 import numpy as np
 import torch
@@ -95,6 +107,7 @@ def _eval_trial(
     output_dir: str,
     stage: str,
     inner_threads: int,
+    eval_sample_seed: Optional[int] = None,
 ) -> dict:
     """evaluate one hpo trial on all preloaded cells; write result json; return result."""
     _set_blas_threads(inner_threads)
@@ -125,11 +138,17 @@ def _eval_trial(
                 est.fit(data["p0"], data["p1"], data["pstar"])
             else:
                 est.fit(data["p0"], data["p1"])
-            predicted = est.predict_ldr(data["pstar"])
-            mae = float(torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean())
+            with torch.no_grad():
+                predicted = est.predict_ldr(data["pstar"])
+                mae = float(torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean())
         except Exception as e:
             print(f"  [trial {trial_id}] cell {cs}: {type(e).__name__}: {e}", flush=True)
             continue
+        finally:
+            # release per-cell model + autograd state before next iteration
+            est = None
+            predicted = None
+            gc.collect()
 
         if not math.isfinite(mae):
             print(f"  [trial {trial_id}] cell {cs}: non-finite mae, skipping", flush=True)
@@ -151,18 +170,28 @@ def _eval_trial(
         "score": score,
         "elapsed_seconds": elapsed,
         "pilot_variant": stage,
+        "eval_sample_seed": eval_sample_seed,
+        "training_cells": [list(c) for c in cells],
         "workflow_version": "v1",
     }
 
     out_dir = Path(output_dir) / stage
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"trial_{trial_id}.json"
-    tmp_path = out_path.with_suffix(".json.tmp")
+    # pid-suffixed tmp avoids collision if a defensive dup-claim races us
+    tmp_path = out_dir / f"trial_{trial_id}.json.{os.getpid()}.tmp"
     with open(tmp_path, "w") as f:
         json.dump(result, f, indent=2)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, out_path)
+    # fsync parent dir so the rename is durable on crash (NFS/shared FS)
+    try:
+        dir_fd = os.open(out_dir, os.O_RDONLY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+    except OSError:
+        pass
 
     print(
         f"[trial {trial_id:4d}] {method}: {len(per_cell)}/{len(cells)} cells, "
@@ -347,6 +376,7 @@ def main() -> None:
         output_dir=str(args.output_dir),
         stage=args.stage,
         inner_threads=args.inner_threads,
+        eval_sample_seed=args.seed,
     )
 
     print(
@@ -359,8 +389,10 @@ def main() -> None:
 
     # fork context: workers inherit _CELL_DATA_CACHE without pickling it.
     # imap_unordered yields results as they complete -> live progress.
+    # maxtasksperchild bounds per-worker memory growth (allocator fragmentation,
+    # caching) on long pools.
     ctx = mp.get_context("fork")
-    with ctx.Pool(processes=args.n_jobs) as pool:
+    with ctx.Pool(processes=args.n_jobs, maxtasksperchild=16) as pool:
         for result in pool.imap_unordered(worker, trial_configs):
             results.append(result)
             n_done = len(results)

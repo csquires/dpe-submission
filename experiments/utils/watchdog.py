@@ -36,7 +36,8 @@ def parse_spec_line(line: str) -> Optional[tuple[str, str, str]]:
         _log_event("BAD_LINE", line=line)
         return None
     method, pilot_tag, template = parts
-    if pilot_tag not in {"optuna", "recalibrated", "random_a", "random_b"}:
+    if pilot_tag not in {"optuna", "recalibrated", "random_a", "random_b",
+                         "broad", "refined", "holdout"}:
         LOGGER.warning(f"unknown pilot_tag: {pilot_tag}")
     return (method, pilot_tag, template)
 
@@ -87,6 +88,62 @@ def pop_line_atomic(queue_file: Path, lock_file: Path, rng: random.Random) -> Op
         os.replace(tmp_path, queue_file)
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
     return picked.rstrip("\n")
+
+
+def pop_lines_back_atomic(queue_file: Path, lock_file: Path, k: int,
+                          method_filter: Optional[set[str]] = None) -> list[str]:
+    """flock-protected pop of up to k valid lines from the END of queue_file.
+
+    parallel companion to pop_line_atomic for cpu array dispatch. cpu drains
+    from the back; gpu watchdog pops randomly from the rest. atomic claim
+    guarantees no overlap.
+
+    args:
+      queue_file: path to shared queue file.
+      lock_file: path to flock file.
+      k: max lines to claim.
+      method_filter: optional set of method names; only lines whose method
+        is in the set are claimable. lines failing the filter stay in queue.
+
+    returns:
+      list of claimed line strings (rstrip'd, no trailing newline). may be
+      shorter than k if queue ran dry or had insufficient eligible lines.
+      empty list if queue empty/missing.
+    """
+    if k < 1:
+        return []
+    with open(lock_file, "a+") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if not queue_file.exists() or queue_file.stat().st_size == 0:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            return []
+        lines = queue_file.read_text().splitlines(keepends=True)
+        # walk from the end, collecting eligible lines until we have k
+        claim_idx: list[int] = []
+        for i in range(len(lines) - 1, -1, -1):
+            spec = parse_spec_line(lines[i])
+            if spec is None:
+                continue
+            if method_filter is not None and spec[0] not in method_filter:
+                continue
+            claim_idx.append(i)
+            if len(claim_idx) >= k:
+                break
+        if not claim_idx:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            return []
+        claim_set = set(claim_idx)
+        remaining = [lines[j] for j in range(len(lines)) if j not in claim_set]
+        claimed = [lines[i].rstrip("\n") for i in claim_idx]
+
+        tmp_path = queue_file.parent / f"{queue_file.name}.tmp"
+        with open(tmp_path, "w") as tmp_fd:
+            tmp_fd.writelines(remaining)
+            tmp_fd.flush()
+            os.fsync(tmp_fd.fileno())
+        os.replace(tmp_path, queue_file)
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    return claimed
 
 
 def render_sbatch(template: str, time_str: str, exclude_str: str) -> str:

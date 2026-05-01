@@ -1,0 +1,152 @@
+"""sbatch the cpu array job that drains the watchdog queue from the back.
+
+submits one slurm array job to the array partition. each element invokes
+cpu_array_element to claim k trials from the queue back (atomic via flock)
+and run them inline. concurrency is capped via the %N syntax (matches the
+array_qos MaxJobsPU=100 limit on this cluster).
+
+usage:
+  python -m experiments.utils.hpo.cpu_dispatcher \\
+      --queue-file <path> \\
+      --array-size N --concurrency 100 \\
+      --n-per-element K --walltime HH:MM:SS \\
+      [--method-filter TSM,BDRE] \\
+      [--cpus-per-task 4] [--mem 16G] [--inner-threads 2] \\
+      [--dry-run]
+
+the array job is parented to the watchdog logdir for log aggregation. each
+array element writes trial_<id>.json to the SAME paths as the gpu trial
+runner; downstream stages consume both interchangeably.
+"""
+
+import argparse
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+WORKDIR = "/home/aviamala/dpe-submission"
+
+
+def _build_wrap_cmd(queue_file: Path, lock_file: Path,
+                    n_per_element: int, method_filter: str,
+                    inner_threads: int) -> str:
+    """build the --wrap string for the array element.
+
+    sets BLAS env vars BEFORE python launches (these are read at numpy/torch
+    import time; setting them in-process is too late). passes inner_threads
+    via CPU_INNER_THREADS env var which cpu_array_element forwards to
+    cpu_runner._eval_trial.
+    """
+    method_arg = f"--method-filter '{method_filter}'" if method_filter else ""
+    return (
+        f"set +u && source ~/.bashrc && conda activate fac && set -u && "
+        f"export OMP_NUM_THREADS={inner_threads} && "
+        f"export MKL_NUM_THREADS={inner_threads} && "
+        f"export OPENBLAS_NUM_THREADS={inner_threads} && "
+        f"export CPU_INNER_THREADS={inner_threads} && "
+        f"export HDF5_USE_FILE_LOCKING=FALSE && "
+        f"cd {WORKDIR} && "
+        f"python -m experiments.utils.hpo.cpu_array_element "
+        f"--queue-file {shlex.quote(str(queue_file))} "
+        f"--lock-file {shlex.quote(str(lock_file))} "
+        f"--n-per-element {n_per_element} {method_arg}"
+    )
+
+
+def _build_sbatch(queue_file: Path, lock_file: Path,
+                  array_size: int, concurrency: int,
+                  walltime: str, cpus_per_task: int, mem: str,
+                  n_per_element: int, method_filter: str,
+                  inner_threads: int, log_dir: Path,
+                  jobname: str) -> list[str]:
+    wrap = _build_wrap_cmd(queue_file, lock_file, n_per_element,
+                           method_filter, inner_threads)
+    cmd = [
+        "sbatch",
+        "--parsable",
+        "--partition=array",
+        f"--time={walltime}",
+        f"--mem={mem}",
+        f"--cpus-per-task={cpus_per_task}",
+        f"--array=0-{array_size - 1}%{concurrency}",
+        f"--job-name={jobname}",
+        f"--output={log_dir}/%A_%a.out",
+        f"--wrap={wrap}",
+    ]
+    return cmd
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="cpu array dispatcher")
+    p.add_argument("--queue-file", type=Path, required=True)
+    p.add_argument("--lock-file", type=Path, default=None,
+                   help="defaults to <queue-file>.lock in same dir")
+    p.add_argument("--log-dir", type=Path, default=None,
+                   help="log dir for array elements; default <queue parent>/cpu_array_logs")
+    p.add_argument("--array-size", type=int, default=10,
+                   help="number of array elements (default 10)")
+    p.add_argument("--concurrency", type=int, default=100,
+                   help="max concurrent elements (default 100, matches array_qos MaxJobsPU)")
+    p.add_argument("--n-per-element", type=int, default=4,
+                   help="trials per array element (default 4)")
+    p.add_argument("--walltime", type=str, default="02:00:00",
+                   help="per-element walltime HH:MM:SS (default 02:00:00)")
+    p.add_argument("--cpus-per-task", type=int, default=4,
+                   help="cpus per element (default 4 -> 2 workers x 2 inner threads)")
+    p.add_argument("--mem", type=str, default="16G",
+                   help="memory per element (default 16G)")
+    p.add_argument("--inner-threads", type=int, default=2,
+                   help="BLAS threads per worker (default 2); total cores ~= "
+                        "(cpus_per_task / inner_threads) * inner_threads")
+    p.add_argument("--method-filter", type=str, default=None,
+                   help="csv of allowed methods; default: all cpu-eligible")
+    p.add_argument("--jobname", type=str, default="cpu_drain",
+                   help="slurm job name (default cpu_drain)")
+    p.add_argument("--dry-run", action="store_true")
+    return p.parse_args()
+
+
+def main() -> int:
+    args = _parse_args()
+    queue_file = args.queue_file.resolve()
+    lock_file = args.lock_file or queue_file.with_suffix(queue_file.suffix + ".lock")
+    log_dir = args.log_dir or queue_file.parent / "cpu_array_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = _build_sbatch(
+        queue_file=queue_file, lock_file=lock_file,
+        array_size=args.array_size, concurrency=args.concurrency,
+        walltime=args.walltime, cpus_per_task=args.cpus_per_task,
+        mem=args.mem, n_per_element=args.n_per_element,
+        method_filter=args.method_filter or "",
+        inner_threads=args.inner_threads, log_dir=log_dir,
+        jobname=args.jobname,
+    )
+
+    print("[cpu_dispatcher] sbatch command:")
+    for c in cmd[:-1]:
+        print(f"  {c}")
+    print(f"  --wrap=<{len(cmd[-1].removeprefix('--wrap='))} chars>")
+
+    if args.dry_run:
+        print("[cpu_dispatcher] dry-run; not submitted")
+        return 0
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[cpu_dispatcher] sbatch failed (rc={result.returncode}):",
+              file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        return 1
+    array_jid = result.stdout.strip().splitlines()[0]
+    print(f"[cpu_dispatcher] submitted: array_jid={array_jid} "
+          f"size={args.array_size} concurrency={args.concurrency}")
+    print(f"[cpu_dispatcher] logs: {log_dir}/{array_jid}_*.out")
+    print(f"[cpu_dispatcher] monitor: squeue -j {array_jid}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
