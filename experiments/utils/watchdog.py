@@ -472,6 +472,35 @@ def _active_cpu_array_jids(our_jids: set[str]) -> set[str]:
     return our_jids & alive_parents
 
 
+def _compose_array_job_name(queue_file: Path, popped_lines: list[str], cycle: int) -> str:
+    """build a self-describing slurm job-name for a cpu_array submission.
+
+    pattern: arr_<exp>_<methods>_c<cycle>, where:
+      - <exp> is derived from queue_file basename (stem before "_watchdog_queue")
+      - <methods> is the sorted set of unique method names in this dispatch,
+        comma-joined and abbreviated to fit slurm's 64-char job-name limit
+      - c<cycle> for the watchdog cycle that emitted this dispatch
+    """
+    fname = queue_file.stem
+    exp = fname.split("_watchdog")[0] if "_watchdog" in fname else fname
+    # short experiment slug (e.g. pendulum_eldr_estimation -> pendulum)
+    exp_slug = exp.split("_")[0] if "_" in exp else exp
+    methods: set[str] = set()
+    for ln in popped_lines:
+        spec = parse_spec_line(ln)
+        if spec is not None:
+            methods.add(spec[0])
+    if methods:
+        methods_str = ",".join(sorted(methods))
+    else:
+        methods_str = "?"
+    name = f"arr_{exp_slug}_{methods_str}_c{cycle}"
+    # slurm caps job-name at ~64 chars; truncate methods if too long
+    if len(name) > 60:
+        name = name[:57] + "..."
+    return name
+
+
 def _append_to_queue(queue_file: Path, lock_file: Path, lines: list[str]) -> None:
     """flock-protected append of lines to queue_file. used for requeuing."""
     if not lines:
@@ -1208,7 +1237,8 @@ def main() -> None:
                                     mem=args.cpu_mem,
                                     inner_threads=args.cpu_inner_threads,
                                     n_jobs=args.cpu_n_jobs,
-                                    job_name=f"arr_wd_{cycle}",
+                                    job_name=_compose_array_job_name(
+                                        args.queue_file, popped, cycle),
                                     assignment_b64=b64 if use_inline else None,
                                     assignment_file=af_path,
                                 )
