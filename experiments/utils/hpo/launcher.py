@@ -488,6 +488,10 @@ def parse_args() -> argparse.Namespace:
                    help="overwrite non-empty queue_file without error")
     p.add_argument("--dry-run", action="store_true",
                    help="print sbatch commands without submitting")
+    p.add_argument("--legacy-controllers", action="store_true",
+                   help="back-compat: also submit per-method workflow "
+                        "controllers as separate cpu_qos jobs. default off "
+                        "(watchdog manages all state machines internally)")
     p.add_argument("--no-cpu-drain", action="store_true",
                    help="skip cpu array job submission (gpu-only campaign)")
     p.add_argument("--cpu-array-max", type=int, default=200,
@@ -568,12 +572,28 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
         print(f"[dry-run] would submit watchdog + {len(valid_pairs)} workflows in waves of {args.wave_size}")
         return
 
-    # 7. submit watchdog with cpu_array lifecycle management enabled (unless
-    # --no-cpu-drain). watchdog will submit cpu_array elements as queue depth
-    # warrants, replacing the legacy upfront submission below.
-    wd_extra: list[str] = []
+    # 7. write workflow_pairs.json (NFS-resident) and submit watchdog with
+    # in-watchdog workflow management. workflow controllers are no longer
+    # submitted as separate cpu_qos jobs — the watchdog ticks each pair's
+    # broad->refined->holdout->persist state machine in its main loop.
+    data_root = Path(os.environ["DPE_DATA_ROOT"])
+    workflow_pairs_data = [
+        {"method": method,
+         "experiment": exp,
+         "output_dir": str(data_root / exp / method),
+         "budget": args.budget}
+        for method, exp in valid_pairs
+    ]
+    workflow_pairs_file = data_root / f"workflow_pairs_{run_id}.json"
+    workflow_pairs_file.write_text(json.dumps(workflow_pairs_data, indent=2))
+    logger.info("wrote workflow pairs to %s (n=%d)",
+                workflow_pairs_file, len(workflow_pairs_data))
+
+    wd_extra: list[str] = [
+        "--workflow-pairs", str(workflow_pairs_file),
+    ]
     if not args.no_cpu_drain:
-        wd_extra = [
+        wd_extra.extend([
             "--cpu-array-relaunch",
             "--cpu-array-size", str(args.cpu_array_max),
             "--cpu-array-concurrency", str(args.cpu_concurrency),
@@ -583,20 +603,24 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
             "--cpu-inner-threads", str(args.cpu_inner_threads),
             "--cpu-n-per-element", str(args.cpu_n_per_element),
             "--cpu-mem", str(args.cpu_mem),
-        ]
+        ])
     watchdog_jid = submit_watchdog(
         args.queue_file, logdir,
         my_cap=args.my_cap, total_cap=args.total_cap,
         extra_args=wd_extra,
     )
-    logger.info("watchdog submitted: jid=%s%s", watchdog_jid,
-                " (cpu-array-relaunch enabled)" if wd_extra else "")
+    logger.info("watchdog submitted: jid=%s (workflow-managed; cpu_drain=%s)",
+                watchdog_jid, "on" if not args.no_cpu_drain else "off")
 
-    # 8. wave-stagger workflow submissions
-    waves_jids = submit_waves(
-        valid_pairs, args.queue_file, watchdog_jid,
-        wave_size=args.wave_size, budget=args.budget,
-    )
+    # 8. workflow controllers REMOVED — watchdog manages stage transitions
+    # internally. legacy submit_waves path retained behind --legacy-controllers
+    # flag for back-compat; off by default.
+    waves_jids: list[list[str]] = []
+    if getattr(args, "legacy_controllers", False):
+        waves_jids = submit_waves(
+            valid_pairs, args.queue_file, watchdog_jid,
+            wave_size=args.wave_size, budget=args.budget,
+        )
 
     # 8.5. verify queue sort order (non-blocking check, warn-only)
     verify_queue_sort(args.queue_file)

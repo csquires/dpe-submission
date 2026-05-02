@@ -418,22 +418,23 @@ def _discover_active_studies(data_root: Path) -> list[tuple[str, str]]:
     return result
 
 
-def _load_state(state_file: Path) -> tuple[set, set, set]:
-    """load state.json: submitted_jids, seen_jid_node, cpu_array_jids.
+def _load_state(state_file: Path) -> tuple[set, set, set, list]:
+    """load state.json: submitted_jids, seen_jid_node, cpu_array_jids,
+    workflow_states (list of dicts).
 
-    missing or parse error -> (set(), set(), set()). cpu_array_jids is
-    backward-compat: missing key in old state files -> empty set.
+    missing or parse error -> (set(), set(), set(), []).
     """
     if not state_file.exists():
-        return (set(), set(), set())
+        return (set(), set(), set(), [])
     try:
         data = json.loads(state_file.read_text())
         jids = set(data.get("submitted_jids", []))
         seen = {tuple(item) for item in data.get("seen_jid_node", [])}
         cpu_jids = set(data.get("cpu_array_jids", []))
-        return (jids, seen, cpu_jids)
+        wf_states = data.get("workflow_states", [])
+        return (jids, seen, cpu_jids, wf_states)
     except (json.JSONDecodeError, ValueError):
-        return (set(), set(), set())
+        return (set(), set(), set(), [])
 
 
 def _count_cpu_eligible_lines(queue_file: Path, lock_file: Path,
@@ -565,17 +566,20 @@ def _check_walltime_near(submitted_jids: set[str],
 
 
 def _save_state(state_file: Path, submitted_jids: set, seen_jid_node: set,
-                cpu_array_jids: Optional[set] = None) -> None:
+                cpu_array_jids: Optional[set] = None,
+                workflow_states: Optional[list] = None) -> None:
     """atomic JSON dump: tmp, write, flush, fsync, replace.
 
     sets serialized as sorted lists; tuples as [str, str].
-    cpu_array_jids: ids of cpu_array jobs we've submitted; used to track
-    lifecycle so we don't double-submit while one is still draining.
+    cpu_array_jids: ids of cpu_array jobs we've submitted (lifecycle tracking).
+    workflow_states: list of {method, experiment, stage, error} for the
+    in-watchdog state machine; restored on restart.
     """
     data = {
         "submitted_jids": sorted(submitted_jids),
         "seen_jid_node": sorted([list(item) for item in seen_jid_node]),
         "cpu_array_jids": sorted(cpu_array_jids) if cpu_array_jids else [],
+        "workflow_states": workflow_states or [],
     }
     tmp_path = state_file.parent / f"{state_file.name}.tmp"
     with open(tmp_path, "w") as tmp_fd:
@@ -987,6 +991,17 @@ def main() -> None:
         default=60,
         help="cycles between orphan scans; 0 disables (default 60)"
     )
+    # in-watchdog workflow state machines (replaces per-method controllers)
+    parser.add_argument("--workflow-pairs", type=Path, default=None,
+                        help="JSON file: list of {method, experiment, "
+                             "output_dir, budget?, seed?} objects. when set, "
+                             "watchdog ticks each pair's broad->refined->"
+                             "holdout->persist state machine each cycle, "
+                             "eliminating per-method workflow controllers")
+    parser.add_argument("--workflow-tick-interval", type=int, default=1,
+                        help="cycles between workflow ticks (default 1: tick "
+                             "each pair every cycle). 1 keeps barrier latency "
+                             "low; higher values reduce dir-glob I/O")
     # cpu_array lifecycle (optional; off by default for back-compat)
     parser.add_argument("--cpu-array-relaunch", action="store_true",
                         help="watchdog manages cpu_array lifecycle: every "
@@ -1030,12 +1045,22 @@ def main() -> None:
         args.exclude_file.write_text("")
 
     # load state
-    submitted_jids, seen_jid_node, cpu_array_jids = _load_state(args.state_file)
+    (submitted_jids, seen_jid_node, cpu_array_jids,
+     prior_workflow_states) = _load_state(args.state_file)
     cpu_eligible_set = cpu_eligible_methods()
     # in-memory health-check state (not persisted; rebuilt on restart, orphan
     # scan backstops any losses).
     cpu_array_assignments: dict[str, list[str]] = {}  # jid -> popped lines
     preempt_walltimes: dict[str, str] = {}            # jid -> walltime cap str
+
+    # workflow state machines (replaces per-method controllers)
+    workflow_pairs: list = []
+    if args.workflow_pairs is not None:
+        from experiments.utils.hpo import workflow_runner as wfr
+        workflow_pairs = wfr.load_pairs(args.workflow_pairs)
+        wfr.restore_states(workflow_pairs, prior_workflow_states)
+        _log_event("WORKFLOW_INIT", n_pairs=len(workflow_pairs),
+                   stages={p.stage.value: 0 for p in workflow_pairs})
 
     # init state vars
     node_stats = {}
@@ -1068,10 +1093,34 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _on_sigterm)
 
     try:
-        # main loop. queue-empty does not exit; submit scripts may append
-        # to the queue at any time. exit only on SIGTERM/scancel.
+        # main loop. queue-empty does not exit; workflow pairs and submit
+        # scripts may append to the queue at any time. exit only on SIGTERM.
         empty_streak = 0
+        all_terminal_logged = False
         while True:
+            cycle += 1
+
+            # tick workflow state machines first (they may write to queue,
+            # transitioning queue-empty -> non-empty within this cycle).
+            if workflow_pairs and cycle % args.workflow_tick_interval == 0:
+                from experiments.utils.hpo import workflow_runner as wfr
+                changed_count = 0
+                for p in workflow_pairs:
+                    if p.tick(args.queue_file):
+                        changed_count += 1
+                        _log_event("WORKFLOW_TICK", method=p.method,
+                                   experiment=p.experiment,
+                                   stage=p.stage.value, error=p.error)
+                if changed_count > 0:
+                    _save_state(args.state_file, submitted_jids, seen_jid_node,
+                               cpu_array_jids, wfr.serialize_states(workflow_pairs))
+                if (not all_terminal_logged
+                        and all(p.stage.value in ("done", "error") for p in workflow_pairs)):
+                    _log_event("WORKFLOW_ALL_TERMINAL",
+                               done=sum(1 for p in workflow_pairs if p.stage.value == "done"),
+                               error=sum(1 for p in workflow_pairs if p.stage.value == "error"))
+                    all_terminal_logged = True
+
             if _queue_empty(args.queue_file, args.state_file.parent / "queue.lock"):
                 empty_streak += 1
                 if empty_streak == 1 or empty_streak % 20 == 0:
@@ -1079,8 +1128,6 @@ def main() -> None:
                 time.sleep(args.poll_interval)
                 continue
             empty_streak = 0
-
-            cycle += 1
             try:
                 my_pending = squeue_count(user=os.environ["USER"], partition="preempt")
                 total_pending = squeue_count(partition="preempt")
