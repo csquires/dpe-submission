@@ -539,6 +539,110 @@ def _batch_sacct_commands(live_jids: set[str], timeout_sec: int = 30) -> dict[st
         return {}
 
 
+def _infer_experiment_name(queue_file: Path, lock_file: Path, output_dir: Path) -> Optional[str]:
+    """extract experiment name from queue lines matching output_dir.
+
+    scans queue_file for lines with --output-dir matching output_dir, then
+    extracts --experiment flag from first match. returns None if queue missing,
+    no matches, or parse fails.
+
+    note: if all original queue lines have been consumed, we may not be able
+    to infer the experiment. this is rare but possible in partially-drained queues.
+    """
+    if not queue_file.exists():
+        return None
+
+    with open(lock_file, "a+") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            for line in queue_file.read_text().splitlines():
+                parsed = parse_spec_line(line)
+                if parsed is None:
+                    continue
+                _, _, sbatch_cmd = parsed
+                # check if --output-dir matches
+                m_outdir = re.search(r"--output-dir\s+(\S+)", sbatch_cmd)
+                if m_outdir and Path(m_outdir.group(1)) == output_dir:
+                    # found matching line; extract experiment
+                    m_exp = re.search(r"--experiment\s+(\S+)", sbatch_cmd)
+                    if m_exp:
+                        return m_exp.group(1)
+            return None
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+
+def _infer_experiment_from_results(output_dir: Path) -> Optional[str]:
+    """fallback: extract experiment name from existing trial result metadata.
+
+    searches output_dir for any trial_*.json result files and reads their
+    _meta.experiment field if present. returns None if no results found or
+    parse fails. used when queue inference fails.
+    """
+    for stage_dir in output_dir.glob("*"):
+        if not stage_dir.is_dir():
+            continue
+        for result_file in stage_dir.glob("trial_*.json"):
+            try:
+                data = json.loads(result_file.read_text())
+                exp = data.get("_meta", {}).get("experiment")
+                if exp:
+                    return exp
+            except (json.JSONDecodeError, OSError):
+                continue
+    return None
+
+
+def _find_cells_file(output_dir: Path, stage: str) -> Optional[Path]:
+    """locate eval cells file for a given stage.
+
+    search logic:
+      - broad: output_dir/broad_metadata/cells_seed*.json
+      - refined: output_dir/broad_metadata/cells_seed*.json (reused from broad)
+      - holdout: output_dir/holdout_metadata/cells_seed*.json
+
+    returns first match or None if not found.
+    """
+    if stage == "broad":
+        candidates = list(output_dir.glob("broad_metadata/cells_seed*.json"))
+    elif stage == "refined":
+        candidates = list(output_dir.glob("broad_metadata/cells_seed*.json"))
+    elif stage == "holdout":
+        candidates = list(output_dir.glob("holdout_metadata/cells_seed*.json"))
+    else:
+        return None
+
+    if candidates:
+        return sorted(candidates)[0]  # deterministic: pick first sorted
+    return None
+
+
+def _build_orphan_sbatch_cmd(experiment: str, method: str, config_file: Path,
+                             cells_file: Path, output_dir: Path, stage: str) -> str:
+    """build sbatch command for orphan recovery, mirroring trial_runner format.
+
+    uses trial_runner with proper flags: --experiment, --method, --config-file,
+    --eval-cells-file, --output-dir, --stage. does not include --time or
+    --exclude placeholders (those are filled by watchdog at dispatch time).
+    """
+    workdir = "/home/aviamala/dpe-submission"
+    trial_id = config_file.stem.removeprefix("trial_")
+    job_name = f"{trial_id}_{stage}_{method}_{experiment}"
+    logdir = output_dir / "logs"
+    return (
+        f"sbatch --partition=preempt --time={{time}} --exclude={{exclude}} "
+        f"--gpus=1 --cpus-per-task=4 --mem=24G --requeue "
+        f"--job-name={job_name} "
+        f"--output={logdir}/%j.out "
+        f"--wrap=\"set +u && source ~/.bashrc && conda activate fac && set -u && "
+        f"export HDF5_USE_FILE_LOCKING=FALSE && cd {workdir} && "
+        f"python -m experiments.utils.hpo.trial_runner "
+        f"--experiment {experiment} --method {method} "
+        f"--config-file {config_file} --eval-cells-file {cells_file} "
+        f"--output-dir {output_dir} --stage {stage}\""
+    )
+
+
 def scan_for_orphans(output_dirs: list[Path], queue_file: Path,
                      live_jids: set[str], lock_file: Path) -> list[str]:
     """scan experiment output dirs for orphaned trial configs.
@@ -549,8 +653,14 @@ def scan_for_orphans(output_dirs: list[Path], queue_file: Path,
       3. not in queue: _is_in_queue returns False for (method, id)
       4. not in live jid: no jid in live_jids has trial_<id>.json in command
 
-    for each orphan, generate a fresh sbatch line (method, "orphan_recovery",
-    sbatch_cmd with trial_<id>.json) and append to queue under flock.
+    for each orphan, generate a fresh sbatch line with:
+      - method field: original method name
+      - stage field: original stage (broad/holdout/refined)
+      - sbatch_cmd: full trial_runner invocation with recovered experiment,
+        config_file, eval_cells_file paths
+
+    orphan requeues are parseable by cpu_array_element and can be dispatched
+    to either gpu (watchdog) or cpu (cpu_array_element) without modification.
 
     preconditions:
       - lock_file path matches the lock_file used by cpu_array_element AND
@@ -570,12 +680,26 @@ def scan_for_orphans(output_dirs: list[Path], queue_file: Path,
         if not output_dir.exists():
             continue
 
+        # infer experiment name from queue file (primary), results (secondary),
+        # or output_dir basename (tertiary fallback)
+        experiment = _infer_experiment_name(queue_file, lock_file, output_dir)
+        if experiment is None:
+            experiment = _infer_experiment_from_results(output_dir)
+        if experiment is None:
+            # final fallback: use output_dir's name as experiment identifier.
+            # this is a last resort for partially-drained queues with no results yet.
+            experiment = output_dir.name
+
         # walk output_dir/<stage>/<method>/ for trial_*.json configs
-        # we assume typical layout: output_dir/stage1/method1/trial_123.json
         for stage_dir in output_dir.glob("*"):
             if not stage_dir.is_dir():
                 continue
             stage = stage_dir.name
+
+            # skip metadata directories and other non-stage dirs
+            if stage in {"logs", "broad_metadata", "refined_metadata",
+                         "holdout_metadata", "recalibrated_specs"}:
+                continue
 
             for method_dir in stage_dir.glob("*"):
                 if not method_dir.is_dir():
@@ -601,18 +725,19 @@ def scan_for_orphans(output_dirs: list[Path], queue_file: Path,
                     if in_live:
                         continue  # in flight; not orphan
 
-                    # orphan detected; generate fresh sbatch line
-                    # minimal line: method\\torphan_recovery\\tsbatch_cmd
-                    # sbatch_cmd = original command that generated trial_<id>.json
-                    # for now, append a minimal sentinel line for requeue
-                    # (actual sbatch cmd recovery is out of scope; use placeholder)
+                    # orphan detected; recover cells file and build sbatch cmd
+                    cells_file = _find_cells_file(output_dir, stage)
+                    if cells_file is None:
+                        # cannot locate cells file; skip this orphan
+                        continue
 
-                    orphan_line = f"{method}\torphan_recovery\t" \
-                                  f"sbatch --job-name=orphan_trial_{trial_id} " \
-                                  f"--output-dir {output_dir} " \
-                                  f"--wrap 'echo orphan_recovery'\n"
+                    sbatch_cmd = _build_orphan_sbatch_cmd(
+                        experiment, method, trial_cfg, cells_file,
+                        output_dir, stage
+                    )
 
-                    # append to queue under flock
+                    # append to queue under flock with correct stage field
+                    orphan_line = f"{method}\t{stage}\t{sbatch_cmd}\n"
                     with open(queue_file, "a") as f:
                         fcntl.flock(f, fcntl.LOCK_EX)
                         try:
