@@ -30,8 +30,8 @@ methods:
     - 0.05
     integration_steps:
     - uniform_int
-    - 1000
-    - 3000
+    - 300
+    - 2600
     hidden_dim:
     - choice
     - - 128
@@ -63,8 +63,8 @@ methods:
     - 0.05
     integration_steps:
     - uniform_int
-    - 1000
-    - 3000
+    - 300
+    - 2600
     hidden_dim:
     - choice
     - - 128
@@ -100,8 +100,8 @@ methods:
     - 0.05
     integration_steps:
     - uniform_int
-    - 1000
-    - 3000
+    - 300
+    - 2600
     hidden_dim:
     - choice
     - - 128
@@ -459,8 +459,8 @@ methods:
     - 0.005
     integration_steps:
     - uniform_int
-    - 500
-    - 3000
+    - 300
+    - 2600
     n_hidden_layers:
     - choice
     - - 2
@@ -489,8 +489,8 @@ methods:
     - 0.005
     integration_steps:
     - uniform_int
-    - 500
-    - 3000
+    - 300
+    - 2600
     n_hidden_layers:
     - choice
     - - 2
@@ -530,8 +530,8 @@ methods:
     - 2.0
     integration_steps:
     - uniform_int
-    - 500
-    - 3000
+    - 300
+    - 2600
     n_hidden_layers:
     - choice
     - - 2
@@ -560,8 +560,8 @@ methods:
     - 0.005
     integration_steps:
     - uniform_int
-    - 500
-    - 3000
+    - 300
+    - 2600
     n_hidden_layers:
     - choice
     - - 2
