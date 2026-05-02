@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from experiments.utils.walltime_caps import cap_for
+from experiments.utils.walltime_caps import cap_for, cpu_eligible_methods
 
 try:
     from experiments.utils.hpo.optuna_study_v735e import cleanup_zombies_for as _opt_cleanup_for
@@ -418,30 +418,71 @@ def _discover_active_studies(data_root: Path) -> list[tuple[str, str]]:
     return result
 
 
-def _load_state(state_file: Path) -> tuple[set, set]:
-    """load state.json: submitted_jids (set), seen_jid_node (set of tuples).
+def _load_state(state_file: Path) -> tuple[set, set, set]:
+    """load state.json: submitted_jids, seen_jid_node, cpu_array_jids.
 
-    missing or parse error -> (set(), set()).
+    missing or parse error -> (set(), set(), set()). cpu_array_jids is
+    backward-compat: missing key in old state files -> empty set.
     """
     if not state_file.exists():
-        return (set(), set())
+        return (set(), set(), set())
     try:
         data = json.loads(state_file.read_text())
         jids = set(data.get("submitted_jids", []))
         seen = {tuple(item) for item in data.get("seen_jid_node", [])}
-        return (jids, seen)
+        cpu_jids = set(data.get("cpu_array_jids", []))
+        return (jids, seen, cpu_jids)
     except (json.JSONDecodeError, ValueError):
-        return (set(), set())
+        return (set(), set(), set())
 
 
-def _save_state(state_file: Path, submitted_jids: set, seen_jid_node: set) -> None:
+def _count_cpu_eligible_lines(queue_file: Path, lock_file: Path,
+                              eligible: set[str]) -> int:
+    """count queue lines whose method is in the cpu-eligible set (under flock)."""
+    if not queue_file.exists() or queue_file.stat().st_size == 0:
+        return 0
+    count = 0
+    with open(lock_file, "a+") as lock_fd:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_SH)
+        try:
+            with open(queue_file) as f:
+                for line in f:
+                    parsed = parse_spec_line(line)
+                    if parsed is None:
+                        continue
+                    method, _, _ = parsed
+                    if method in eligible:
+                        count += 1
+        finally:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+    return count
+
+
+def _active_cpu_array_jids(our_jids: set[str]) -> set[str]:
+    """subset of our cpu_array_jids still PENDING/RUNNING in array partition.
+
+    squeue_alive_jids returns array task ids like '12345_0', '12345_1'; we
+    consider parent jid 12345 alive if any of its tasks are alive.
+    """
+    if not our_jids:
+        return set()
+    alive_tasks = squeue_alive_jids("array")
+    alive_parents = {t.split("_")[0] for t in alive_tasks}
+    return our_jids & alive_parents
+
+
+def _save_state(state_file: Path, submitted_jids: set, seen_jid_node: set,
+                cpu_array_jids: Optional[set] = None) -> None:
     """atomic JSON dump: tmp, write, flush, fsync, replace.
 
     sets serialized as sorted lists; tuples as [str, str].
+    cpu_array_jids: ids of cpu_array jobs we've submitted; used to track
+    lifecycle so we don't double-submit while one is still draining.
     """
     data = {
         "submitted_jids": sorted(submitted_jids),
-        "seen_jid_node": sorted([list(item) for item in seen_jid_node])
+        "seen_jid_node": sorted([list(item) for item in seen_jid_node]),
+        "cpu_array_jids": sorted(cpu_array_jids) if cpu_array_jids else [],
     }
     tmp_path = state_file.parent / f"{state_file.name}.tmp"
     with open(tmp_path, "w") as tmp_fd:
@@ -853,6 +894,26 @@ def main() -> None:
         default=60,
         help="cycles between orphan scans; 0 disables (default 60)"
     )
+    # cpu_array lifecycle (optional; off by default for back-compat)
+    parser.add_argument("--cpu-array-relaunch", action="store_true",
+                        help="watchdog manages cpu_array lifecycle: every "
+                             "--cpu-array-check-interval cycles, submit a new "
+                             "cpu_array if cpu-eligible queue depth >= "
+                             "--cpu-array-min-queue and no prior array is alive")
+    parser.add_argument("--cpu-array-check-interval", type=int, default=5)
+    parser.add_argument("--cpu-array-min-queue", type=int, default=8)
+    parser.add_argument("--cpu-array-size", type=int, default=64)
+    parser.add_argument("--cpu-array-concurrency", type=int, default=64)
+    parser.add_argument("--cpu-walltime", type=str, default="auto")
+    parser.add_argument("--cpu-cpus-per-task", type=int, default=4)
+    parser.add_argument("--cpu-n-jobs", type=int, default=4)
+    parser.add_argument("--cpu-inner-threads", type=int, default=1)
+    parser.add_argument("--cpu-n-per-element", type=int, default=8)
+    parser.add_argument("--cpu-mem", type=str, default="16G")
+    parser.add_argument("--cpu-method-filter", type=str, default="",
+                        help="csv method filter; empty => all cpu-eligible methods")
+    parser.add_argument("--cpu-log-dir", type=Path, default=None,
+                        help="default <state_file.parent>/cpu_array_logs")
     args = parser.parse_args()
 
     # configure logger
@@ -876,7 +937,8 @@ def main() -> None:
         args.exclude_file.write_text("")
 
     # load state
-    submitted_jids, seen_jid_node = _load_state(args.state_file)
+    submitted_jids, seen_jid_node, cpu_array_jids = _load_state(args.state_file)
+    cpu_eligible_set = cpu_eligible_methods()
 
     # init state vars
     node_stats = {}
@@ -903,7 +965,7 @@ def main() -> None:
 
     def _on_sigterm(signum, frame):
         LOGGER.info("SIGTERM received; saving state and exiting")
-        _save_state(args.state_file, submitted_jids, seen_jid_node)
+        _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _on_sigterm)
@@ -985,12 +1047,85 @@ def main() -> None:
                     append_exclude(args.exclude_file, new_slow)
                     _log_event("SLOW_NODES", nodes=sorted(new_slow))
                 last_sacct_cycle = cycle
-                _save_state(args.state_file, submitted_jids, seen_jid_node)
+                _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
 
             if cycle % 50 == 0:
                 active = _discover_active_studies(data_root)
                 if active:
                     cleanup_optuna_zombies(active)
+
+            # cpu_array lifecycle (PUSH model). every check_interval cycles:
+            #   1. count cpu-eligible queue lines
+            #   2. if >= min and no prior array alive: pop N=size*n_per lines
+            #      from BACK, write to assignment file, submit cpu_array that
+            #      reads its slice via SLURM_ARRAY_TASK_ID. no flock contention
+            #      between watchdog and elements; elements are dumb workers.
+            if args.cpu_array_relaunch and cycle % args.cpu_array_check_interval == 0:
+                eligible_count = _count_cpu_eligible_lines(
+                    args.queue_file,
+                    args.state_file.parent / "queue.lock",
+                    cpu_eligible_set,
+                )
+                if eligible_count >= args.cpu_array_min_queue:
+                    active = _active_cpu_array_jids(cpu_array_jids)
+                    if not active:
+                        cpu_log_dir = (args.cpu_log_dir
+                                       or args.state_file.parent / "cpu_array_logs")
+                        cpu_log_dir.mkdir(parents=True, exist_ok=True)
+                        try:
+                            from experiments.utils.hpo.cpu_dispatcher import submit_cpu_array
+                            cpu_walltime = args.cpu_walltime
+                            if cpu_walltime == "auto":
+                                from experiments.utils.walltime_caps import compute_element_walltime
+                                cpu_walltime = compute_element_walltime(
+                                    sorted(cpu_eligible_set), args.cpu_n_per_element
+                                )
+                            # pop up to size*n_per_element lines from BACK,
+                            # filtered to cpu-eligible methods. atomic via flock.
+                            target_lines = args.cpu_array_size * args.cpu_n_per_element
+                            popped = pop_lines_back_atomic(
+                                args.queue_file,
+                                args.state_file.parent / "queue.lock",
+                                target_lines,
+                                cpu_eligible_set,
+                            )
+                            if not popped:
+                                _log_event("CPU_ARRAY_NO_POP", eligible=eligible_count)
+                            else:
+                                # right-size array to actual pop count
+                                array_size = max(
+                                    1,
+                                    (len(popped) + args.cpu_n_per_element - 1)
+                                    // args.cpu_n_per_element,
+                                )
+                                # encode payload inline (no NFS file). slurm
+                                # stores the wrap script for the job lifetime;
+                                # element decodes once at startup, no re-read.
+                                import base64
+                                payload = "\n".join(popped) + "\n"
+                                b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+                                new_jid = submit_cpu_array(
+                                    queue_file=args.queue_file,  # ignored in push
+                                    lock_file=args.state_file.parent / "queue.lock",
+                                    array_size=array_size,
+                                    log_dir=cpu_log_dir,
+                                    concurrency=args.cpu_array_concurrency,
+                                    n_per_element=args.cpu_n_per_element,
+                                    walltime=cpu_walltime,
+                                    cpus_per_task=args.cpu_cpus_per_task,
+                                    mem=args.cpu_mem,
+                                    inner_threads=args.cpu_inner_threads,
+                                    n_jobs=args.cpu_n_jobs,
+                                    job_name=f"arr_wd_{cycle}",
+                                    assignment_b64=b64,
+                                )
+                                cpu_array_jids.add(new_jid)
+                                _log_event("CPU_ARRAY_DISPATCH", jid=new_jid,
+                                           popped=len(popped), size=array_size,
+                                           walltime=cpu_walltime,
+                                           payload_kb=len(b64) // 1024)
+                        except Exception as e:
+                            _log_event("CPU_ARRAY_DISPATCH_FAIL", err=str(e)[:300])
 
             # periodic orphan scan
             if args.orphan_scan_interval > 0 and cycle % args.orphan_scan_interval == 0:
@@ -1010,7 +1145,7 @@ def main() -> None:
             time.sleep(args.poll_interval)
 
     except KeyboardInterrupt:
-        _save_state(args.state_file, submitted_jids, seen_jid_node)
+        _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
         sys.exit(0)
 
 

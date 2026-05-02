@@ -135,8 +135,10 @@ def run_one_trial(parsed: dict, cell_cache_keys: set[tuple]) -> dict:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="cpu array element runner")
-    p.add_argument("--queue-file", type=Path, required=True)
-    p.add_argument("--lock-file", type=Path, required=True)
+    p.add_argument("--queue-file", type=Path, default=None,
+                   help="legacy back-pop mode: shared queue file path")
+    p.add_argument("--lock-file", type=Path, default=None,
+                   help="legacy back-pop mode: flock file path")
     p.add_argument("--n-per-element", type=int, default=4,
                    help="max trials to claim per element (default 4)")
     p.add_argument("--n-jobs", type=int, default=1,
@@ -147,6 +149,19 @@ def _parse_args() -> argparse.Namespace:
                    help="csv method names to claim; no default (all methods claimable)")
     p.add_argument("--max-elapsed-seconds", type=int, default=None,
                    help="exit early if cumulative trial time exceeds this")
+    p.add_argument("--empty-retries", type=int, default=3,
+                   help="legacy back-pop only: race-buffer retries when queue "
+                        "is empty (default 3). ignored in --assignment-file mode")
+    p.add_argument("--empty-sleep-seconds", type=int, default=10,
+                   help="legacy back-pop only: seconds between empty-queue retries")
+    p.add_argument("--assignment-file", type=Path, default=None,
+                   help="push-file mode: text file of queue lines pre-assigned "
+                        "by watchdog; takes lines [task_id*n : (task_id+1)*n]")
+    p.add_argument("--assignment-b64", type=str, default=None,
+                   help="push-inline mode: base64-encoded utf-8 string of "
+                        "newline-joined queue lines, embedded in sbatch wrap. "
+                        "preferred over --assignment-file: no NFS file, no "
+                        "cleanup, payload is part of the slurm job state")
     return p.parse_args()
 
 
@@ -314,15 +329,49 @@ def _pool_worker(args: tuple) -> object:
 def main() -> int:
     args = _parse_args()
     method_filter = _resolve_method_filter(args.method_filter)
-    array_idx = os.environ.get("SLURM_ARRAY_TASK_ID", "?")
+    array_idx_raw = os.environ.get("SLURM_ARRAY_TASK_ID", "0")
+    array_idx = int(array_idx_raw) if array_idx_raw.isdigit() else 0
 
+    if args.assignment_b64:
+        mode = "push-inline (decode b64 from sbatch wrap)"
+    elif args.assignment_file:
+        mode = "push-file (read assigned slice from file)"
+    else:
+        mode = "back-pop (claim from queue)"
     print(f"[cpu_array_element] task_id={array_idx} n_jobs={args.n_jobs} "
-          f"claiming up to {args.n_per_element} trials", flush=True)
+          f"n_per_element={args.n_per_element} mode={mode}", flush=True)
 
-    claimed = pop_lines_back_atomic(args.queue_file, args.lock_file,
-                                    args.n_per_element, method_filter)
-    if not claimed:
-        return 0
+    claimed: list[str] = []
+    if args.assignment_b64 or args.assignment_file:
+        # PUSH model: watchdog pre-assigned work. element takes slice
+        # [task_id*n : (task_id+1)*n]. no flock contention, no back-pop.
+        if args.assignment_b64:
+            import base64
+            payload = base64.b64decode(args.assignment_b64).decode("utf-8")
+        else:
+            if not args.assignment_file.exists():
+                print(f"[cpu_array_element] assignment file missing: "
+                      f"{args.assignment_file}", flush=True)
+                return 0
+            payload = args.assignment_file.read_text()
+        all_lines = [ln for ln in payload.splitlines() if ln.strip()]
+        start = array_idx * args.n_per_element
+        claimed = all_lines[start : start + args.n_per_element]
+        if not claimed:
+            print(f"[cpu_array_element] task_id={array_idx} has no assigned "
+                  f"work (total lines={len(all_lines)})", flush=True)
+            return 0
+    else:
+        # LEGACY back-pop mode: pull from shared queue under flock.
+        for attempt in range(args.empty_retries + 1):
+            claimed = pop_lines_back_atomic(args.queue_file, args.lock_file,
+                                            args.n_per_element, method_filter)
+            if claimed:
+                break
+            if attempt < args.empty_retries:
+                time.sleep(args.empty_sleep_seconds)
+        if not claimed:
+            return 0
 
     # parse all claims first; filter malformed
     parsed_tasks = []

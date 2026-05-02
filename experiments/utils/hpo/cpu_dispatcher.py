@@ -25,22 +25,44 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 WORKDIR = "/home/aviamala/dpe-submission"
 
 
 def _build_wrap_cmd(queue_file: Path, lock_file: Path,
                     n_per_element: int, method_filter: str,
-                    inner_threads: int, n_jobs: int = 1) -> str:
+                    inner_threads: int, n_jobs: int = 1,
+                    assignment_file: Optional[Path] = None,
+                    assignment_b64: Optional[str] = None) -> str:
     """build the --wrap string for the array element.
 
-    sets BLAS env vars BEFORE python launches (these are read at numpy/torch
-    import time; setting them in-process is too late). passes inner_threads
-    via CPU_INNER_THREADS env var which cpu_array_element forwards to
-    cpu_runner._eval_trial. PYTHONHASHSEED pinned for cross-process
-    determinism in cell seeding.
+    modes (in priority order):
+      assignment_b64: payload baked inline into wrap (preferred; no NFS file)
+      assignment_file: payload at NFS path (fallback for huge payloads)
+      legacy back-pop: element flock-pops from queue_file
+
+    sets BLAS env vars BEFORE python launches (read at numpy/torch import time).
+    PYTHONHASHSEED pinned for cross-process determinism.
     """
-    method_arg = f"--method-filter '{method_filter}'" if method_filter else ""
+    if assignment_b64 is not None:
+        # b64 is shell-safe in single quotes (no special chars besides =, /, +)
+        worker_args = (
+            f"--assignment-b64 '{assignment_b64}' "
+            f"--n-per-element {n_per_element} --n-jobs {n_jobs}"
+        )
+    elif assignment_file is not None:
+        worker_args = (
+            f"--assignment-file {shlex.quote(str(assignment_file))} "
+            f"--n-per-element {n_per_element} --n-jobs {n_jobs}"
+        )
+    else:
+        method_arg = f"--method-filter '{method_filter}'" if method_filter else ""
+        worker_args = (
+            f"--queue-file {shlex.quote(str(queue_file))} "
+            f"--lock-file {shlex.quote(str(lock_file))} "
+            f"--n-per-element {n_per_element} --n-jobs {n_jobs} {method_arg}"
+        )
     return (
         f"set +u && source ~/.bashrc && conda activate fac && set -u && "
         f"export OMP_NUM_THREADS={inner_threads} && "
@@ -50,10 +72,7 @@ def _build_wrap_cmd(queue_file: Path, lock_file: Path,
         f"export PYTHONHASHSEED=42 && "
         f"export HDF5_USE_FILE_LOCKING=FALSE && "
         f"cd {WORKDIR} && "
-        f"python -m experiments.utils.hpo.cpu_array_element "
-        f"--queue-file {shlex.quote(str(queue_file))} "
-        f"--lock-file {shlex.quote(str(lock_file))} "
-        f"--n-per-element {n_per_element} --n-jobs {n_jobs} {method_arg}"
+        f"python -m experiments.utils.hpo.cpu_array_element {worker_args}"
     )
 
 
@@ -63,9 +82,13 @@ def _build_sbatch(queue_file: Path, lock_file: Path,
                   n_per_element: int, method_filter: str,
                   inner_threads: int, log_dir: Path,
                   jobname: str, dependency: str = "",
-                  n_jobs: int = 1) -> list[str]:
+                  n_jobs: int = 1,
+                  assignment_file: Optional[Path] = None,
+                  assignment_b64: Optional[str] = None) -> list[str]:
     wrap = _build_wrap_cmd(queue_file, lock_file, n_per_element,
-                           method_filter, inner_threads, n_jobs)
+                           method_filter, inner_threads, n_jobs,
+                           assignment_file=assignment_file,
+                           assignment_b64=assignment_b64)
     cmd = [
         "sbatch",
         "--parsable",
@@ -99,6 +122,8 @@ def submit_cpu_array(
     dependency: str = "",
     job_name: str = "arr",
     n_jobs: int = 1,
+    assignment_file: Optional[Path] = None,
+    assignment_b64: Optional[str] = None,
 ) -> str:
     """sbatch a slurm array job to partition=array; returns array_jid string.
 
@@ -144,6 +169,8 @@ def submit_cpu_array(
         jobname=job_name,
         dependency=dependency,
         n_jobs=n_jobs,
+        assignment_file=assignment_file,
+        assignment_b64=assignment_b64,
     )
 
     # run sbatch

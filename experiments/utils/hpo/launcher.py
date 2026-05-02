@@ -261,13 +261,14 @@ def submit_watchdog(
     logdir: Path,
     my_cap: int,
     total_cap: int,
+    extra_args: Optional[list[str]] = None,
 ) -> str:
     """sbatch watchdog via submit_watchdog.sh; return jid string.
 
     tries submit_watchdog.sh first; falls back to submit_watchdog_v735e.sh.
     invokes script with positional args: <queue_file> <my_cap> <total_cap>
-    plus --reset-exclude-on-startup flag. uses --parsable; raises ValueError
-    if jid cannot be parsed or rc != 0.
+    [orphan_interval] [-- <extra watchdog flags>...]. uses --parsable; raises
+    ValueError if jid cannot be parsed or rc != 0.
     """
     script = _resolve_watchdog_script()
     # script handles its own sbatch submission internally; launcher calls it
@@ -281,6 +282,10 @@ def submit_watchdog(
         str(my_cap),
         str(total_cap),
     ]
+    if extra_args:
+        # forward extra watchdog flags. orphan-interval is positional 4 in
+        # submit_watchdog.sh; pass default 60 then the `--` separator.
+        cmd.extend(["60", "--"] + extra_args)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise ValueError(
@@ -563,12 +568,29 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
         print(f"[dry-run] would submit watchdog + {len(valid_pairs)} workflows in waves of {args.wave_size}")
         return
 
-    # 7. submit watchdog
+    # 7. submit watchdog with cpu_array lifecycle management enabled (unless
+    # --no-cpu-drain). watchdog will submit cpu_array elements as queue depth
+    # warrants, replacing the legacy upfront submission below.
+    wd_extra: list[str] = []
+    if not args.no_cpu_drain:
+        wd_extra = [
+            "--cpu-array-relaunch",
+            "--cpu-array-size", str(args.cpu_array_max),
+            "--cpu-array-concurrency", str(args.cpu_concurrency),
+            "--cpu-walltime", str(args.cpu_walltime),
+            "--cpu-cpus-per-task", str(args.cpu_cpus_per_task),
+            "--cpu-n-jobs", str(args.cpu_n_jobs),
+            "--cpu-inner-threads", str(args.cpu_inner_threads),
+            "--cpu-n-per-element", str(args.cpu_n_per_element),
+            "--cpu-mem", str(args.cpu_mem),
+        ]
     watchdog_jid = submit_watchdog(
         args.queue_file, logdir,
         my_cap=args.my_cap, total_cap=args.total_cap,
+        extra_args=wd_extra,
     )
-    logger.info("watchdog submitted: jid=%s", watchdog_jid)
+    logger.info("watchdog submitted: jid=%s%s", watchdog_jid,
+                " (cpu-array-relaunch enabled)" if wd_extra else "")
 
     # 8. wave-stagger workflow submissions
     waves_jids = submit_waves(
@@ -593,7 +615,10 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
         args.cpu_array_max,
     )
 
-    # determine cpu submission disposition
+    # determine cpu submission disposition.
+    # default: watchdog manages cpu_array lifecycle (--cpu-array-relaunch was
+    # passed in step 7). launcher records intent in manifest but does not
+    # submit upfront — that race-condition path is gone.
     cpu_record = None
     if args.no_cpu_drain:
         cpu_record = {
@@ -607,8 +632,20 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
             "cpu_array_skipped_reason": "no_eligible_methods",
         }
         logger.info("no cpu-eligible pairs in matrix")
-    else:
-        # attempt cpu array submission
+    elif True:  # watchdog-managed (always-on default)
+        cpu_record = {
+            "cpu_array_dispatched": "deferred_to_watchdog",
+            "cpu_array_concurrency": args.cpu_concurrency,
+            "cpu_array_walltime": args.cpu_walltime,
+            "cpu_array_n_per_element": args.cpu_n_per_element,
+            "cpu_array_n_jobs": args.cpu_n_jobs,
+            "cpu_array_inner_threads": args.cpu_inner_threads,
+            "cpu_array_cpus_per_task": args.cpu_cpus_per_task,
+            "cpu_array_method_filter": sorted(eligible_methods),
+            "cpu_array_managed_by": "watchdog",
+        }
+        logger.info("cpu_array dispatch deferred to watchdog (relaunch loop)")
+    elif False:  # legacy upfront path (kept for reference; not reachable)
         try:
             # validate preconditions
             if args.cpu_concurrency * args.cpu_cpus_per_task > 256:
