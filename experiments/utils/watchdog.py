@@ -1136,6 +1136,89 @@ def main() -> None:
                 time.sleep(args.poll_interval)
                 continue
 
+            # cpu_array dispatch + audit run BEFORE preempt SLEEP_CAP — they're
+            # independent of preempt capacity (target the array partition).
+            # otherwise a saturated preempt cap starves the cpu side entirely.
+            if args.cpu_array_relaunch and cpu_array_assignments:
+                n_jids, n_requeued = _audit_completed_cpu_arrays(
+                    cpu_array_assignments, cpu_array_jids,
+                    args.queue_file,
+                    args.state_file.parent / "queue.lock",
+                )
+                if n_jids > 0:
+                    _log_event("CPU_ARRAY_AUDIT", n_finished=n_jids,
+                               n_requeued=n_requeued)
+
+            if args.cpu_array_relaunch and cycle % args.cpu_array_check_interval == 0:
+                eligible_count = _count_cpu_eligible_lines(
+                    args.queue_file,
+                    args.state_file.parent / "queue.lock",
+                    cpu_eligible_set,
+                )
+                if eligible_count >= args.cpu_array_min_queue:
+                    active = _active_cpu_array_jids(cpu_array_jids)
+                    if not active:
+                        cpu_log_dir = (args.cpu_log_dir
+                                       or args.state_file.parent / "cpu_array_logs")
+                        cpu_log_dir.mkdir(parents=True, exist_ok=True)
+                        try:
+                            from experiments.utils.hpo.cpu_dispatcher import submit_cpu_array
+                            cpu_walltime = args.cpu_walltime
+                            if cpu_walltime == "auto":
+                                from experiments.utils.walltime_caps import compute_element_walltime
+                                cpu_walltime = compute_element_walltime(
+                                    sorted(cpu_eligible_set), args.cpu_n_per_element
+                                )
+                            target_lines = args.cpu_array_size * args.cpu_n_per_element
+                            popped = pop_lines_back_atomic(
+                                args.queue_file,
+                                args.state_file.parent / "queue.lock",
+                                target_lines,
+                                cpu_eligible_set,
+                            )
+                            if not popped:
+                                _log_event("CPU_ARRAY_NO_POP", eligible=eligible_count)
+                            else:
+                                array_size = max(
+                                    1,
+                                    (len(popped) + args.cpu_n_per_element - 1)
+                                    // args.cpu_n_per_element,
+                                )
+                                import base64
+                                payload = "\n".join(popped) + "\n"
+                                b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+                                INLINE_THRESHOLD = 64 * 1024
+                                use_inline = len(b64) <= INLINE_THRESHOLD
+                                af_path = None
+                                if not use_inline:
+                                    af_path = cpu_log_dir / f"assignments_{cycle:06d}.txt"
+                                    af_path.write_text(payload)
+                                new_jid = submit_cpu_array(
+                                    queue_file=args.queue_file,
+                                    lock_file=args.state_file.parent / "queue.lock",
+                                    array_size=array_size,
+                                    log_dir=cpu_log_dir,
+                                    concurrency=args.cpu_array_concurrency,
+                                    n_per_element=args.cpu_n_per_element,
+                                    walltime=cpu_walltime,
+                                    cpus_per_task=args.cpu_cpus_per_task,
+                                    mem=args.cpu_mem,
+                                    inner_threads=args.cpu_inner_threads,
+                                    n_jobs=args.cpu_n_jobs,
+                                    job_name=f"arr_wd_{cycle}",
+                                    assignment_b64=b64 if use_inline else None,
+                                    assignment_file=af_path,
+                                )
+                                cpu_array_jids.add(new_jid)
+                                cpu_array_assignments[new_jid] = popped
+                                _log_event("CPU_ARRAY_DISPATCH", jid=new_jid,
+                                           popped=len(popped), size=array_size,
+                                           walltime=cpu_walltime,
+                                           payload_kb=len(b64) // 1024,
+                                           mode="inline" if use_inline else "file")
+                        except Exception as e:
+                            _log_event("CPU_ARRAY_DISPATCH_FAIL", err=str(e)[:300])
+
             if my_pending >= args.my_cap or total_pending >= args.total_cap:
                 _log_event("SLEEP_CAP", my=my_pending, total=total_pending)
                 time.sleep(args.poll_interval)
@@ -1199,106 +1282,10 @@ def main() -> None:
                 last_sacct_cycle = cycle
                 _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
 
-            # cpu_array completion audit (every cycle; cheap dict diff until
-            # a jid actually transitions to done). requeues missing trials.
-            if args.cpu_array_relaunch and cpu_array_assignments:
-                n_jids, n_requeued = _audit_completed_cpu_arrays(
-                    cpu_array_assignments, cpu_array_jids,
-                    args.queue_file,
-                    args.state_file.parent / "queue.lock",
-                )
-                if n_jids > 0:
-                    _log_event("CPU_ARRAY_AUDIT", n_finished=n_jids,
-                               n_requeued=n_requeued)
-
             if cycle % 50 == 0:
                 active = _discover_active_studies(data_root)
                 if active:
                     cleanup_optuna_zombies(active)
-
-            # cpu_array lifecycle (PUSH model). every check_interval cycles:
-            #   1. count cpu-eligible queue lines
-            #   2. if >= min and no prior array alive: pop N=size*n_per lines
-            #      from BACK, write to assignment file, submit cpu_array that
-            #      reads its slice via SLURM_ARRAY_TASK_ID. no flock contention
-            #      between watchdog and elements; elements are dumb workers.
-            if args.cpu_array_relaunch and cycle % args.cpu_array_check_interval == 0:
-                eligible_count = _count_cpu_eligible_lines(
-                    args.queue_file,
-                    args.state_file.parent / "queue.lock",
-                    cpu_eligible_set,
-                )
-                if eligible_count >= args.cpu_array_min_queue:
-                    active = _active_cpu_array_jids(cpu_array_jids)
-                    if not active:
-                        cpu_log_dir = (args.cpu_log_dir
-                                       or args.state_file.parent / "cpu_array_logs")
-                        cpu_log_dir.mkdir(parents=True, exist_ok=True)
-                        try:
-                            from experiments.utils.hpo.cpu_dispatcher import submit_cpu_array
-                            cpu_walltime = args.cpu_walltime
-                            if cpu_walltime == "auto":
-                                from experiments.utils.walltime_caps import compute_element_walltime
-                                cpu_walltime = compute_element_walltime(
-                                    sorted(cpu_eligible_set), args.cpu_n_per_element
-                                )
-                            # pop up to size*n_per_element lines from BACK,
-                            # filtered to cpu-eligible methods. atomic via flock.
-                            target_lines = args.cpu_array_size * args.cpu_n_per_element
-                            popped = pop_lines_back_atomic(
-                                args.queue_file,
-                                args.state_file.parent / "queue.lock",
-                                target_lines,
-                                cpu_eligible_set,
-                            )
-                            if not popped:
-                                _log_event("CPU_ARRAY_NO_POP", eligible=eligible_count)
-                            else:
-                                # right-size array to actual pop count
-                                array_size = max(
-                                    1,
-                                    (len(popped) + args.cpu_n_per_element - 1)
-                                    // args.cpu_n_per_element,
-                                )
-                                # payload too large for inline b64 in argv
-                                # (linux ARG_MAX ~128KB-2MB; sbatch wrap is
-                                # subject to it). use NFS assignment file
-                                # instead — element reads once at startup, then
-                                # the file is dead weight (cleaned up by audit).
-                                import base64
-                                payload = "\n".join(popped) + "\n"
-                                b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-                                INLINE_THRESHOLD = 64 * 1024  # 64KB safe argv ceiling
-                                use_inline = len(b64) <= INLINE_THRESHOLD
-                                af_path = None
-                                if not use_inline:
-                                    af_path = cpu_log_dir / f"assignments_{cycle:06d}.txt"
-                                    af_path.write_text(payload)
-                                new_jid = submit_cpu_array(
-                                    queue_file=args.queue_file,  # ignored in push
-                                    lock_file=args.state_file.parent / "queue.lock",
-                                    array_size=array_size,
-                                    log_dir=cpu_log_dir,
-                                    concurrency=args.cpu_array_concurrency,
-                                    n_per_element=args.cpu_n_per_element,
-                                    walltime=cpu_walltime,
-                                    cpus_per_task=args.cpu_cpus_per_task,
-                                    mem=args.cpu_mem,
-                                    inner_threads=args.cpu_inner_threads,
-                                    n_jobs=args.cpu_n_jobs,
-                                    job_name=f"arr_wd_{cycle}",
-                                    assignment_b64=b64 if use_inline else None,
-                                    assignment_file=af_path,
-                                )
-                                cpu_array_jids.add(new_jid)
-                                cpu_array_assignments[new_jid] = popped  # for audit
-                                _log_event("CPU_ARRAY_DISPATCH", jid=new_jid,
-                                           popped=len(popped), size=array_size,
-                                           walltime=cpu_walltime,
-                                           payload_kb=len(b64) // 1024,
-                                           mode="inline" if use_inline else "file")
-                        except Exception as e:
-                            _log_event("CPU_ARRAY_DISPATCH_FAIL", err=str(e)[:300])
 
             # periodic orphan scan
             if args.orphan_scan_interval > 0 and cycle % args.orphan_scan_interval == 0:
