@@ -146,6 +146,7 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
         lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
         eps=flat_hp["eps"],
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         device=device
     )
 
@@ -164,6 +165,7 @@ def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_wayp
         lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
         eps=flat_hp["eps"],
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         device=device
     )
 
@@ -186,6 +188,7 @@ def build_TriangularCTSM_V3(input_dim: int, device: str | torch.device, num_wayp
         lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
         eps=flat_hp["eps"],
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         device=device
     )
 
@@ -206,6 +209,7 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         batch_size=flat_hp["batch_size"],
         eps=flat_hp["eps"],
         integration_steps=flat_hp["integration_steps"],
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         device=device
     )
 
@@ -225,6 +229,7 @@ def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypo
         batch_size=flat_hp["batch_size"],
         eps=flat_hp["eps"],
         integration_steps=flat_hp["integration_steps"],
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         device=device
     )
 
@@ -247,6 +252,7 @@ def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypo
         batch_size=flat_hp["batch_size"],
         eps=flat_hp["eps"],
         integration_steps=flat_hp["integration_steps"],
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         device=device
     )
 
