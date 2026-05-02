@@ -47,8 +47,10 @@ class PendulumAdapter(ExperimentAdapter):
         self._k1_values = kl.get("k1_values", [])
         self._k2_values = kl.get("k2_values", [])
         self._seeds = kl.get("seeds_default", 1)
-        # pendulum is continuous-state; dim is fixed at 4 (theta, theta_dot x 2 for p0/p1)
-        self._latent_dim = 4
+        # pendulum samples are flat T=5-step trajectories, 18-dim each
+        # (verified from h5 samples_p0.shape=(N, 18); the prior `= 4` was a
+        # stale hardcode from an earlier theta/theta_dot-only schema).
+        self._latent_dim = 18
 
     def name(self) -> str:
         """return "pendulum_eldr_estimation"."""
@@ -110,7 +112,7 @@ class PendulumAdapter(ExperimentAdapter):
         return self._device
 
     def latent_dim(self) -> int:
-        """return 4 (pendulum continuous state: theta + theta_dot per distribution)."""
+        """return 18 (flat T=5 pendulum trajectory: 6 features per timestep × 3)."""
         return self._latent_dim
 
     def num_waypoints(self) -> Optional[int]:
