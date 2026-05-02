@@ -1053,10 +1053,12 @@ def main() -> None:
     cpu_array_assignments: dict[str, list[str]] = {}  # jid -> popped lines
     preempt_walltimes: dict[str, str] = {}            # jid -> walltime cap str
 
-    # workflow state machines (replaces per-method controllers)
+    # workflow state machines (replaces per-method controllers).
+    # import unconditionally so all _save_state call sites can call
+    # wfr.serialize_states without scoping issues; the module is light.
+    from experiments.utils.hpo import workflow_runner as wfr
     workflow_pairs: list = []
     if args.workflow_pairs is not None:
-        from experiments.utils.hpo import workflow_runner as wfr
         workflow_pairs = wfr.load_pairs(args.workflow_pairs)
         wfr.restore_states(workflow_pairs, prior_workflow_states)
         _log_event("WORKFLOW_INIT", n_pairs=len(workflow_pairs),
@@ -1087,7 +1089,8 @@ def main() -> None:
 
     def _on_sigterm(signum, frame):
         LOGGER.info("SIGTERM received; saving state and exiting")
-        _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
+        _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids,
+                   wfr.serialize_states(workflow_pairs) if workflow_pairs else None)
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _on_sigterm)
@@ -1280,7 +1283,8 @@ def main() -> None:
                     _log_event("WALLTIME_NEAR", count=len(near),
                                examples=near[:5])
                 last_sacct_cycle = cycle
-                _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
+                _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids,
+                   wfr.serialize_states(workflow_pairs) if workflow_pairs else None)
 
             if cycle % 50 == 0:
                 active = _discover_active_studies(data_root)
@@ -1305,7 +1309,8 @@ def main() -> None:
             time.sleep(args.poll_interval)
 
     except KeyboardInterrupt:
-        _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
+        _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids,
+                   wfr.serialize_states(workflow_pairs) if workflow_pairs else None)
         sys.exit(0)
 
 
