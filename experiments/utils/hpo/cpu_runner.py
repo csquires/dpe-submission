@@ -129,14 +129,18 @@ def _eval_trial(
         random.seed(seed_int)
 
         try:
-            # cache lookup with experiment namespacing; backward compat fallback to bare cell key
+            # cache lookup with experiment namespacing; backward compat fallback to bare cell key.
+            # forkserver context (used to avoid pytorch fork deadlock) does NOT
+            # share parent globals, so worker's _CELL_DATA_CACHE is empty even
+            # though parent preloaded. fall back to fresh load on miss; per-worker
+            # cache hit on subsequent accesses to the same cell.
             key = (experiment, cell) if experiment else cell
-            data = _CELL_DATA_CACHE[key]
-            # delegate to adapter.eval_cell so per-experiment data schema +
-            # metric semantics live in the adapter, not inlined here. pass
-            # pre-loaded `data` so the cell cache is preserved.
             from experiments.utils.hpo.adapters import get_adapter
             adapter = get_adapter(experiment)
+            data = _CELL_DATA_CACHE.get(key)
+            if data is None:
+                data = adapter.load_cell_data(cell, device="cpu")
+                _CELL_DATA_CACHE[key] = data
             mae = adapter.eval_cell(
                 cell, method, builder, hyperparams, requires_pstar, "cpu", data=data
             )
