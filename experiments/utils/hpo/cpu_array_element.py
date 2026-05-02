@@ -237,11 +237,19 @@ def _run_pool(parsed_tasks: list[dict], n_jobs: int,
         (p, c, s) for p, (c, s) in zip(parsed_tasks, cells_per_task)
     ]
 
-    # 3. fork pool, dispatch
+    # 3. forkserver pool, dispatch.
+    # forkserver (not fork): fork-after-pytorch-import deadlocks on flow
+    # methods (FMDRE etc.) because POSIX fork only copies the calling
+    # thread but child inherits parent's torch threadpool globals; the
+    # workers then deadlock on the first heavy autograd dispatch.
+    # forkserver pre-forks a clean child from the current parent state
+    # before any worker dispatch — cells preloaded above are still
+    # inherited via COW (initial fork from parent), but the broken
+    # threadpool state is severed at the forkserver layer.
     t_pool_start = time.perf_counter()
     n_ok = 0
     n_err = 0
-    ctx = mp.get_context("fork")
+    ctx = mp.get_context("forkserver")
     with ctx.Pool(processes=n_jobs, maxtasksperchild=16) as pool:
         try:
             for result in pool.imap_unordered(_pool_worker, worker_args):
