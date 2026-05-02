@@ -465,7 +465,7 @@ def parse_args() -> argparse.Namespace:
                    help="max concurrent array elements (array_qos cap)")
     p.add_argument("--cpu-n-per-element", type=int, default=8,
                    help="trials per array element (jobs per sbatch array index)")
-    p.add_argument("--cpu-walltime", type=str, default="1:30:00",
+    p.add_argument("--cpu-walltime", type=str, default="4:00:00",
                    help="per-element walltime; pass 'auto' to compute via spec 04")
     p.add_argument("--cpu-cpus-per-task", type=int, default=2,
                    help="cpus per array element task")

@@ -107,7 +107,7 @@ def main():
         data = load_pair_data(data_dir, alpha_idx, pair_idx, device)
 
         # fresh estimator per pair
-        estimator = builder_fn(input_dim=input_dim, device=device, num_waypoints=num_waypoints, **hyperparams)
+        estimator = builder_fn(input_dim=input_dim, device=device, num_waypoints=hyperparams.get('num_waypoints', num_waypoints), **{k: v for k, v in hyperparams.items() if k != 'num_waypoints'})
 
         mae = eval_pair(estimator, data, requires_pstar)
 

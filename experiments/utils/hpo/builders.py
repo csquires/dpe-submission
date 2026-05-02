@@ -19,7 +19,7 @@ from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
 from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
 from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.mdre import MDRE
-from src.density_ratio_estimation.tdre import TDRE
+from src.density_ratio_estimation.mh_tdre import MultiHeadTDRE
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
 from src.density_ratio_estimation.tabular_plugin import (
@@ -36,6 +36,7 @@ from src.waypoints.piecewise_sb import PiecewiseSBCtsm1D, PiecewiseSBVfm1D
 from src.waypoints.triangular_continuous import BarycentricCtsm1D, BarycentricVfm1D
 from src.waypoints.triangular_continuous_2d import Stacked2DCtsm, Stacked2DVfm
 from src.waypoints.curve_2d import Curve2D
+from src.waypoints.waypoints1d import DefaultWaypointBuilder1D
 
 from src.models.binary_classification import (
     make_binary_classifier,
@@ -81,10 +82,17 @@ def build_TriangularFMDRE(input_dim: int, device: str | torch.device, num_waypoi
 
 
 def build_MHTTDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> MultiHeadTriangularTDRE:
-    """return MHTTDRE estimator with multi-head classifier built from flat_hp dict."""
+    """return MHTTDRE estimator with multi-head classifier built from flat_hp dict.
+
+    num_waypoints and vertex can be HP-sampled via flat_hp; fall back to arg/0.5.
+    """
+    nwp = flat_hp.pop("num_waypoints", num_waypoints)
+    if nwp is None:
+        nwp = 5
+    vertex = flat_hp.pop("vertex", 0.5)
     classifier = make_multi_head_binary_classifier(
         input_dim=input_dim,
-        num_heads=num_waypoints - 1,
+        num_heads=nwp - 1,
         hidden_dim=flat_hp["hidden_dim"],
         head_dim=flat_hp["head_dim"],
         num_shared_layers=flat_hp["num_shared_layers"],
@@ -93,7 +101,33 @@ def build_MHTTDRE(input_dim: int, device: str | torch.device, num_waypoints: int
     )
     return MultiHeadTriangularTDRE(
         classifier=classifier,
-        num_waypoints=num_waypoints,
+        num_waypoints=nwp,
+        vertex=vertex,
+        device=device
+    )
+
+
+def build_MHTDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> MultiHeadTDRE:
+    """return MHTDRE estimator with multi-head classifier built from flat_hp dict.
+
+    num_waypoints can be HP-sampled via flat_hp; falls back to arg, then 10.
+    """
+    nwp = flat_hp.pop("num_waypoints", num_waypoints)
+    if nwp is None:
+        nwp = 10
+    classifier = make_multi_head_binary_classifier(
+        input_dim=input_dim,
+        num_heads=nwp - 1,
+        hidden_dim=flat_hp["hidden_dim"],
+        head_dim=flat_hp["head_dim"],
+        num_shared_layers=flat_hp["num_shared_layers"],
+        learning_rate=flat_hp["learning_rate"],
+        num_epochs=flat_hp["num_epochs"]
+    )
+    return MultiHeadTDRE(
+        classifier=classifier,
+        waypoint_builder=DefaultWaypointBuilder1D(),
+        num_waypoints=nwp,
         device=device
     )
 
@@ -231,25 +265,17 @@ def build_BDRE(input_dim: int, device: str | torch.device, num_waypoints: int, *
 def build_MDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> MDRE:
     """return MDRE estimator with multiclass classifier (num_classes = num_waypoints).
 
+    num_waypoints can be HP-sampled via flat_hp; falls back to arg, then 10.
     flat_hp is forwarded to make_multiclass_classifier; missing keys use class defaults.
     """
+    nwp = flat_hp.pop("num_waypoints", num_waypoints)
+    if nwp is None:
+        nwp = 10
     classifier_name = flat_hp.pop("classifier_name", "default")
     classifier = make_multiclass_classifier(
-        name=classifier_name, input_dim=input_dim, num_classes=num_waypoints, **flat_hp,
+        name=classifier_name, input_dim=input_dim, num_classes=nwp, **flat_hp,
     )
     return MDRE(classifier=classifier, device=device)
-
-
-def build_TDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TDRE:
-    """return TDRE estimator with (num_waypoints - 1) pairwise binary classifiers.
-
-    flat_hp is forwarded to make_pairwise_binary_classifiers.
-    """
-    classifier_name = flat_hp.pop("classifier_name", "default")
-    classifiers = make_pairwise_binary_classifiers(
-        name=classifier_name, num_classes=num_waypoints, input_dim=input_dim, **flat_hp,
-    )
-    return TDRE(classifiers=classifiers, num_waypoints=num_waypoints, device=device)
 
 
 def build_TriangularMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularMDRE:
@@ -262,10 +288,13 @@ def build_TriangularMDRE(input_dim: int, device: str | torch.device, num_waypoin
     """
     classifier_name = flat_hp.pop("classifier_name", "default")
     vertex = flat_hp.pop("vertex", 0.5)
+    nwp = flat_hp.pop("num_waypoints", num_waypoints)
+    if nwp is None:
+        nwp = 10
     midpoint_oversample = flat_hp.pop("midpoint_oversample")
     gamma_power = flat_hp.pop("gamma_power")
     classifier = make_multiclass_classifier(
-        name=classifier_name, input_dim=input_dim, num_classes=num_waypoints, **flat_hp,
+        name=classifier_name, input_dim=input_dim, num_classes=nwp, **flat_hp,
     )
     return TriangularMDRE(
         classifier=classifier,

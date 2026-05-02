@@ -135,8 +135,8 @@ def _eval_trial(
             est = builder(
                 input_dim=latent_dim,
                 device="cpu",
-                num_waypoints=num_waypoints,
-                **hyperparams,
+                num_waypoints=hyperparams.get('num_waypoints', num_waypoints),
+                **{k: v for k, v in hyperparams.items() if k != 'num_waypoints'},
             )
             if requires_pstar:
                 est.fit(data["p0"], data["p1"], data["pstar"])

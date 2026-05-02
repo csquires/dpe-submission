@@ -38,7 +38,6 @@ from experiments.utils.hpo.method_specs import METHOD_SPECS
 from experiments.utils.hpo.registry import LEGACY_ALIASES
 from experiments.utils.watchdog import pop_lines_back_atomic
 from experiments.utils.hpo import cpu_runner
-from experiments.utils.walltime_caps import cpu_eligible_methods
 
 
 # ---------------------------------------------------------------------------
@@ -145,17 +144,26 @@ def _parse_args() -> argparse.Namespace:
                         "matches single-process pilot baseline). cpus_per_task "
                         "should equal n_jobs * inner_threads.")
     p.add_argument("--method-filter", type=str, default=None,
-                   help="csv method names to claim; defaults to all cpu-eligible")
+                   help="csv method names to claim; no default (all methods claimable)")
     p.add_argument("--max-elapsed-seconds", type=int, default=None,
                    help="exit early if cumulative trial time exceeds this")
     return p.parse_args()
 
 
 def _resolve_method_filter(arg: Optional[str]) -> Optional[set[str]]:
+    """resolve method filter from CLI arg; return None if no filter specified.
+
+    v3 design: drop default cpu-eligible filter. all queue lines are claimable
+    from the back. slow methods may end up here, will hit per-element walltime
+    cap, and orphan-recovery requeues them for preempt to retry.
+
+    if arg is None or empty -> return None (no method filter, claim all).
+    else -> return set of method names from CSV.
+    """
     if arg:
         return set(arg.split(","))
-    # default: all cpu-eligible methods (from walltime_caps)
-    return cpu_eligible_methods()
+    # v3: no default filter, all methods claimable from queue back
+    return None
 
 
 def _run_sequential(parsed_tasks: list[dict], queue_file: Path, lock_file: Path,

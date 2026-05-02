@@ -79,7 +79,7 @@ def main():
             pstar = torch.cat([ts, ys], dim=1)
 
             est = builder(input_dim=data_dim + 1, device=device,
-                          num_waypoints=num_waypoints, **trial["hyperparams"])
+                          num_waypoints=trial["hyperparams"].get('num_waypoints', num_waypoints), **{k: v for k, v in trial["hyperparams"].items() if k != 'num_waypoints'})
             if requires_pstar:
                 est.fit(p0, p1, pstar)
             else:

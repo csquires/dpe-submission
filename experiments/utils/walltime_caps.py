@@ -43,15 +43,14 @@ SPEED_CLASS_MAP: dict[str, SpeedClass] = {
     "TriangularCTSM_V3":         SpeedClass.MEDIUM,
     "TriangularCTSM":            SpeedClass.MEDIUM,  # legacy alias for TriangularCTSM_V1
 
-    # FAST (cpu-eligible): 6 canonical + 3 aliases = 9 entries
+    # FAST (cpu-eligible): 7 canonical + 2 aliases = 9 entries
     "MDRE_15":                   SpeedClass.FAST,
-    "TDRE_5":                    SpeedClass.FAST,
+    "MultiHeadTDRE":             SpeedClass.FAST,
     "MultiHeadTriangularTDRE":   SpeedClass.FAST,
     "TriangularMDRE":            SpeedClass.FAST,
     "TabularPluginDRE":          SpeedClass.FAST,
     "SmoothedTabularPluginDRE":  SpeedClass.FAST,
     "MDRE":                      SpeedClass.FAST,  # legacy alias for MDRE_15
-    "TDRE":                      SpeedClass.FAST,  # legacy alias for TDRE_5
     "MHTTDRE":                   SpeedClass.FAST,  # legacy alias for MultiHeadTriangularTDRE
 }
 
@@ -104,8 +103,7 @@ WALLTIME_CAPS_PREEMPT = {
     "BDRE":                      "0:05:00",
     "MDRE":                      "0:05:00",
     "MDRE_15":                   "0:05:00",
-    "TDRE":                      "0:05:00",
-    "TDRE_5":                    "0:05:00",
+    "MultiHeadTDRE":             "0:05:00",
     "MHTTDRE":                   "0:05:00",  # observed 4-cell 14s
     "MultiHeadTriangularTDRE":   "0:05:00",  # canonical alias
     "TriangularMDRE":            "0:05:00",
@@ -147,7 +145,7 @@ WALLTIME_CAPS_CPU = {
 
     # FAST: small models, expected ~3-5 min per trial on cpu
     "MDRE_15":                   "0:05:00",
-    "TDRE_5":                    "0:05:00",
+    "MultiHeadTDRE":             "0:05:00",
     "MultiHeadTriangularTDRE":   "0:05:00",
     "TriangularMDRE":            "0:05:00",
 

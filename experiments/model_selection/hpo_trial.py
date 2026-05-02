@@ -79,8 +79,8 @@ def main():
             est = builder(
                 input_dim=3,
                 device=device,
-                num_waypoints=num_waypoints,
-                **trial["hyperparams"]
+                num_waypoints=trial["hyperparams"].get('num_waypoints', num_waypoints),
+                **{k: v for k, v in trial["hyperparams"].items() if k != 'num_waypoints'}
             )
 
             # fit with or without pstar samples

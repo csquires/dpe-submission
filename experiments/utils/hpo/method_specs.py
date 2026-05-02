@@ -16,7 +16,7 @@ from experiments.utils.hpo.builders import (
     build_VFM,
     build_BDRE,
     build_MDRE,
-    build_TDRE,
+    build_MHTDRE,
     build_FMDRE,
     build_FMDRE_S2,
     build_TriangularFMDRE,
@@ -93,23 +93,27 @@ METHOD_SPECS = {
     "MDRE_15": {
         "builder": build_MDRE,
         "requires_pstar": False,
-        "num_waypoints": 15,
+        "num_waypoints": None,  # HP-sampled per trial
         "base_search_space": {
             "latent_dim": ("choice", [64, 128, 256]),
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
             "num_epochs": ("log_uniform_int", 100, 500),
+            "num_waypoints": ("choice", [5, 10, 15, 20]),
         },
         "tabular_only": False,
     },
-    # baseline: triangular DRE (5 waypoints fixed)
-    "TDRE_5": {
-        "builder": build_TDRE,
+    # baseline: multi-head TDRE (standard)
+    "MultiHeadTDRE": {
+        "builder": build_MHTDRE,
         "requires_pstar": False,
-        "num_waypoints": 5,
+        "num_waypoints": None,
         "base_search_space": {
-            "latent_dim": ("choice", [64, 128, 256]),
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
-            "num_epochs": ("log_uniform_int", 100, 500),
+            "num_epochs": ("log_uniform_int", 100, 1000),
+            "hidden_dim": ("choice", [16, 32, 64, 128]),
+            "head_dim": ("choice", [10, 20, 40]),
+            "num_shared_layers": ("choice", [1, 2, 3]),
+            "num_waypoints": ("choice", [5, 10, 15]),
         },
         "tabular_only": False,
     },
@@ -205,6 +209,8 @@ METHOD_SPECS = {
             "hidden_dim": ("choice", [16, 32, 64, 128]),
             "head_dim": ("choice", [10, 20, 40]),
             "num_shared_layers": ("choice", [1, 2, 3]),
+            "num_waypoints": ("choice", [5, 10, 15]),
+            "vertex": ("uniform", 0.2, 0.8),
         },
         "tabular_only": False,
     },
@@ -219,6 +225,8 @@ METHOD_SPECS = {
             "num_epochs": ("log_uniform_int", 100, 500),
             "midpoint_oversample": ("choice", [3, 5, 7]),
             "gamma_power": ("uniform", 1.0, 5.0),
+            "num_waypoints": ("choice", [5, 10, 15]),
+            "vertex": ("uniform", 0.2, 0.8),
         },
         "tabular_only": False,
     },
@@ -325,7 +333,6 @@ METHOD_SPECS = {
 ALIAS_PAIRS = [
     ("MHTTDRE", "MultiHeadTriangularTDRE"),
     ("MDRE", "MDRE_15"),
-    ("TDRE", "TDRE_5"),
     ("TriangularCTSM", "TriangularCTSM_V1"),
     ("TriangularVFM", "TriangularVFM_V1"),
 ]

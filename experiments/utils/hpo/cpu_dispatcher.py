@@ -91,7 +91,7 @@ def submit_cpu_array(
     *,
     concurrency: int = 100,
     n_per_element: int = 8,
-    walltime: str = "1:30:00",
+    walltime: str = "4:00:00",
     cpus_per_task: int = 2,
     mem: str = "8G",
     inner_threads: int = 2,
@@ -175,8 +175,8 @@ def _parse_args() -> argparse.Namespace:
                    help="max concurrent elements (default 100, matches array_qos MaxJobsPU)")
     p.add_argument("--n-per-element", type=int, default=4,
                    help="trials per array element (default 4)")
-    p.add_argument("--walltime", type=str, default="02:00:00",
-                   help="per-element walltime HH:MM:SS or 'auto' to compute; default 02:00:00")
+    p.add_argument("--walltime", type=str, default="04:00:00",
+                   help="per-element walltime HH:MM:SS or 'auto' to compute; default 04:00:00")
     p.add_argument("--cpus-per-task", type=int, default=4,
                    help="cpus per element (default 4 -> 2 workers x 2 inner threads)")
     p.add_argument("--mem", type=str, default="16G",

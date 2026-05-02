@@ -102,7 +102,7 @@ def main():
             true_eig = compute_true_eig(Sigma_pi, xi).item()
 
             est = builder(input_dim=data_dim + 1, device=device, num_waypoints=0,
-                          **trial["hyperparams"])
+                          **{k: v for k, v in trial["hyperparams"].items() if k != 'num_waypoints'})
             if is_triangular:
                 est = TriangularEIGAdapter(est)
             plugin = EIGPlugin(est)

@@ -125,7 +125,7 @@ def main():
                 flat_hp["decode"] = "argmax" if encoding_type.startswith("onehot") else "nn"
 
         est = builder(input_dim=input_dim, device=device,
-                      num_waypoints=num_waypoints, **flat_hp)
+                      num_waypoints=flat_hp.get('num_waypoints', num_waypoints), **{k: v for k, v in flat_hp.items() if k != 'num_waypoints'})
         if needs_latent:
             est.fit(p0, p1, latent_p0=p0_lat, latent_p1=p1_lat)
         elif requires_pstar:
