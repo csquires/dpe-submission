@@ -77,11 +77,30 @@ class Pair:
         return self._adapter
 
     def _count_results(self, stage_name: str) -> int:
+        """count FINITE-score trial result JSONs in <output_dir>/<stage>/.
+
+        only counts files where score is a finite number — pre-existing inf or
+        NaN trials (e.g., from stale runs) don't falsely satisfy the budget
+        gate. silently skips unparseable JSON.
+        """
+        import json
+        import math
         d = self.output_dir / stage_name
         if not d.exists():
             return 0
-        return sum(1 for p in d.glob("trial_*.json")
-                   if p.stem.removeprefix("trial_").isdigit())
+        n = 0
+        for p in d.glob("trial_*.json"):
+            stem = p.stem.removeprefix("trial_")
+            if not stem.isdigit():
+                continue
+            try:
+                data = json.loads(p.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            score = data.get("score")
+            if isinstance(score, (int, float)) and math.isfinite(score):
+                n += 1
+        return n
 
     def tick(self, queue_file: Path) -> bool:
         """advance at most one stage. returns True iff state changed.
