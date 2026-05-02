@@ -589,11 +589,15 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
             # is defined in this module or imported from cpu_dispatcher
             from experiments.utils.hpo.cpu_dispatcher import submit_cpu_array
 
+            # job-name + log subdir tagged by experiment(s) for squeue legibility.
+            # if multiple experiments, use first 2 abbreviated; full set in manifest.
+            exp_set = sorted({p[1] for p in valid_pairs})
+            exp_tag = "_".join(exp_set[:2]) + (f"_plus{len(exp_set)-2}" if len(exp_set) > 2 else "")
             array_jid = submit_cpu_array(
                 queue_file=args.queue_file,
                 lock_file=args.queue_file.with_suffix(args.queue_file.suffix + ".lock"),
                 array_size=array_size,
-                log_dir=logdir / "cpu_array_logs",
+                log_dir=logdir / "cpu_array_logs" / exp_tag,
                 concurrency=args.cpu_concurrency,
                 n_per_element=args.cpu_n_per_element,
                 walltime=args.cpu_walltime,
@@ -601,6 +605,7 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
                 mem=args.cpu_mem,
                 method_filter=",".join(sorted(eligible_methods)),
                 dependency=f"after:{watchdog_jid}",
+                job_name=f"cpu_drain_{exp_tag}",
             )
 
             cpu_record = {
@@ -611,7 +616,8 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
                 "cpu_array_walltime": args.cpu_walltime,
                 "cpu_array_n_per_element": args.cpu_n_per_element,
                 "cpu_array_method_filter": sorted(eligible_methods),
-                "cpu_array_log_dir": str(logdir / "cpu_array_logs"),
+                "cpu_array_log_dir": str(logdir / "cpu_array_logs" / exp_tag),
+                "cpu_array_experiments": exp_set,
             }
             logger.info("cpu array submitted: jid=%s array_size=%d", array_jid, array_size)
 

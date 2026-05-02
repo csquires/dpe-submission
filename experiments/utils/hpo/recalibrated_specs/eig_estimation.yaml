@@ -1,0 +1,58 @@
+provenance:
+  derived_at: "2026-05-01"
+  rule: "narrow capacity for eig_estimation: cap hidden_dim at 128 (non-flow)
+    or 256 (flow), and drop deepest num_shared_layers option for MHTTDRE.
+    rationale: eig_estimation's data is lower-dimensional / lower-complexity
+    than mnist_cond_flow; over-parameterization wastes wall budget without
+    gain. layer-count narrowing only possible for methods exposing it as HP
+    (MHTTDRE). other methods hardcode depth in builders; out of scope here."
+
+workflow_version: "v1"
+
+methods:
+  # flow models: cap hidden_dim at 256 (needs some capacity for flow expressivity)
+  FMDRE:
+    n_epochs: ['log_uniform_int', 1000, 1500]
+    lr: ['log_uniform', 5.0e-4, 3.0e-3]
+    batch_size: ['choice', [128, 256, 512]]
+    eps: ['log_uniform', 1.0e-3, 5.0e-2]
+    integration_steps: ['uniform_int', 1000, 3000]
+    hidden_dim: ['choice', [128, 256]]
+    score_weight: ['log_uniform', 0.1, 10.0]
+
+  FMDRE_S2:
+    n_epochs: ['log_uniform_int', 1000, 1500]
+    lr: ['log_uniform', 5.0e-4, 3.0e-3]
+    batch_size: ['choice', [128, 256, 512]]
+    eps: ['log_uniform', 1.0e-3, 5.0e-2]
+    integration_steps: ['uniform_int', 1000, 3000]
+    hidden_dim: ['choice', [128, 256]]
+    score_weight: ['log_uniform', 0.1, 10.0]
+    p_uncond: ['uniform', 0.1, 0.9]
+
+  TriangularFMDRE:
+    n_epochs: ['log_uniform_int', 1000, 1500]
+    lr: ['log_uniform', 5.0e-4, 3.0e-3]
+    batch_size: ['choice', [128, 256, 512]]
+    eps: ['log_uniform', 1.0e-3, 5.0e-2]
+    integration_steps: ['uniform_int', 1000, 3000]
+    hidden_dim: ['choice', [128, 256]]
+    score_weight: ['log_uniform', 0.1, 10.0]
+
+  # non-flow with hidden_dim: cap at 128
+  TriangularTSM:
+    n_epochs: ['log_uniform_int', 750, 1500]
+    lr: ['log_uniform', 3.0e-4, 3.0e-3]
+    batch_size: ['choice', [64, 128, 256]]
+    hidden_dim: ['choice', [128]]
+    eps: ['log_uniform', 1.0e-5, 1.0e-3]
+    vertex: ['uniform', 0.2, 0.8]
+    peak_max: ['uniform', 0.5, 1.0]
+
+  # MHTTDRE: drop deepest num_shared_layers (was [1,2,3], now [1,2])
+  MultiHeadTriangularTDRE:
+    learning_rate: ['log_uniform', 1.0e-4, 1.0e-2]
+    num_epochs: ['log_uniform_int', 100, 1000]
+    hidden_dim: ['choice', [16, 32, 64, 128]]
+    head_dim: ['choice', [10, 20, 40]]
+    num_shared_layers: ['choice', [1, 2]]

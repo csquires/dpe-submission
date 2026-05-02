@@ -188,7 +188,7 @@ def _build_sbatch_cmd(experiment: str, method: str, config_file: Path,
     """
     workdir = "/home/aviamala/dpe-submission"
     trial_id = Path(config_file).stem.removeprefix("trial_")
-    job_name = f"{trial_id}_{stage}_{method}"
+    job_name = f"{trial_id}_{stage}_{method}_{experiment}"
     return (
         f"sbatch --partition=preempt --time={{time}} --exclude={{exclude}} "
         f"--gpus=1 --cpus-per-task=4 --mem=24G --requeue "
