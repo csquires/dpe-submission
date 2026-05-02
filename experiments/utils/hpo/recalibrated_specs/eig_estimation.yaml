@@ -1,17 +1,19 @@
 provenance:
   derived_at: '2026-05-01'
-  rule: 'narrow capacity for eig_estimation: cap hidden_dim at 128 (non-flow) or 256
-    (flow), and drop deepest num_shared_layers option for MHTTDRE. rationale: eig_estimation''s
-    data is lower-dimensional / lower-complexity than mnist_cond_flow; over-parameterization
-    wastes wall budget without gain. layer-count narrowing only possible for methods
-    exposing it as HP (MHTTDRE). other methods hardcode depth in builders; out of
-    scope here.'
+  rule: "narrow capacity for eig_estimation: cap hidden_dim at 128 (non-flow) or 256\
+    \ (flow), drop deepest num_shared_layers (multi-head methods), reduce n_hidden_layers\
+    \ by 1 (where >1). hidden_dim added to base_search_space as HP for methods that\
+    \ didn't expose it (TSM, CTSM, BDRE, MDRE_15, TriangularCTSM_V*, VFM, TriangularVFM_V*)\
+    \ \u2014 wrapper accepts via **flat_hp passthrough where supported. methods using\
+    \ bare TimeScoreNetwork1D don't have hidden_dim as HP in base_search_space; they\
+    \ use wrapper default. yaml lists ALL CPU-eligible neural methods explicitly so\
+    \ the 3 experiments can run without leaning on METHOD_SPECS defaults."
 workflow_version: v1
 methods:
   FMDRE:
     n_epochs:
     - log_uniform_int
-    - 1000
+    - 500
     - 1500
     lr:
     - log_uniform
@@ -44,7 +46,7 @@ methods:
   FMDRE_S2:
     n_epochs:
     - log_uniform_int
-    - 1000
+    - 500
     - 1500
     lr:
     - log_uniform
@@ -81,7 +83,7 @@ methods:
   TriangularFMDRE:
     n_epochs:
     - log_uniform_int
-    - 1000
+    - 500
     - 1500
     lr:
     - log_uniform
@@ -167,3 +169,399 @@ methods:
     - choice
     - - 1
       - 2
+    num_waypoints:
+    - choice
+    - - 5
+      - 10
+      - 15
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
+    n_hidden_layers:
+    - choice
+    - - 2
+  BDRE:
+    latent_dim:
+    - choice
+    - - 64
+      - 128
+      - 256
+    learning_rate:
+    - log_uniform
+    - 0.0001
+    - 0.01
+    num_epochs:
+    - log_uniform_int
+    - 100
+    - 500
+  CTSM:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    eps:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    n_hidden_layers:
+    - choice
+    - - 2
+  MDRE_15:
+    latent_dim:
+    - choice
+    - - 64
+      - 128
+      - 256
+    learning_rate:
+    - log_uniform
+    - 0.0001
+    - 0.01
+    num_epochs:
+    - log_uniform_int
+    - 100
+    - 500
+    num_waypoints:
+    - choice
+    - - 5
+      - 10
+      - 15
+      - 20
+    n_hidden_layers:
+    - choice
+    - - 1
+  MultiHeadTDRE:
+    learning_rate:
+    - log_uniform
+    - 0.0001
+    - 0.01
+    num_epochs:
+    - log_uniform_int
+    - 100
+    - 1000
+    hidden_dim:
+    - choice
+    - - 16
+      - 32
+      - 64
+      - 128
+    head_dim:
+    - choice
+    - - 10
+      - 20
+      - 40
+    num_shared_layers:
+    - choice
+    - - 1
+      - 2
+    num_waypoints:
+    - choice
+    - - 5
+      - 10
+      - 15
+    n_hidden_layers:
+    - choice
+    - - 2
+  TSM:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    eps:
+    - log_uniform
+    - 1.0e-06
+    - 0.0001
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularCTSM_V1:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.003
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularCTSM_V2:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    eps:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularCTSM_V3:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    gamma_schedule:
+    - choice
+    - - sqrt
+      - linear-stiff
+    k:
+    - choice
+    - - 12
+      - 24
+      - 48
+    t2_max:
+    - uniform
+    - 0.6
+    - 0.9
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.003
+    path_height:
+    - uniform
+    - 1.0
+    - 2.0
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularMDRE:
+    latent_dim:
+    - choice
+    - - 64
+      - 128
+      - 256
+    learning_rate:
+    - log_uniform
+    - 0.0001
+    - 0.01
+    num_epochs:
+    - log_uniform_int
+    - 100
+    - 500
+    midpoint_oversample:
+    - choice
+    - - 3
+      - 5
+      - 7
+    gamma_power:
+    - uniform
+    - 1.0
+    - 5.0
+    num_waypoints:
+    - choice
+    - - 5
+      - 10
+      - 15
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
+    n_hidden_layers:
+    - choice
+    - - 1
+  TriangularVFM_V1:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0005
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
+    gamma_min:
+    - log_uniform
+    - 0.01
+    - 0.1
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.005
+    integration_steps:
+    - uniform_int
+    - 500
+    - 3000
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularVFM_V2:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0005
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    k:
+    - choice
+    - - 10
+      - 20
+      - 40
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.005
+    integration_steps:
+    - uniform_int
+    - 500
+    - 3000
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularVFM_V3:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0005
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    k:
+    - choice
+    - - 10
+      - 20
+      - 40
+    gamma_schedule:
+    - choice
+    - - linear-stiff
+    t2_max:
+    - uniform
+    - 0.6
+    - 0.9
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.005
+    path_height:
+    - uniform
+    - 1.0
+    - 2.0
+    integration_steps:
+    - uniform_int
+    - 500
+    - 3000
+    n_hidden_layers:
+    - choice
+    - - 2
+  VFM:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0005
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    k:
+    - choice
+    - - 10
+      - 20
+      - 40
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.005
+    integration_steps:
+    - uniform_int
+    - 500
+    - 3000
+    n_hidden_layers:
+    - choice
+    - - 2
