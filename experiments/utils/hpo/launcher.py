@@ -320,14 +320,16 @@ def submit_workflow(
     queue_file: Path,
     watchdog_jid: str,
     budget: int = 250,
+    afterok_deps: Optional[list[str]] = None,
 ) -> str:
     """sbatch one workflow job; return jid.
 
-    uses `--dependency=after:<watchdog_jid>` (NOT afterok). watchdog is a
-    long-running daemon; afterok would deadlock since watchdog only completes
-    when its queue drains, and the queue is empty until workflows append to it.
-    `after:` fires when the watchdog has STARTED (running or completed), which
-    is what we want.
+    deps:
+      - always: `after:<watchdog_jid>` (fires once watchdog STARTED, not afterok
+        since watchdog never voluntarily completes).
+      - optional: `afterok:<j1>:<j2>:...` for `afterok_deps` — used to chain
+        waves so a fast-method controller waits for all slow-method controllers
+        to FINISH appending. anded with the watchdog dep via slurm comma syntax.
 
     invokes `python -m experiments.utils.hpo.workflow --method M --experiment E
     --stage all --queue-file Q --budget B` via --wrap. raises ValueError on
@@ -339,6 +341,9 @@ def submit_workflow(
         f"--method {method} --experiment {exp} "
         f"--stage all --queue-file '{queue_file}' --budget {budget}"
     )
+    deps = [f"after:{watchdog_jid}"]
+    if afterok_deps:
+        deps.append(f"afterok:{':'.join(afterok_deps)}")
     cmd = [
         "sbatch",
         "--parsable",
@@ -347,7 +352,7 @@ def submit_workflow(
         "--mem=2G",
         "--cpus-per-task=1",
         f"--job-name=hpo_{method}_{exp}",
-        f"--dependency=after:{watchdog_jid}",
+        f"--dependency={','.join(deps)}",
         f"--wrap={wrap_cmd}",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -366,19 +371,40 @@ def submit_waves(
     wave_size: int = 3,
     budget: int = 250,
 ) -> list[list[str]]:
-    """partition pairs into waves of wave_size; submit each wave; return nested jid list.
+    """submit per-(method, exp) workflow controllers, chained by speed class.
 
-    wave-stagger paces submission burst only (H2). all waves may pend simultaneously.
-    each wave is submitted in full before moving to next.
+    pairs is assumed pre-sorted slow-first (launcher.main sorts by speed_rank
+    ASC). re-groups into 3 phases (SLOW=0, MEDIUM=1, FAST=2) and chains them:
+    each phase's controllers depend on `afterok` for ALL controllers in the
+    previous phase. ensures slow methods APPEND to queue before medium, before
+    fast — so the queue is reliably ordered slow-front / fast-back, fixing the
+    bidirectional-drain race where transient append order put slow methods at
+    the back where cpu_array would back-pop them.
+
+    within a phase, controllers are submitted in waves of wave_size (a pacing
+    nicety) with no intra-phase deps — they may run in parallel.
     """
+    by_rank: dict[int, list[tuple[str, str]]] = {0: [], 1: [], 2: []}
+    for p in pairs:
+        by_rank[speed_rank(p[0])].append(p)
+
     waves_jids: list[list[str]] = []
-    for i in range(0, len(pairs), wave_size):
-        wave = pairs[i : i + wave_size]
-        jids = [
-            submit_workflow(method, exp, queue_file, watchdog_jid, budget)
-            for method, exp in wave
-        ]
-        waves_jids.append(jids)
+    prev_phase_jids: list[str] = []
+    for rank in (0, 1, 2):
+        phase = by_rank[rank]
+        if not phase:
+            continue
+        phase_jids: list[str] = []
+        for i in range(0, len(phase), wave_size):
+            wave = phase[i : i + wave_size]
+            for method, exp in wave:
+                jid = submit_workflow(
+                    method, exp, queue_file, watchdog_jid, budget,
+                    afterok_deps=prev_phase_jids if prev_phase_jids else None,
+                )
+                phase_jids.append(jid)
+        prev_phase_jids = phase_jids
+        waves_jids.append(phase_jids)
     return waves_jids
 
 
