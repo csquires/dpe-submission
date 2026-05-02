@@ -11,7 +11,7 @@ class MultiClassVelScoreMLP(nn.Module):
     architecture:
       one-hot labels [B] -> [B, num_classes]
       input concatenation [t, x, y_onehot] -> [B, D + 1 + K]
-        -> backbone: 3 hidden layers with ReLU
+        -> backbone: 3 hidden layers with GELU
         -> v_head: Linear(hidden_dim, D) [velocity]
         -> s_head: Linear(hidden_dim, D) [score]
       output: tuple (velocity [B, D], score [B, D])
@@ -39,8 +39,8 @@ class MultiClassVelScoreMLP(nn.Module):
           1. validate n_hidden_layers >= 1.
           2. store input_dim, num_classes, hidden_dim, n_hidden_layers as instance attributes.
           3. build shared backbone as nn.Sequential with n_hidden_layers hidden layers.
-             first layer: Linear(D+1+K, hidden_dim) + ReLU.
-             remaining layers: (n_hidden_layers-1) * [Linear(hidden_dim, hidden_dim) + ReLU].
+             first layer: Linear(D+1+K, hidden_dim) + GELU.
+             remaining layers: (n_hidden_layers-1) * [Linear(hidden_dim, hidden_dim) + GELU].
           4. build velocity head: Linear(hidden_dim, D).
           5. build score head: Linear(hidden_dim, D).
         """
@@ -53,10 +53,10 @@ class MultiClassVelScoreMLP(nn.Module):
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
 
-        layers = [nn.Linear(input_dim + 1 + num_classes, hidden_dim), nn.ReLU()]
+        layers = [nn.Linear(input_dim + 1 + num_classes, hidden_dim), nn.GELU()]
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.GELU())
 
         self.backbone = nn.Sequential(*layers)
 

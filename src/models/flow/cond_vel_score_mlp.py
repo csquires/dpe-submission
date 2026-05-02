@@ -9,7 +9,7 @@ class CondVelScoreMLP(nn.Module):
 
     Architecture:
       input [t, x, c] (dim D+2)
-        -> backbone: n_hidden_layers hidden layers with ReLU
+        -> backbone: n_hidden_layers hidden layers with GELU
         -> v_head: Linear(hidden_dim, D) [velocity]
         -> s_head: Linear(hidden_dim, D) [score]
     """
@@ -27,8 +27,8 @@ class CondVelScoreMLP(nn.Module):
           1. Validate n_hidden_layers >= 1.
           2. Store input_dim, hidden_dim, and n_hidden_layers as instance attributes.
           3. Build shared backbone as nn.Sequential with n_hidden_layers layers.
-             first layer: Linear(D+2, hidden_dim) + ReLU.
-             remaining layers: (n_hidden_layers-1) times [Linear(hidden_dim, hidden_dim) + ReLU].
+             first layer: Linear(D+2, hidden_dim) + GELU.
+             remaining layers: (n_hidden_layers-1) times [Linear(hidden_dim, hidden_dim) + GELU].
           4. Build velocity head: Linear(hidden_dim, D).
           5. Build score head: Linear(hidden_dim, D).
         """
@@ -40,9 +40,9 @@ class CondVelScoreMLP(nn.Module):
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
 
-        layers = [nn.Linear(input_dim + 2, hidden_dim), nn.ReLU()]
+        layers = [nn.Linear(input_dim + 2, hidden_dim), nn.GELU()]
         for _ in range(n_hidden_layers - 1):
-            layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.ReLU()])
+            layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.GELU()])
         self.backbone = nn.Sequential(*layers)
 
         self.v_head = nn.Linear(hidden_dim, input_dim)

@@ -16,12 +16,12 @@ class MLP2D(nn.Module):
     Multi-layer perceptron for 2D-time vector field estimation.
 
     Mirrors the 1D MLP at src/density_ratio_estimation/spatial_velo_denoiser2.py
-    line 18 (3 hidden Linear+ReLU blocks, hardcoded). Differs only in the input
+    line 18 (3 hidden Linear+GELU blocks, hardcoded). Differs only in the input
     projection: `+ 2` for two time scalars instead of `+ 1`.
 
     Procedure:
         concatenate [t1, t2, x] along last dimension -> [B, D + 2]
-        pass through nn.Sequential of (Linear+ReLU) x 3 + Linear
+        pass through nn.Sequential of (Linear+GELU) x 3 + Linear
         return [B, output_dim]
     """
 
@@ -45,10 +45,10 @@ class MLP2D(nn.Module):
         if n_hidden_layers < 1:
             raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
 
-        layers = [nn.Linear(input_dim + 2, hidden_dim), nn.ReLU()]  # +2 for t1, t2
+        layers = [nn.Linear(input_dim + 2, hidden_dim), nn.GELU()]  # +2 for t1, t2
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.GELU())
         layers.append(nn.Linear(hidden_dim, output_dim))
 
         self.net = nn.Sequential(*layers)

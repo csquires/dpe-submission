@@ -43,11 +43,11 @@ class MLP(nn.Module):
         # build backbone: input -> hidden, then (n_hidden_layers - 1) hidden -> hidden
         layers = []
         layers.append(nn.Linear(input_dim + 1, hidden_dim))
-        layers.append(nn.ReLU())
+        layers.append(nn.GELU())
 
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.GELU())
 
         # output projection
         layers.append(nn.Linear(hidden_dim, output_dim))
@@ -112,6 +112,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         self,
         input_dim: int,
         hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
         lr: float = 2e-3,
@@ -128,6 +129,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         super().__init__(input_dim)
         self.integration_type = integration_type
         self.hidden_dim = hidden_dim
+        self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.lr = lr
@@ -138,18 +140,22 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         self.verbose = verbose
         self.log_every = log_every
         self.antithetic = antithetic
-        
+
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
-            
+
         self.net_b = None
         self.net_eta = None
 
     def init_model(self) -> None:
-        self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
-        self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
+        self.net_b = MLP(self.input_dim, self.hidden_dim,
+                         output_dim=self.input_dim,
+                         n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.net_eta = MLP(self.input_dim, self.hidden_dim,
+                           output_dim=self.input_dim,
+                           n_hidden_layers=self.n_hidden_layers).to(self.device)
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """gamma(t) = (1 - exp(-k*t)) * (1 - exp(-k*(1-t)))"""
