@@ -31,13 +31,14 @@ WORKDIR = "/home/aviamala/dpe-submission"
 
 def _build_wrap_cmd(queue_file: Path, lock_file: Path,
                     n_per_element: int, method_filter: str,
-                    inner_threads: int) -> str:
+                    inner_threads: int, n_jobs: int = 1) -> str:
     """build the --wrap string for the array element.
 
     sets BLAS env vars BEFORE python launches (these are read at numpy/torch
     import time; setting them in-process is too late). passes inner_threads
     via CPU_INNER_THREADS env var which cpu_array_element forwards to
-    cpu_runner._eval_trial.
+    cpu_runner._eval_trial. PYTHONHASHSEED pinned for cross-process
+    determinism in cell seeding.
     """
     method_arg = f"--method-filter '{method_filter}'" if method_filter else ""
     return (
@@ -46,12 +47,13 @@ def _build_wrap_cmd(queue_file: Path, lock_file: Path,
         f"export MKL_NUM_THREADS={inner_threads} && "
         f"export OPENBLAS_NUM_THREADS={inner_threads} && "
         f"export CPU_INNER_THREADS={inner_threads} && "
+        f"export PYTHONHASHSEED=42 && "
         f"export HDF5_USE_FILE_LOCKING=FALSE && "
         f"cd {WORKDIR} && "
         f"python -m experiments.utils.hpo.cpu_array_element "
         f"--queue-file {shlex.quote(str(queue_file))} "
         f"--lock-file {shlex.quote(str(lock_file))} "
-        f"--n-per-element {n_per_element} {method_arg}"
+        f"--n-per-element {n_per_element} --n-jobs {n_jobs} {method_arg}"
     )
 
 
@@ -60,9 +62,10 @@ def _build_sbatch(queue_file: Path, lock_file: Path,
                   walltime: str, cpus_per_task: int, mem: str,
                   n_per_element: int, method_filter: str,
                   inner_threads: int, log_dir: Path,
-                  jobname: str, dependency: str = "") -> list[str]:
+                  jobname: str, dependency: str = "",
+                  n_jobs: int = 1) -> list[str]:
     wrap = _build_wrap_cmd(queue_file, lock_file, n_per_element,
-                           method_filter, inner_threads)
+                           method_filter, inner_threads, n_jobs)
     cmd = [
         "sbatch",
         "--parsable",
@@ -95,6 +98,7 @@ def submit_cpu_array(
     method_filter: str = "",
     dependency: str = "",
     job_name: str = "cpu_drain",
+    n_jobs: int = 1,
 ) -> str:
     """sbatch a slurm array job to partition=array; returns array_jid string.
 
@@ -139,6 +143,7 @@ def submit_cpu_array(
         log_dir=log_dir,
         jobname=job_name,
         dependency=dependency,
+        n_jobs=n_jobs,
     )
 
     # run sbatch
@@ -179,6 +184,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--inner-threads", type=int, default=2,
                    help="BLAS threads per worker (default 2); total cores ~= "
                         "(cpus_per_task / inner_threads) * inner_threads")
+    p.add_argument("--n-jobs", type=int, default=1,
+                   help="parallel workers per element via mp.Pool fork "
+                        "(default 1 = sequential, single-process baseline)")
     p.add_argument("--method-filter", type=str, default=None,
                    help="csv of allowed methods; default: all cpu-eligible")
     p.add_argument("--jobname", type=str, default="cpu_drain",
@@ -232,6 +240,7 @@ def main() -> int:
         inner_threads=args.inner_threads, log_dir=log_dir,
         jobname=args.jobname,
         dependency="",
+        n_jobs=args.n_jobs,
     )
 
     print("[cpu_dispatcher] sbatch command:")

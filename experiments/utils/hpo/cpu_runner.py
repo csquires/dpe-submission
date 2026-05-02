@@ -55,7 +55,8 @@ from experiments.utils.hpo.sample import gen_config
 
 # module-level: preloaded in main, inherited by forked workers via copy-on-write.
 # never written after fork; no lock needed.
-_CELL_DATA_CACHE: dict[tuple, dict[str, torch.Tensor]] = {}
+# key: (experiment, cell) tuple for namespacing; bare cell for backward compat.
+_CELL_DATA_CACHE: dict[tuple[str, tuple] | tuple, dict[str, torch.Tensor]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +109,7 @@ def _eval_trial(
     stage: str,
     inner_threads: int,
     eval_sample_seed: Optional[int] = None,
+    experiment: Optional[str] = None,
 ) -> dict:
     """evaluate one hpo trial on all preloaded cells; write result json; return result."""
     _set_blas_threads(inner_threads)
@@ -127,7 +129,9 @@ def _eval_trial(
         random.seed(seed_int)
 
         try:
-            data = _CELL_DATA_CACHE[cell]
+            # cache lookup with experiment namespacing; backward compat fallback to bare cell key
+            key = (experiment, cell) if experiment else cell
+            data = _CELL_DATA_CACHE[key]
             est = builder(
                 input_dim=latent_dim,
                 device="cpu",
@@ -332,7 +336,7 @@ def main() -> None:
     t_load = time.perf_counter()
     print(f"[cpu_runner] preloading {n_cells} cells...", flush=True)
     for cell in cells:
-        _CELL_DATA_CACHE[cell] = adapter.load_cell_data(cell, device="cpu")
+        _CELL_DATA_CACHE[(args.experiment, cell)] = adapter.load_cell_data(cell, device="cpu")
     print(f"[cpu_runner] preloaded in {time.perf_counter() - t_load:.1f}s", flush=True)
 
     # generate trial configs (random hyperparameter samples)
@@ -341,7 +345,11 @@ def main() -> None:
         print(f"[cpu_runner] hyperparameter overrides: {override}", flush=True)
     registry = {method: {"search_space": spec["base_search_space"]}}
     trial_configs = []
+    # seed global random per trial_id for deterministic gen_config across runs.
+    # without this, sample_param uses global random's process-local state,
+    # giving different hyperparams between cpu_runner invocations.
     for trial_id in range(args.n_trials):
+        random.seed(args.seed + trial_id)
         cfg = gen_config(registry, method, trial_id)
         cfg["hyperparams"].update(override)
         trial_configs.append(cfg)
@@ -377,6 +385,7 @@ def main() -> None:
         stage=args.stage,
         inner_threads=args.inner_threads,
         eval_sample_seed=args.seed,
+        experiment=args.experiment,
     )
 
     print(

@@ -24,6 +24,8 @@ env:
 
 import argparse
 import json
+import multiprocessing as mp
+import os
 import re
 import sys
 import time
@@ -103,10 +105,11 @@ def run_one_trial(parsed: dict, cell_cache_keys: set[tuple]) -> dict:
     eval_sample_seed = cells_raw.get("eval_sample_seed")
 
     # ensure cache holds every cell this trial needs
-    new_cells = [c for c in cells if c not in cell_cache_keys]
+    new_cells = [c for c in cells if (parsed["experiment"], c) not in cell_cache_keys]
     for cell in new_cells:
-        cpu_runner._CELL_DATA_CACHE[cell] = adapter.load_cell_data(cell, device="cpu")
-        cell_cache_keys.add(cell)
+        key = (parsed["experiment"], cell)
+        cpu_runner._CELL_DATA_CACHE[key] = adapter.load_cell_data(cell, device="cpu")
+        cell_cache_keys.add(key)
 
     # run the eval inline (no fork; one trial at a time per element)
     result = cpu_runner._eval_trial(
@@ -120,8 +123,9 @@ def run_one_trial(parsed: dict, cell_cache_keys: set[tuple]) -> dict:
         cell_seed_ns=adapter.cell_seed_namespace(),
         output_dir=parsed["output_dir"],
         stage=parsed["stage"],
-        inner_threads=int(__import__("os").environ.get("CPU_INNER_THREADS", "2")),
+        inner_threads=int(os.environ.get("CPU_INNER_THREADS", "2")),
         eval_sample_seed=eval_sample_seed,
+        experiment=parsed["experiment"],
     )
     return result
 
@@ -136,6 +140,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--lock-file", type=Path, required=True)
     p.add_argument("--n-per-element", type=int, default=4,
                    help="max trials to claim per element (default 4)")
+    p.add_argument("--n-jobs", type=int, default=1,
+                   help="parallel workers per element (default 1 = sequential, "
+                        "matches single-process pilot baseline). cpus_per_task "
+                        "should equal n_jobs * inner_threads.")
     p.add_argument("--method-filter", type=str, default=None,
                    help="csv method names to claim; defaults to all cpu-eligible")
     p.add_argument("--max-elapsed-seconds", type=int, default=None,
@@ -150,44 +158,26 @@ def _resolve_method_filter(arg: Optional[str]) -> Optional[set[str]]:
     return cpu_eligible_methods()
 
 
-def main() -> int:
-    args = _parse_args()
-    method_filter = _resolve_method_filter(args.method_filter)
-    array_idx = __import__("os").environ.get("SLURM_ARRAY_TASK_ID", "?")
+def _run_sequential(parsed_tasks: list[dict], queue_file: Path, lock_file: Path,
+                    claimed: list[str], max_elapsed: Optional[int]) -> int:
+    """run trials sequentially (n_jobs=1 baseline).
 
-    print(f"[cpu_array_element] task_id={array_idx} claiming up to "
-          f"{args.n_per_element} trials from {args.queue_file}",
-          flush=True)
-
-    claimed = pop_lines_back_atomic(args.queue_file, args.lock_file,
-                                    args.n_per_element, method_filter)
-    if not claimed:
-        print(f"[cpu_array_element] queue empty or no eligible lines; exit 0",
-              flush=True)
-        return 0
-
-    print(f"[cpu_array_element] claimed {len(claimed)} lines", flush=True)
-
+    preserves current single-process behavior: one trial at a time,
+    shared cell cache across all trials assigned to this element.
+    """
     cache_keys: set[tuple] = set()
     t_start = time.perf_counter()
     n_ok = 0
     n_err = 0
 
-    for i, raw_line in enumerate(claimed):
-        if (args.max_elapsed_seconds is not None and
-                time.perf_counter() - t_start > args.max_elapsed_seconds):
+    for i, (raw_line, parsed) in enumerate(zip(claimed, parsed_tasks)):
+        if (max_elapsed is not None and
+                time.perf_counter() - t_start > max_elapsed):
             print(f"[cpu_array_element] elapsed budget exceeded; "
                   f"requeueing {len(claimed) - i} unclaimed lines",
                   flush=True)
-            _requeue(args.queue_file, args.lock_file, claimed[i:])
+            _requeue(queue_file, lock_file, claimed[i:])
             break
-
-        parsed = parse_queue_line(raw_line)
-        if parsed is None:
-            print(f"[cpu_array_element] skipping malformed line: {raw_line[:80]}",
-                  flush=True)
-            n_err += 1
-            continue
 
         try:
             run_one_trial(parsed, cache_keys)
@@ -199,9 +189,144 @@ def main() -> int:
             n_err += 1
 
     elapsed = time.perf_counter() - t_start
-    print(f"[cpu_array_element] done: ok={n_ok} err={n_err} elapsed={elapsed:.1f}s",
-          flush=True)
+    print(f"[cpu_array_element] sequential done: ok={n_ok} err={n_err} "
+          f"elapsed={elapsed:.1f}s", flush=True)
     return 0 if n_err == 0 else 1
+
+
+def _run_pool(parsed_tasks: list[dict], n_jobs: int,
+              queue_file: Path, lock_file: Path,
+              claimed: list[str], max_elapsed: Optional[int]) -> int:
+    """fork-based mp.Pool of n_jobs workers; each worker calls _eval_trial.
+
+    cells preloaded in parent BEFORE fork so workers inherit via COW.
+    """
+    # 1. preload all cells used by claimed tasks (in parent, single-threaded)
+    t_preload_start = time.perf_counter()
+    cells_per_task = []
+    for parsed in parsed_tasks:
+        cells_raw = json.loads(Path(parsed["eval_cells_file"]).read_text())
+        cells = coerce_cells_from_json(cells_raw["cells"])
+        eval_sample_seed = cells_raw.get("eval_sample_seed")
+        cells_per_task.append((cells, eval_sample_seed))
+
+    all_cells_with_exp: set[tuple] = set()
+    for (cells, _), parsed in zip(cells_per_task, parsed_tasks):
+        for c in cells:
+            all_cells_with_exp.add((parsed["experiment"], c))
+
+    for (exp, cell) in all_cells_with_exp:
+        key = (exp, cell)  # tuple key per spec 11
+        if key not in cpu_runner._CELL_DATA_CACHE:
+            adapter = get_adapter(exp)
+            cpu_runner._CELL_DATA_CACHE[key] = adapter.load_cell_data(
+                cell, device="cpu")
+    print(f"[cpu_array_element] preloaded {len(all_cells_with_exp)} (exp, cell) "
+          f"entries in {time.perf_counter() - t_preload_start:.1f}s", flush=True)
+
+    # 2. build worker arg tuples (parsed_task, cells, eval_sample_seed)
+    worker_args = [
+        (p, c, s) for p, (c, s) in zip(parsed_tasks, cells_per_task)
+    ]
+
+    # 3. fork pool, dispatch
+    t_pool_start = time.perf_counter()
+    n_ok = 0
+    n_err = 0
+    ctx = mp.get_context("fork")
+    with ctx.Pool(processes=n_jobs, maxtasksperchild=16) as pool:
+        try:
+            for result in pool.imap_unordered(_pool_worker, worker_args):
+                if isinstance(result, Exception):
+                    n_err += 1
+                else:
+                    n_ok += 1
+                if max_elapsed is not None and \
+                   time.perf_counter() - t_pool_start > max_elapsed:
+                    print(f"[cpu_array_element] elapsed budget exceeded; "
+                          f"terminating pool", flush=True)
+                    pool.terminate()
+                    break
+        except KeyboardInterrupt:
+            pool.terminate()
+            raise
+
+    elapsed = time.perf_counter() - t_pool_start
+    print(f"[cpu_array_element] pool done: ok={n_ok} err={n_err} "
+          f"elapsed={elapsed:.1f}s", flush=True)
+    return 0 if n_err == 0 else 1
+
+
+def _pool_worker(args: tuple) -> object:
+    """fork-pool worker: dispatches one trial via cpu_runner._eval_trial.
+
+    accepts (parsed, cells, eval_sample_seed) tuple.
+    returns trial result dict or Exception on error.
+    cells already preloaded in parent; workers inherit via COW.
+    """
+    from experiments.utils.hpo import cpu_runner
+    parsed, cells, eval_sample_seed = args
+    try:
+        method = LEGACY_ALIASES.get(parsed["method"], parsed["method"])
+        spec = METHOD_SPECS[method]
+        adapter = get_adapter(parsed["experiment"])
+        cfg = json.loads(Path(parsed["config_file"]).read_text())
+
+        # cells already preloaded in parent; workers inherit via COW
+        # note: _eval_trial reads from _CELL_DATA_CACHE directly using the
+        # cell tuple as key. with v2 cache keying (spec 11), key is (exp, cell).
+
+        return cpu_runner._eval_trial(
+            cfg,
+            cells=cells,
+            method=method,
+            metric_key=adapter.metric_key(),
+            latent_dim=adapter.latent_dim(),
+            num_waypoints=spec.get("num_waypoints"),
+            requires_pstar=spec.get("requires_pstar", False),
+            cell_seed_ns=adapter.cell_seed_namespace(),
+            output_dir=parsed["output_dir"],
+            stage=parsed["stage"],
+            inner_threads=int(os.environ.get("CPU_INNER_THREADS", "1")),
+            eval_sample_seed=eval_sample_seed,
+            experiment=parsed["experiment"],   # NEW kwarg for cache lookup, see spec 11
+        )
+    except Exception as e:
+        return e
+
+
+def main() -> int:
+    args = _parse_args()
+    method_filter = _resolve_method_filter(args.method_filter)
+    array_idx = os.environ.get("SLURM_ARRAY_TASK_ID", "?")
+
+    print(f"[cpu_array_element] task_id={array_idx} n_jobs={args.n_jobs} "
+          f"claiming up to {args.n_per_element} trials", flush=True)
+
+    claimed = pop_lines_back_atomic(args.queue_file, args.lock_file,
+                                    args.n_per_element, method_filter)
+    if not claimed:
+        return 0
+
+    # parse all claims first; filter malformed
+    parsed_tasks = []
+    for raw_line in claimed:
+        parsed = parse_queue_line(raw_line)
+        if parsed is None:
+            print(f"[cpu_array_element] skipping malformed: {raw_line[:80]}",
+                  flush=True)
+            continue
+        parsed_tasks.append(parsed)
+    if not parsed_tasks:
+        return 1
+
+    # branch: sequential (n_jobs=1, baseline) or pool (n_jobs>1)
+    if args.n_jobs == 1:
+        return _run_sequential(parsed_tasks, args.queue_file, args.lock_file,
+                               claimed, args.max_elapsed_seconds)
+    else:
+        return _run_pool(parsed_tasks, args.n_jobs, args.queue_file,
+                         args.lock_file, claimed, args.max_elapsed_seconds)
 
 
 def _requeue(queue_file: Path, lock_file: Path, lines: list[str]) -> None:
