@@ -128,6 +128,30 @@ class ELBOAdapter(ExperimentAdapter):
         """return "per_cell_eldr_abs_err"."""
         return "per_cell_eldr_abs_err"
 
+    def eval_cell(self, cell, method, builder, hyperparams, requires_pstar, device, *, data=None):
+        """elbo metric: |mean(predict_ldr(pstar)) - true_eldr_scalar|.
+
+        true_ldrs is a SCALAR (the true expected ldr for this cell), so we
+        compare against the mean of predicted ldrs over pstar samples.
+        """
+        if data is None:
+            data = self.load_cell_data(cell, device=device)
+        nwp = hyperparams.get("num_waypoints", self.num_waypoints())
+        flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
+        est = builder(
+            input_dim=self.latent_dim(),
+            device=device,
+            num_waypoints=nwp,
+            **flat,
+        )
+        if requires_pstar:
+            est.fit(data["p0"], data["p1"], data["pstar"])
+        else:
+            est.fit(data["p0"], data["p1"])
+        with torch.no_grad():
+            est_eldr = float(torch.mean(est.predict_ldr(data["pstar"])).item())
+        return abs(est_eldr - float(data["true_ldrs"].cpu().item()))
+
     def stratify_key(self, cell: tuple[int, int]):
         """return alpha_idx (cell[0]) for per-alpha stratification."""
         return cell[0]

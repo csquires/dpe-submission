@@ -605,7 +605,7 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
                 mem=args.cpu_mem,
                 method_filter=",".join(sorted(eligible_methods)),
                 dependency=f"after:{watchdog_jid}",
-                job_name=f"cpu_drain_{exp_tag}",
+                job_name=f"arr_{exp_tag}",
             )
 
             cpu_record = {

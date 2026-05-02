@@ -109,6 +109,34 @@ class ModelSelectionAdapter(ExperimentAdapter):
     def metric_key(self) -> str:
         return "per_row_ldr_mean_ae"
 
+    def eval_cell(self, cell, method, builder, hyperparams, requires_pstar, device, *, data=None):
+        """model_selection scoring: fits with pstar_train, scores on pstar.
+
+        differs from default in that the fit-time pstar (when requires_pstar)
+        is the per-cell pstar_train slice, not the test pstar. metric is
+        mae(predict_ldr(pstar_test), true_ldrs).
+        """
+        import torch
+
+        if data is None:
+            data = self.load_cell_data(cell, device=device)
+        nwp = hyperparams.get("num_waypoints", self.num_waypoints())
+        flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
+        est = builder(
+            input_dim=self.latent_dim(),
+            device=device,
+            num_waypoints=nwp,
+            **flat,
+        )
+        if requires_pstar:
+            ps_train = data.get("pstar_train", data["pstar"])
+            est.fit(data["p0"], data["p1"], ps_train)
+        else:
+            est.fit(data["p0"], data["p1"])
+        with torch.no_grad():
+            predicted = est.predict_ldr(data["pstar"])
+            return float(torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean())
+
     def default_training_M(self) -> int:
         """min(7, pool_size); pool is typically tiny (7 rows)."""
         return min(7, len(self._pool))

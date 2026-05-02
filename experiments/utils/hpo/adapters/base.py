@@ -119,6 +119,56 @@ class ExperimentAdapter(abc.ABC):
         """
         return 32
 
+    def eval_cell(
+        self,
+        cell: tuple[int, ...],
+        method: str,
+        builder,
+        hyperparams: dict,
+        requires_pstar: bool,
+        device: str,
+        *,
+        data: Optional[dict] = None,
+    ) -> float:
+        """build estimator, fit on this cell, return scalar metric.
+
+        default impl assumes the {p0, p1, pstar, true_ldrs} schema used by
+        mnist/dbpedia/pendulum/smodice/dre_sample_complexity adapters and
+        scores via mae(predict_ldr(pstar), true_ldrs). adapters with a
+        different data schema or metric (eig, elbo, model_selection) MUST
+        override this method.
+
+        if data is provided (cpu_runner cache path), reuse it; else load
+        from h5 via load_cell_data.
+
+        plan:
+          1. data = data or load_cell_data(cell, device).
+          2. build estimator: pop num_waypoints from hp (HP-driven if present,
+             else adapter default), pass remaining hp via **flat.
+          3. fit on (p0, p1[, pstar]) per requires_pstar.
+          4. predict_ldr(pstar) -> mae vs true_ldrs.
+
+        in-flight mnist runs: unchanged (this default reproduces the
+        pre-existing inline logic from trial_runner / cpu_runner).
+        """
+        if data is None:
+            data = self.load_cell_data(cell, device=device)
+        nwp = hyperparams.get("num_waypoints", self.num_waypoints())
+        flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
+        est = builder(
+            input_dim=self.latent_dim(),
+            device=device,
+            num_waypoints=nwp,
+            **flat,
+        )
+        if requires_pstar:
+            est.fit(data["p0"], data["p1"], data["pstar"])
+        else:
+            est.fit(data["p0"], data["p1"])
+        with torch.no_grad():
+            predicted = est.predict_ldr(data["pstar"])
+            return float(torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean())
+
     def stratify_key(self, cell: tuple[int, ...]):
         """optional stratification key for the cell. if any adapter cell returns
         non-None, cell_schema.draw_training_sample switches to stratified mode:

@@ -132,26 +132,18 @@ def _eval_trial(
             # cache lookup with experiment namespacing; backward compat fallback to bare cell key
             key = (experiment, cell) if experiment else cell
             data = _CELL_DATA_CACHE[key]
-            est = builder(
-                input_dim=latent_dim,
-                device="cpu",
-                num_waypoints=hyperparams.get('num_waypoints', num_waypoints),
-                **{k: v for k, v in hyperparams.items() if k != 'num_waypoints'},
+            # delegate to adapter.eval_cell so per-experiment data schema +
+            # metric semantics live in the adapter, not inlined here. pass
+            # pre-loaded `data` so the cell cache is preserved.
+            from experiments.utils.hpo.adapters import get_adapter
+            adapter = get_adapter(experiment)
+            mae = adapter.eval_cell(
+                cell, method, builder, hyperparams, requires_pstar, "cpu", data=data
             )
-            if requires_pstar:
-                est.fit(data["p0"], data["p1"], data["pstar"])
-            else:
-                est.fit(data["p0"], data["p1"])
-            with torch.no_grad():
-                predicted = est.predict_ldr(data["pstar"])
-                mae = float(torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean())
         except Exception as e:
             print(f"  [trial {trial_id}] cell {cs}: {type(e).__name__}: {e}", flush=True)
             continue
         finally:
-            # release per-cell model + autograd state before next iteration
-            est = None
-            predicted = None
             gc.collect()
 
         if not math.isfinite(mae):

@@ -103,27 +103,14 @@ def main():
     builder = entry["builder"]
     requires_pstar = entry["requires_pstar"]
 
-    # step 7: eval_cell closure captures adapter, builder, requires_pstar, hyperparams
+    # step 7: delegate per-cell scoring to adapter.eval_cell.
+    # default impl (base.py) preserves the prior mnist {p0,p1,pstar,true_ldrs}
+    # mae behavior; adapters with non-mnist schema (eig, elbo, model_selection)
+    # override eval_cell with experiment-specific logic.
     def eval_cell(cell):
-        """load cell data, build estimator, fit, predict, return mae scalar.
-
-        raises FileNotFoundError if data missing (caught and logged by run_trial).
-        returns float; non-finite signals skip.
-        """
-        data = adapter.load_cell_data(cell, device=adapter.device())
-        est = builder(
-            input_dim=adapter.latent_dim(),
-            device=adapter.device(),
-            num_waypoints=adapter.num_waypoints(),
-            **hyperparams,
+        return adapter.eval_cell(
+            cell, method, builder, hyperparams, requires_pstar, adapter.device()
         )
-        if requires_pstar:
-            est.fit(data["p0"], data["p1"], data["pstar"])
-        else:
-            est.fit(data["p0"], data["p1"])
-        predicted = est.predict_ldr(data["pstar"])  # (n,)
-        mae = torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean()  # scalar
-        return float(mae)
 
     # step 8: compute output path with stage prefix
     output_path = Path(args.output_dir) / args.stage / f"trial_{trial_id}.json"

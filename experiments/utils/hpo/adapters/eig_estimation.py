@@ -96,3 +96,44 @@ class EIGAdapter(ExperimentAdapter):
     def metric_key(self) -> str:
         """return "per_design_eig_abs_err"."""
         return "per_design_eig_abs_err"
+
+    def eval_cell(self, cell, method, builder, hyperparams, requires_pstar, device, *, data=None):
+        """eig-specific scoring: |EIGPlugin.estimate_eig(theta,y) - true_eig(Sigma_pi,xi)|.
+
+        cell schema is {theta, y, xi, Sigma_pi}, not {p0, p1, pstar, true_ldrs}.
+        triangular methods are wrapped with a small adapter so EIGPlugin can
+        call est.fit(p0, p1) without needing a pstar arg (re-uses p0).
+
+        TriangularEIGAdapter and compute_true_eig are inlined here to avoid
+        importing experiments.eig_estimation.hpo_trial, which transitively
+        loads hpo_search_spaces.py (still has stale legacy entries).
+        """
+        from src.eig_estimation.plugin import EIGPlugin
+
+        class _TriEIGAdapter:
+            def __init__(self, inner): self.inner = inner
+            def fit(self, p0, p1): self.inner.fit(p0, p1, p0)
+            def predict_ldr(self, xs): return self.inner.predict_ldr(xs)
+
+        def _true_eig(Sigma_pi, xi, sigma2: float = 1.0):
+            quad = (xi.T @ Sigma_pi @ xi).squeeze()
+            return 0.5 * torch.log1p(quad / sigma2)
+
+        if data is None:
+            data = self.load_cell_data(cell, device=device)
+        nwp_default = self.num_waypoints() or 0
+        nwp = hyperparams.get("num_waypoints", nwp_default)
+        flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
+        est = builder(
+            input_dim=self.latent_dim(),
+            device=device,
+            num_waypoints=nwp,
+            **flat,
+        )
+        if method.startswith("Triangular"):
+            est = _TriEIGAdapter(est)
+        plugin = EIGPlugin(est)
+        est_eig = plugin.estimate_eig(data["theta"], data["y"])
+        est_eig_f = float(est_eig.item() if hasattr(est_eig, "item") else est_eig)
+        true_eig = float(_true_eig(data["Sigma_pi"], data["xi"]).item())
+        return abs(est_eig_f - true_eig)

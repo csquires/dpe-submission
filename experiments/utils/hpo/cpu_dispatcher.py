@@ -97,7 +97,7 @@ def submit_cpu_array(
     inner_threads: int = 2,
     method_filter: str = "",
     dependency: str = "",
-    job_name: str = "cpu_drain",
+    job_name: str = "arr",
     n_jobs: int = 1,
 ) -> str:
     """sbatch a slurm array job to partition=array; returns array_jid string.
@@ -189,8 +189,10 @@ def _parse_args() -> argparse.Namespace:
                         "(default 1 = sequential, single-process baseline)")
     p.add_argument("--method-filter", type=str, default=None,
                    help="csv of allowed methods; default: all cpu-eligible")
-    p.add_argument("--jobname", type=str, default="cpu_drain",
-                   help="slurm job name (default cpu_drain)")
+    p.add_argument("--jobname", type=str, default=None,
+                   help="slurm job name; default auto-derives "
+                        "'arr_<exp>[_<methods>]' from --queue-file "
+                        "(parent.parent.name) and --method-filter")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
@@ -230,6 +232,23 @@ def main() -> int:
         except ValueError as e:
             print(f"[cpu_dispatcher] --walltime auto failed: {e}", file=sys.stderr)
             return 1
+
+    # resolve --jobname auto: derive arr_<exp>[_<methods>] for squeue legibility.
+    # try filename first (top-level "<exp>_watchdog_queue.txt" pattern), then
+    # parent-dir layout (.../<exp>/watchdog/queue.jsonl).
+    if args.jobname is None:
+        fname = queue_file.stem
+        if "_watchdog" in fname:
+            exp = fname.split("_watchdog")[0]
+        elif queue_file.parent.name in ("watchdog", "queues"):
+            exp = queue_file.parent.parent.name
+        else:
+            exp = queue_file.parent.name or "exp"
+        parts = ["arr", exp]
+        if args.method_filter:
+            mfs = args.method_filter.replace(",", "_")
+            parts.append(mfs[:24])
+        args.jobname = "_".join(parts)
 
     cmd = _build_sbatch(
         queue_file=queue_file, lock_file=lock_file,
