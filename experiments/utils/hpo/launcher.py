@@ -487,15 +487,21 @@ def parse_args() -> argparse.Namespace:
                    help="skip cpu array job submission (gpu-only campaign)")
     p.add_argument("--cpu-array-max", type=int, default=200,
                    help="cap on array size; protects against blast radius")
-    p.add_argument("--cpu-concurrency", type=int, default=100,
-                   help="max concurrent array elements (array_qos cap)")
+    p.add_argument("--cpu-concurrency", type=int, default=64,
+                   help="max concurrent array elements; default 64 saturates "
+                        "256-cpu array_qos cap with cpus_per_task=4")
     p.add_argument("--cpu-n-per-element", type=int, default=8,
                    help="trials per array element (jobs per sbatch array index)")
     p.add_argument("--cpu-walltime", type=str, default="4:00:00",
                    help="per-element walltime; pass 'auto' to compute via spec 04")
-    p.add_argument("--cpu-cpus-per-task", type=int, default=2,
-                   help="cpus per array element task")
-    p.add_argument("--cpu-mem", type=str, default="8G",
+    p.add_argument("--cpu-cpus-per-task", type=int, default=4,
+                   help="cpus per array element task (matches n_jobs * inner_threads)")
+    p.add_argument("--cpu-n-jobs", type=int, default=4,
+                   help="parallel workers per element via mp.Pool (default 4); "
+                        "set to 1 for sequential single-process baseline")
+    p.add_argument("--cpu-inner-threads", type=int, default=1,
+                   help="BLAS threads per worker (default 1 to match n_jobs=4 on 4 cpus)")
+    p.add_argument("--cpu-mem", type=str, default="16G",
                    help="memory per array element task")
     return p.parse_args()
 
@@ -615,6 +621,15 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
             # is defined in this module or imported from cpu_dispatcher
             from experiments.utils.hpo.cpu_dispatcher import submit_cpu_array
 
+            # resolve --cpu-walltime auto using the same path as cpu_dispatcher CLI.
+            cpu_walltime = args.cpu_walltime
+            if cpu_walltime == "auto":
+                from experiments.utils.walltime_caps import compute_element_walltime
+                cpu_walltime = compute_element_walltime(
+                    sorted(eligible_methods), args.cpu_n_per_element
+                )
+                logger.info("resolved --cpu-walltime auto to %s", cpu_walltime)
+
             # job-name + log subdir tagged by experiment(s) for squeue legibility.
             # if multiple experiments, use first 2 abbreviated; full set in manifest.
             exp_set = sorted({p[1] for p in valid_pairs})
@@ -626,9 +641,11 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
                 log_dir=logdir / "cpu_array_logs" / exp_tag,
                 concurrency=args.cpu_concurrency,
                 n_per_element=args.cpu_n_per_element,
-                walltime=args.cpu_walltime,
+                walltime=cpu_walltime,
                 cpus_per_task=args.cpu_cpus_per_task,
                 mem=args.cpu_mem,
+                inner_threads=args.cpu_inner_threads,
+                n_jobs=args.cpu_n_jobs,
                 method_filter=",".join(sorted(eligible_methods)),
                 dependency=f"after:{watchdog_jid}",
                 job_name=f"arr_{exp_tag}",
@@ -639,8 +656,11 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
                 "cpu_array_jid": array_jid,
                 "cpu_array_size": array_size,
                 "cpu_array_concurrency": args.cpu_concurrency,
-                "cpu_array_walltime": args.cpu_walltime,
+                "cpu_array_walltime": cpu_walltime,
                 "cpu_array_n_per_element": args.cpu_n_per_element,
+                "cpu_array_n_jobs": args.cpu_n_jobs,
+                "cpu_array_inner_threads": args.cpu_inner_threads,
+                "cpu_array_cpus_per_task": args.cpu_cpus_per_task,
                 "cpu_array_method_filter": sorted(eligible_methods),
                 "cpu_array_log_dir": str(logdir / "cpu_array_logs" / exp_tag),
                 "cpu_array_experiments": exp_set,
