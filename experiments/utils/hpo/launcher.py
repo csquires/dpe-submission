@@ -254,6 +254,37 @@ def record_skipped(skipped: dict[str, list[str]], run_id: str) -> None:
     tmp.replace(out)
 
 
+def stage_recalibrated_specs(experiments: list[str], data_root: Path) -> list[str]:
+    """copy curated recalibrated_specs/<exp>.yaml from repo to NFS so workflow.broad
+    sees them via _load_recalibrated_spec(output_dir.parent / 'recalibrated_specs' / ...).
+
+    workflow.py reads `<data_root>/<exp>/recalibrated_specs/<exp>.yaml`. without
+    staging, broad falls back to METHOD_SPECS defaults (big-model caps) and the
+    per-experiment small-model intent is silently ignored.
+
+    args:
+      experiments: list of experiment names (e.g., ['eig_estimation', ...]).
+      data_root: NFS root, typically Path($DPE_DATA_ROOT).
+
+    returns: list of experiment names that were staged. silently skips any
+      experiment whose source YAML is missing in the repo.
+    """
+    src_dir = Path(_WORKDIR) / "experiments/utils/hpo/recalibrated_specs"
+    staged: list[str] = []
+    for exp in experiments:
+        src = src_dir / f"{exp}.yaml"
+        if not src.exists():
+            logger.info("no curated recalibrated_specs for %s — skipping stage", exp)
+            continue
+        dst_dir = data_root / exp / "recalibrated_specs"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst = dst_dir / f"{exp}.yaml"
+        dst.write_text(src.read_text())
+        logger.info("staged %s -> %s", src, dst)
+        staged.append(exp)
+    return staged
+
+
 # --- step 7 ---
 
 def submit_watchdog(
@@ -588,6 +619,11 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
     workflow_pairs_file.write_text(json.dumps(workflow_pairs_data, indent=2))
     logger.info("wrote workflow pairs to %s (n=%d)",
                 workflow_pairs_file, len(workflow_pairs_data))
+
+    # stage curated recalibrated_specs so workflow.broad uses small-model caps
+    # for gaussian experiments instead of METHOD_SPECS defaults
+    exps_in_run = sorted({e for _, e in valid_pairs})
+    stage_recalibrated_specs(exps_in_run, data_root)
 
     wd_extra: list[str] = [
         "--workflow-pairs", str(workflow_pairs_file),
