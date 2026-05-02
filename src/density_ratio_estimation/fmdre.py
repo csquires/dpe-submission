@@ -38,6 +38,7 @@ class FMDRE(DensityRatioEstimator):
         div_method: str = "exact",
         verbose: bool = False,
         log_every: int = 100,
+        n_hidden_layers: int = 3,
     ) -> None:
         """
         initialize fmdre estimator with hyperparameters.
@@ -61,6 +62,7 @@ class FMDRE(DensityRatioEstimator):
             div_method: divergence estimation method (default 'exact')
             verbose: print training progress (default False)
             log_every: epoch interval for verbose logging (default 100)
+            n_hidden_layers: number of hidden layers in velocity mlp (default 3)
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -73,6 +75,7 @@ class FMDRE(DensityRatioEstimator):
         self.div_method = div_method
         self.verbose = verbose
         self.log_every = log_every
+        self.n_hidden_layers = n_hidden_layers
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -83,7 +86,7 @@ class FMDRE(DensityRatioEstimator):
 
     def init_model(self) -> None:
         """instantiate velocity mlp on the device."""
-        self.model = CondVelScoreMLP(self.input_dim, self.hidden_dim).to(self.device)
+        self.model = CondVelScoreMLP(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         """train the conditional velocity field on samples from p0 and p1.

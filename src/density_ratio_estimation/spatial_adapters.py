@@ -39,6 +39,7 @@ def make_spatial_velo_denoiser(input_dim: int, device: str = "cuda", **kwargs) -
             eps: 2.2e-3 - Boundary epsilon for time sampling
             n_epochs: 1000 - Training epochs per network (b and eta)
             hidden_dim: 256 - Hidden layer dimension for MLP networks
+            n_hidden_layers: 3 - Number of hidden layers in MLP networks
             batch_size: 512 - Training batch size
             lr: 1.3e-3 - Learning rate for Adam optimizer
             n_t: 50 - Number of time points for batch sampling
@@ -53,6 +54,7 @@ def make_spatial_velo_denoiser(input_dim: int, device: str = "cuda", **kwargs) -
         'eps': 2.2e-3,
         'n_epochs': 1000,
         'hidden_dim': 256,
+        'n_hidden_layers': 3,
         'batch_size': 512,
         'lr': 1.3e-3,
         'n_t': 50,

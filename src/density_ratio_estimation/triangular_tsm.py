@@ -25,6 +25,7 @@ class TriangularTSM(DensityRatioEstimator):
         atol: float = 1e-6,
         vertex: float = 0.5,
         peak_max: float = 1.0,
+        n_hidden_layers: int = 3,
     ):
         super().__init__(input_dim)
         if not 0.0 < vertex < 1.0:
@@ -41,6 +42,7 @@ class TriangularTSM(DensityRatioEstimator):
         self.atol = atol
         self.vertex = vertex
         self.peak_max = peak_max
+        self.n_hidden_layers = n_hidden_layers
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -50,7 +52,7 @@ class TriangularTSM(DensityRatioEstimator):
         self.optimizer = None
 
     def init_model(self) -> None:
-        self.model = TimeScoreNetwork2D(self.input_dim, self.hidden_dim).to(self.device)
+        self.model = TimeScoreNetwork2D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
     def path_t_tprime(self, tau: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:

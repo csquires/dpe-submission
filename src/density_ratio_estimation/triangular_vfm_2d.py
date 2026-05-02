@@ -35,6 +35,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         path: Optional[VfmPath2D] = None,
         curve: Optional[Curve2D] = None,
         hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
         lr: float = 1.3e-3,
@@ -53,6 +54,7 @@ class TriangularVFM2D(DensityRatioEstimator):
             path: VfmPath2D instance. If None, default Stacked2DVfm(eps=eps).
             curve: Curve2D instance. If None, default Curve2D(path_height=1.0).
             hidden_dim: MLP2D hidden width.
+            n_hidden_layers: Number of hidden layers for MLP2D networks.
             n_epochs: Training epochs per phase.
             batch_size: Minibatch size.
             lr: Adam learning rate.
@@ -75,6 +77,7 @@ class TriangularVFM2D(DensityRatioEstimator):
 
         # store hyperparameters
         self.hidden_dim = hidden_dim
+        self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.lr = lr
@@ -111,9 +114,9 @@ class TriangularVFM2D(DensityRatioEstimator):
 
     def init_model(self) -> None:
         """Instantiate three independent MLP2D networks on self.device."""
-        self.net_b1 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
-        self.net_b2 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
-        self.net_eta = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
+        self.net_b1 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.net_b2 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.net_eta = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
 
     def fit(
         self,

@@ -32,6 +32,7 @@ class CTSM(DensityRatioEstimator):
         device: Optional[str] = None,
         rtol: float = 1e-6,
         atol: float = 1e-6,
+        n_hidden_layers: int = 3,
     ) -> None:
         """
         Initialize CTSM estimator.
@@ -47,6 +48,7 @@ class CTSM(DensityRatioEstimator):
         self.eps = eps
         self.rtol = rtol
         self.atol = atol
+        self.n_hidden_layers = n_hidden_layers
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -60,7 +62,7 @@ class CTSM(DensityRatioEstimator):
 
         Instantiate TimeScoreNetwork1D on device, create Adam optimizer.
         """
-        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim).to(self.device)
+        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8
         )

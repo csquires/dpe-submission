@@ -40,6 +40,7 @@ class TriangularVFM(DensityRatioEstimator):
         input_dim: int,
         path: Optional[VfmPath1D] = None,
         hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
         lr: float = 1.3e-3,
@@ -58,6 +59,7 @@ class TriangularVFM(DensityRatioEstimator):
             input_dim: Input dimension D.
             path: VfmPath1D instance. If None, instantiate BarycentricVfm1D(k=20.0, vertex=0.5, eps=eps).
             hidden_dim: Hidden layer width for MLP networks.
+            n_hidden_layers: Number of hidden layers for MLP networks.
             n_epochs: Number of training epochs.
             batch_size: Batch size for stochastic gradient descent.
             lr: Adam learning rate.
@@ -81,6 +83,7 @@ class TriangularVFM(DensityRatioEstimator):
 
         # store all constructor args
         self.hidden_dim = hidden_dim
+        self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.lr = lr
@@ -113,8 +116,8 @@ class TriangularVFM(DensityRatioEstimator):
 
         Creates MLPs with forward signature forward(t: [B, 1], x: [B, D]) -> [B, D].
         """
-        self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
-        self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim).to(self.device)
+        self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
 
     def fit(
         self,

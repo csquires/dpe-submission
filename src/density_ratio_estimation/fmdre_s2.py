@@ -46,6 +46,7 @@ class FMDRE_S2(DensityRatioEstimator):
         log_every: int = 100,
         p_uncond: float = 0.5,
         uncond_cond: float = -1.0,
+        n_hidden_layers: int = 3,
     ) -> None:
         """initialize fmdre_s2 estimator with hyperparameters including cfg dropout.
 
@@ -70,6 +71,7 @@ class FMDRE_S2(DensityRatioEstimator):
             log_every: epoch interval for verbose logging (default 100)
             p_uncond: CFG dropout probability during training (default 0.5)
             uncond_cond: sentinel value for unconditional condition (default -1.0)
+            n_hidden_layers: number of hidden layers in velocity mlp (default 3)
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -84,6 +86,7 @@ class FMDRE_S2(DensityRatioEstimator):
         self.log_every = log_every
         self.p_uncond = p_uncond
         self.uncond_cond = uncond_cond
+        self.n_hidden_layers = n_hidden_layers
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -94,7 +97,7 @@ class FMDRE_S2(DensityRatioEstimator):
 
     def init_model(self) -> None:
         """instantiate velocity mlp on the device."""
-        self.model = CondVelScoreMLP(self.input_dim, self.hidden_dim).to(self.device)
+        self.model = CondVelScoreMLP(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
         """train the conditional velocity field on samples from p0 and p1 with CFG dropout.

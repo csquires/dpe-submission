@@ -32,6 +32,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
       path: optional CtsmPath2D; defaults to Stacked2DCtsm(sigma=1.0, gamma_schedule="sqrt", eps=eps).
       curve: optional Curve2D; defaults to Curve2D(path_height=1.0).
       hidden_dim: int, score network hidden width.
+      n_hidden_layers: int, number of hidden layers in score network backbone (default 3).
       n_epochs: int, training epochs (one minibatch step per epoch).
       batch_size: int, minibatch size.
       lr: float, Adam learning rate.
@@ -47,6 +48,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
         path: Optional[CtsmPath2D] = None,
         curve: Optional[Curve2D] = None,
         hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
         lr: float = 1e-3,
@@ -59,6 +61,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
         super().__init__(input_dim)
 
         self.hidden_dim = hidden_dim
+        self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.lr = lr
@@ -92,7 +95,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
 
     def init_model(self) -> None:
         """Construct ScoreNetwork2D + Adam optimizer on self.device."""
-        self.model = ScoreNetwork2D(self.input_dim, self.hidden_dim).to(self.device)
+        self.model = ScoreNetwork2D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=self.lr,

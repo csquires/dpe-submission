@@ -6,22 +6,24 @@ from src.models.binary_classification.binary_classifier import BinaryClassifier
 
 class DefaultBinaryClassifier(BinaryClassifier):
     def __init__(
-        self, 
-        input_dim: int, 
+        self,
+        input_dim: int,
         # model hyperparameters
         # latent_dim: int = 10,
         latent_dim: int = 10,
-        num_layers: int = 3,
+        n_hidden_layers: int = 1,
         # training hyperparameters
         learning_rate: float = 0.005,
         # num_epochs: int = 100,
         num_epochs: int = 300,
     ):
         super().__init__()
+        if n_hidden_layers < 1:
+            raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
         layers = []
         layers.append(nn.Linear(input_dim, latent_dim))
         layers.append(nn.ReLU())
-        for _ in range(num_layers - 1):
+        for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(latent_dim, latent_dim))
             layers.append(nn.ReLU())
         layers.append(nn.Linear(latent_dim, 1))

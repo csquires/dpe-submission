@@ -41,6 +41,7 @@ class TriangularCTSM(DensityRatioEstimator):
         device: Optional[str] = None,
         rtol: float = 1e-6,
         atol: float = 1e-6,
+        n_hidden_layers: int = 3,
     ) -> None:
         """
         Initialize TriangularCTSM.
@@ -56,6 +57,7 @@ class TriangularCTSM(DensityRatioEstimator):
             device: Device string ("cuda", "cpu", etc.). If None, auto-detect: cuda if available, else cpu.
             rtol: Relative tolerance for ODE solver.
             atol: Absolute tolerance for ODE solver.
+            n_hidden_layers: Number of hidden layers for TimeScoreNetwork1D.
         """
         super().__init__(input_dim)
 
@@ -66,6 +68,7 @@ class TriangularCTSM(DensityRatioEstimator):
         self.eps = eps
         self.rtol = rtol
         self.atol = atol
+        self.n_hidden_layers = n_hidden_layers
 
         # device resolution
         if device is None:
@@ -89,7 +92,7 @@ class TriangularCTSM(DensityRatioEstimator):
         Constructs TimeScoreNetwork1D(input_dim, hidden_dim) and moves to device.
         Creates Adam optimizer with standard betas and eps.
         """
-        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim).to(self.device)
+        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=self.lr,

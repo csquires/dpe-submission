@@ -25,7 +25,7 @@ class MultiClassVelScoreMLP(nn.Module):
       this MLP is K-general; convention is external.
     """
 
-    def __init__(self, input_dim: int, num_classes: int, hidden_dim: int = 256) -> None:
+    def __init__(self, input_dim: int, num_classes: int, hidden_dim: int = 256, n_hidden_layers: int = 3) -> None:
         """
         initialize MultiClassVelScoreMLP.
 
@@ -33,29 +33,32 @@ class MultiClassVelScoreMLP(nn.Module):
             input_dim: dimensionality D of data samples.
             num_classes: number of classes K (labels in 0..K-1).
             hidden_dim: width of hidden layers (default 256).
+            n_hidden_layers: number of hidden layers in backbone (default 3, must be >= 1).
 
         behavior:
-          1. store input_dim, num_classes, hidden_dim as instance attributes.
-          2. build shared backbone as nn.Sequential with 3 hidden layers.
+          1. validate n_hidden_layers >= 1.
+          2. store input_dim, num_classes, hidden_dim, n_hidden_layers as instance attributes.
+          3. build shared backbone as nn.Sequential with n_hidden_layers hidden layers.
              first layer: Linear(D+1+K, hidden_dim) + ReLU.
-             second layer: Linear(hidden_dim, hidden_dim) + ReLU.
-             third layer: Linear(hidden_dim, hidden_dim) + ReLU.
-          3. build velocity head: Linear(hidden_dim, D).
-          4. build score head: Linear(hidden_dim, D).
+             remaining layers: (n_hidden_layers-1) * [Linear(hidden_dim, hidden_dim) + ReLU].
+          4. build velocity head: Linear(hidden_dim, D).
+          5. build score head: Linear(hidden_dim, D).
         """
         super().__init__()
+        if n_hidden_layers < 1:
+            raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
+
         self.input_dim = input_dim
         self.num_classes = num_classes
         self.hidden_dim = hidden_dim
+        self.n_hidden_layers = n_hidden_layers
 
-        self.backbone = nn.Sequential(
-            nn.Linear(input_dim + 1 + num_classes, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        )
+        layers = [nn.Linear(input_dim + 1 + num_classes, hidden_dim), nn.ReLU()]
+        for _ in range(n_hidden_layers - 1):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+
+        self.backbone = nn.Sequential(*layers)
 
         self.v_head = nn.Linear(hidden_dim, input_dim)
         self.s_head = nn.Linear(hidden_dim, input_dim)

@@ -15,23 +15,32 @@ class ScoreNetwork2D(nn.Module):
     inputs; the output dimensionality differs.
     """
 
-    def __init__(self, input_dim: int, hidden_dim: int = 256):
+    def __init__(self, input_dim: int, hidden_dim: int = 256, n_hidden_layers: int = 3):
         """Initialize score network.
 
         Args:
             input_dim: spatial dimension D.
             hidden_dim: hidden layer width (default 256).
+            n_hidden_layers: number of hidden layers in backbone (default 3).
+
+        Raises:
+            ValueError: if n_hidden_layers < 1.
         """
+        if n_hidden_layers < 1:
+            raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
+
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim + 2, hidden_dim),
-            nn.ELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ELU(),
-            nn.Linear(hidden_dim, 2),
-        )
+
+        # build backbone: input projection + n_hidden_layers pairs of (Linear, ELU) + output projection
+        layers = [nn.Linear(input_dim + 2, hidden_dim), nn.ELU()]
+
+        for _ in range(n_hidden_layers - 1):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ELU())
+
+        layers.append(nn.Linear(hidden_dim, 2))
+
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor, t1: torch.Tensor, t2: torch.Tensor) -> torch.Tensor:
         """Compute 2-vector score at (x, t_1, t_2).

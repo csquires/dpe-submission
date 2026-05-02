@@ -6,21 +6,23 @@ from src.models.multiclass_classification.multiclass_classifier import Multiclas
 
 class DefaultMulticlassClassifier(MulticlassClassifier):
     def __init__(
-        self, 
+        self,
         input_dim: int,
         num_classes: int,
         # model hyperparameters
         latent_dim: int = 10,
-        num_layers: int = 3,
+        n_hidden_layers: int = 2,
         # training hyperparameters
         learning_rate: float = 0.05,
         num_epochs: int = 1000,
     ):
         super().__init__()
+        if n_hidden_layers < 1:
+            raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
         layers = []
         layers.append(nn.Linear(input_dim, latent_dim))
         layers.append(nn.ReLU())
-        for _ in range(num_layers - 1):
+        for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(latent_dim, latent_dim))
             layers.append(nn.ReLU())
         layers.append(nn.Linear(latent_dim, num_classes))

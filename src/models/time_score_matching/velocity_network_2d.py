@@ -30,26 +30,28 @@ class MLP2D(nn.Module):
         input_dim: int,
         hidden_dim: int = 256,
         output_dim: int | None = None,
+        n_hidden_layers: int = 3,
     ) -> None:
         """
         Args:
             input_dim: spatial dimension D.
             hidden_dim: hidden layer width (default 256).
             output_dim: output dimension (defaults to input_dim).
+            n_hidden_layers: number of hidden linear+ReLU blocks (default 3).
         """
         super().__init__()
         if output_dim is None:
             output_dim = input_dim
+        if n_hidden_layers < 1:
+            raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
 
-        self.net = nn.Sequential(
-            nn.Linear(input_dim + 2, hidden_dim),  # +2 for t1, t2
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim),
-        )
+        layers = [nn.Linear(input_dim + 2, hidden_dim), nn.ReLU()]  # +2 for t1, t2
+        for _ in range(n_hidden_layers - 1):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+        layers.append(nn.Linear(hidden_dim, output_dim))
+
+        self.net = nn.Sequential(*layers)
 
     def forward(self, t1: Tensor, t2: Tensor, x: Tensor) -> Tensor:
         """

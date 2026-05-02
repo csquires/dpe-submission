@@ -44,6 +44,7 @@ class TriangularFMDRE(DensityRatioEstimator):
         div_method: str = "hutch_rademacher",
         verbose: bool = False,
         log_every: int = 100,
+        n_hidden_layers: int = 3,
     ) -> None:
         """initialize triangular fmdre estimator with hyperparameters.
 
@@ -66,6 +67,7 @@ class TriangularFMDRE(DensityRatioEstimator):
             div_method: divergence estimation method (default 'hutch_rademacher'); one of {'exact', 'hutch_gaussian', 'hutch_rademacher'}
             verbose: print training progress (default False)
             log_every: epoch interval for verbose logging (default 100)
+            n_hidden_layers: number of hidden layers in velocity mlp (default 3)
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -78,6 +80,7 @@ class TriangularFMDRE(DensityRatioEstimator):
         self.div_method = div_method
         self.verbose = verbose
         self.log_every = log_every
+        self.n_hidden_layers = n_hidden_layers
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -90,14 +93,15 @@ class TriangularFMDRE(DensityRatioEstimator):
         """instantiate MultiClassVelScoreMLP with K=3.
 
         procedure:
-          1. create MultiClassVelScoreMLP(input_dim, num_classes=3, hidden_dim)
+          1. create MultiClassVelScoreMLP(input_dim, num_classes=3, hidden_dim, n_hidden_layers)
           2. move model to device
           3. store in self.model
         """
         self.model = MultiClassVelScoreMLP(
             self.input_dim,
             num_classes=3,
-            hidden_dim=self.hidden_dim
+            hidden_dim=self.hidden_dim,
+            n_hidden_layers=self.n_hidden_layers
         ).to(self.device)
 
     def fit(

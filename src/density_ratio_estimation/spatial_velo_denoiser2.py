@@ -18,21 +18,41 @@ from src.density_ratio_estimation.base import DensityRatioEstimator
 class MLP(nn.Module):
     """
     Standard Multi-Layer Perceptron for estimating vector fields.
+
+    Args:
+        input_dim: spatial dimension
+        hidden_dim: hidden layer width
+        output_dim: output dimension (defaults to input_dim)
+        n_hidden_layers: number of hidden layers in backbone (>= 1)
+
+    Procedure:
+        input (input_dim+1: t+x) -> linear -> hidden_dim
+        -> [ReLU -> linear -> hidden_dim] x (n_hidden_layers-1)
+        -> ReLU -> linear -> output_dim
     """
-    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = None):
+    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = None, n_hidden_layers: int = 3):
         super().__init__()
         if output_dim is None:
             output_dim = input_dim
-            
-        self.net = nn.Sequential(
-            nn.Linear(input_dim + 1, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim),
-        )
+
+        if n_hidden_layers < 1:
+            raise ValueError("n_hidden_layers must be >= 1")
+
+        self.n_hidden_layers = n_hidden_layers
+
+        # build backbone: input -> hidden, then (n_hidden_layers - 1) hidden -> hidden
+        layers = []
+        layers.append(nn.Linear(input_dim + 1, hidden_dim))
+        layers.append(nn.ReLU())
+
+        for _ in range(n_hidden_layers - 1):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+
+        # output projection
+        layers.append(nn.Linear(hidden_dim, output_dim))
+
+        self.net = nn.Sequential(*layers)
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
