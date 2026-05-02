@@ -36,14 +36,14 @@ SPEED_CLASS_MAP: dict[str, SpeedClass] = {
     # MEDIUM (cpu-eligible): 7 canonical + 1 alias = 8 entries
     "TSM":                       SpeedClass.MEDIUM,
     "CTSM":                      SpeedClass.MEDIUM,
-    "BDRE":                      SpeedClass.MEDIUM,
     "TriangularTSM":             SpeedClass.MEDIUM,
     "TriangularCTSM_V1":         SpeedClass.MEDIUM,
     "TriangularCTSM_V2":         SpeedClass.MEDIUM,
     "TriangularCTSM_V3":         SpeedClass.MEDIUM,
     "TriangularCTSM":            SpeedClass.MEDIUM,  # legacy alias for TriangularCTSM_V1
 
-    # FAST (cpu-eligible): 7 canonical + 2 aliases = 9 entries
+    # FAST (cpu-eligible)
+    "BDRE":                      SpeedClass.FAST,
     "MDRE_15":                   SpeedClass.FAST,
     "MultiHeadTDRE":             SpeedClass.FAST,
     "MultiHeadTriangularTDRE":   SpeedClass.FAST,
