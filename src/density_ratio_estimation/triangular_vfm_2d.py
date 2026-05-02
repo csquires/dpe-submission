@@ -4,7 +4,7 @@ Mirrors TriangularVFM (1D) but trains two velocity heads (b_1, b_2) and one
 denoiser (eta) sequentially on a 2D-time stacked interpolant path. Inference
 integrates the time-score along a Curve2D from tau=eps to 1-eps.
 """
-from typing import Optional, Literal
+from typing import Optional
 import warnings
 import itertools
 
@@ -41,8 +41,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         lr: float = 1.3e-3,
         eps: float = 1e-3,
         device: Optional[str] = None,
-        integration_steps: int = 3000,
-        integration_type: Literal['1', '2', '3'] = '2',
+        integration_steps: int = 200,
         antithetic: bool = True,
         verbose: bool = False,
         log_every: int = 100,
@@ -60,8 +59,7 @@ class TriangularVFM2D(DensityRatioEstimator):
             lr: Adam learning rate.
             eps: Boundary margin for tau / t_1 sampling. Must be >= 1e-3.
             device: Device string. Auto-resolves if None.
-            integration_steps: Number of tau quadrature points.
-            integration_type: '1' mean, '2' trapz, '3' Simpson.
+            integration_steps: Number of tau quadrature points (uniform grid).
             antithetic: Toggle antithetic variance reduction in b-phase.
             verbose: Toggle epoch-level logging.
             log_every: Epochs between log prints.
@@ -83,7 +81,6 @@ class TriangularVFM2D(DensityRatioEstimator):
         self.lr = lr
         self.eps = eps
         self.integration_steps = integration_steps
-        self.integration_type = integration_type
         self.antithetic = antithetic
         self.verbose = verbose
         self.log_every = log_every
@@ -349,10 +346,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         samples = xs.float().to(self.device)  # [n_samples, D]
         n_samples = samples.shape[0]
 
-        # tau grid (odd for Simpson)
         n_points = self.integration_steps
-        if n_points % 2 == 0:
-            n_points += 1
         tau_vals = torch.linspace(self.eps, 1.0 - self.eps, steps=n_points, device=self.device)  # [n_points]
 
         # step 5a: pack curve outputs into [n_points, 4] BEFORE vmap
@@ -380,25 +374,7 @@ class TriangularVFM2D(DensityRatioEstimator):
 
         time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
 
-        if self.integration_type == '2':
-            out = -torch.trapz(time_scores, tau_vals, dim=0).cpu()  # [n_samples]
-        elif self.integration_type == '3':
-            # simpson's rule (mirror V2-VFM)
-            t_np = tau_vals.cpu().numpy()
-            h = (t_np[-1] - t_np[0]) / (n_points - 1)
-            integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
-            integral = integrand[0] + integrand[-1]
-            for i in range(1, n_points - 1):
-                if i % 2 == 0:
-                    integral += 2 * integrand[i]
-                else:
-                    integral += 4 * integrand[i]
-            integral *= h / 3
-            out = -torch.from_numpy(integral)  # [n_samples]
-        elif self.integration_type == '1':
-            out = -time_scores.mean(dim=0).cpu()  # [n_samples]
-
-        return out  # [n_samples], CPU float32
+        return -torch.trapezoid(time_scores, tau_vals, dim=0).cpu()  # [n_samples]
 
     def _compute_time_score_single(
         self, t_tau: torch.Tensor, x: torch.Tensor

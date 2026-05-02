@@ -1,9 +1,7 @@
 from typing import Optional
 
-import numpy as np
 import torch
 import torch.optim as optim
-from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
@@ -30,8 +28,7 @@ class CTSM(DensityRatioEstimator):
         sigma: float = 1.0,
         eps: float = 1e-3,
         device: Optional[str] = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-6,
+        integration_steps: int = 200,
         n_hidden_layers: int = 3,
     ) -> None:
         """
@@ -46,8 +43,7 @@ class CTSM(DensityRatioEstimator):
         self.lr = lr
         self.sigma = sigma
         self.eps = eps
-        self.rtol = rtol
-        self.atol = atol
+        self.integration_steps = integration_steps
         self.n_hidden_layers = n_hidden_layers
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -162,11 +158,16 @@ class CTSM(DensityRatioEstimator):
             self.optimizer.step()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """
-        Estimate log density ratio via ODE integration.
+        """Estimate log density ratio via trapezoidal quadrature.
 
-        Verify model is initialized, set eval mode, integrate from t=eps to t=1-eps
-        using learned score via ODE45. Return log ratios on xs device.
+        Procedure:
+            - verify model is fitted, set eval mode, move xs to device.
+            - build uniform tau grid of self.integration_steps points in [eps, 1-eps].
+            - evaluate -score(xs, tau) at each grid point (batched over xs).
+            - return torch.trapezoid along the tau axis.
+
+        Returns:
+            log density ratios as a 1D CPU tensor [N].
         """
         if self.model is None:
             raise RuntimeError("Model not fitted. Call fit() first.")
@@ -175,24 +176,14 @@ class CTSM(DensityRatioEstimator):
         xs = xs.to(self.device)
         n = xs.shape[0]
 
-        def ode_func(t, y):
-            """ODE function for scipy integration: return -score(x_t, t) as numpy."""
-            t_tensor = torch.full((n, 1), t, device=self.device)
-            with torch.no_grad():
-                score = self.model(xs, t_tensor)  # [B, 1]
-            return (-score).squeeze().cpu().numpy()
-
-        solution = integrate.solve_ivp(
-            ode_func,
-            (self.eps, 1.0 - self.eps),
-            np.zeros(n),
-            method="RK45",
-            rtol=self.rtol,
-            atol=self.atol,
-        )
-
-        log_ratios = solution.y[:, -1]
-        return torch.from_numpy(log_ratios)
+        ts = torch.linspace(self.eps, 1.0 - self.eps, self.integration_steps, device=self.device)
+        with torch.no_grad():
+            vals = torch.stack([
+                -self.model(xs, torch.full((n, 1), float(t.item()), device=self.device)).squeeze(-1)
+                for t in ts
+            ])
+        dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
+        return torch.trapezoid(vals, dx=dt, dim=0).cpu()
 
 
 if __name__ == "__main__":

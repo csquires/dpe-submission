@@ -5,10 +5,8 @@ V2 (barycentric continuous path via three anchor distributions).
 """
 from typing import Optional
 
-import numpy as np
 import torch
 import torch.optim as optim
-from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
@@ -39,8 +37,7 @@ class TriangularCTSM(DensityRatioEstimator):
         lr: float = 1e-3,
         eps: float = 1e-3,
         device: Optional[str] = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-6,
+        integration_steps: int = 200,
         n_hidden_layers: int = 3,
     ) -> None:
         """
@@ -53,10 +50,9 @@ class TriangularCTSM(DensityRatioEstimator):
             n_epochs: Number of training epochs.
             batch_size: Batch size for stochastic gradient descent.
             lr: Adam learning rate.
-            eps: Margin for tau sampling and ODE integration bounds. tau in [eps, 1-eps].
+            eps: Margin for tau sampling and quadrature bounds. tau in [eps, 1-eps].
             device: Device string ("cuda", "cpu", etc.). If None, auto-detect: cuda if available, else cpu.
-            rtol: Relative tolerance for ODE solver.
-            atol: Absolute tolerance for ODE solver.
+            integration_steps: Number of tau quadrature points for predict_ldr (uniform grid).
             n_hidden_layers: Number of hidden layers for TimeScoreNetwork1D.
         """
         super().__init__(input_dim)
@@ -66,8 +62,7 @@ class TriangularCTSM(DensityRatioEstimator):
         self.batch_size = batch_size
         self.lr = lr
         self.eps = eps
-        self.rtol = rtol
-        self.atol = atol
+        self.integration_steps = integration_steps
         self.n_hidden_layers = n_hidden_layers
 
         # device resolution
@@ -176,20 +171,19 @@ class TriangularCTSM(DensityRatioEstimator):
         self.model.eval()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """
-        Predict log density ratios log(p0(x) / p1(x)) via ODE integration.
+        """Predict log density ratios via trapezoidal quadrature.
 
         Args:
-            xs: Test samples, shape [N, D], on CPU or device (will be moved to self.device).
+            xs: test samples, shape [N, D], on CPU or device (moved to self.device).
 
         Returns:
-            Log density ratios, shape [N], on CPU.
+            log density ratios, shape [N], on CPU.
 
         Procedure:
-        - Set model to eval mode.
-        - Integrate ODE d(log_ratio)/d(tau) = -score(x, tau) from tau=eps to 1-eps.
-        - ODE initial condition: log_ratio(tau=eps) = 0.
-        - Use scipy.integrate.solve_ivp with RK45 method.
+            - eval mode, move samples to device.
+            - uniform tau grid of self.integration_steps points in [eps, 1-eps].
+            - evaluate -score(samples, tau) at each grid point (batched over samples).
+            - return torch.trapezoid along the tau axis.
         """
         if self.model is None:
             raise RuntimeError(
@@ -197,47 +191,20 @@ class TriangularCTSM(DensityRatioEstimator):
             )
 
         self.model.eval()
-
-        # move samples to device
         samples = xs.to(self.device).float()
         n = samples.shape[0]
 
+        ts = torch.linspace(self.eps, 1.0 - self.eps, self.integration_steps, device=self.device)
         with torch.no_grad():
-
-            def ode_func(tau_scalar, y):
-                """ODE function for scipy.integrate.solve_ivp."""
-                # tau_scalar: float in [eps, 1-eps]
-                # y: array [n] (current log_ratio values)
-
-                # create tau tensor
-                tau_tensor = torch.full(
-                    (n, 1),
-                    float(tau_scalar),
-                    device=self.device,
-                    dtype=torch.float32,
-                )
-
-                # evaluate score network
-                score = self.model(samples, tau_tensor)  # [n, 1]
-
-                # return dy/dtau = -score
-                dydt = (-score).squeeze(-1).cpu().numpy()  # [n]
-                return dydt
-
-            # solve ODE from eps to 1-eps
-            solution = integrate.solve_ivp(
-                ode_func,
-                (self.eps, 1.0 - self.eps),
-                np.zeros(n),  # initial condition
-                method="RK45",
-                rtol=self.rtol,
-                atol=self.atol,
-            )
-
-            # extract final values (at tau = 1 - eps)
-            log_ratios = solution.y[:, -1]  # [n]
-
-        return torch.from_numpy(log_ratios)
+            vals = torch.stack([
+                -self.model(
+                    samples,
+                    torch.full((n, 1), float(t.item()), device=self.device, dtype=torch.float32),
+                ).squeeze(-1)
+                for t in ts
+            ])
+        dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
+        return torch.trapezoid(vals, dx=dt, dim=0).cpu()
 
 
 if __name__ == "__main__":

@@ -12,10 +12,8 @@ Mirrors V2's TriangularCTSM in src/density_ratio_estimation/triangular_ctsm.py.
 """
 from typing import Optional
 
-import numpy as np
 import torch
 import torch.optim as optim
-from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
@@ -38,7 +36,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
       lr: float, Adam learning rate.
       eps: float, boundary epsilon for tau and (t_1, t_2) sampling.
       device: optional str; auto-resolves to cuda or cpu.
-      rtol, atol: scipy ODE solver tolerances.
+      integration_steps: int, number of tau quadrature points for predict_ldr.
       log_every: int, log per-head losses every N epochs (0 = disabled).
     """
 
@@ -54,8 +52,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
         lr: float = 1e-3,
         eps: float = 1e-3,
         device: Optional[str] = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-6,
+        integration_steps: int = 200,
         log_every: int = 100,
     ) -> None:
         super().__init__(input_dim)
@@ -66,8 +63,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
         self.batch_size = batch_size
         self.lr = lr
         self.eps = eps
-        self.rtol = rtol
-        self.atol = atol
+        self.integration_steps = integration_steps
         self.log_every = log_every
 
         if device is None:
@@ -197,22 +193,17 @@ class TriangularCTSM2D(DensityRatioEstimator):
         self.model.eval()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """Predict log density ratios via line integral along self.curve.
+        """Predict log density ratios via trapezoidal quadrature of the line integral.
 
         Procedure:
-          - Verify trained.
-          - Move xs to device.
-          - Define ode_func(tau_scalar, y):
-              tau_v = float(tau_scalar)
-              (t1_v, t2_v) = (curve.t1(tau_v), curve.t2(tau_v))
-              (dt1_v, dt2_v) = (curve.dt1(tau_v), curve.dt2(tau_v))
-              allocate t1_t, t2_t = full((n, 1), <value>, dtype=model dtype, device=self.device).
-              with no_grad: s = self.model(xs, t1_t, t2_t)  -> [n, 2]
-              dy = -(s[:, 0] * dt1_v + s[:, 1] * dt2_v)   # mirror V2 sign convention
-              dy = torch.nan_to_num(dy, nan=0.0, posinf=1e6, neginf=-1e6)
-              return dy.cpu().numpy()
-          - Integrate from tau=eps to 1-eps via solve_ivp RK45 with y0 = zeros(n).
-          - Return solution.y[:, -1] as a CPU torch tensor [n].
+            - eval mode, move xs to device.
+            - uniform tau grid of self.integration_steps points in [eps, 1-eps].
+            - at each tau, evaluate the line-integral integrand
+                dy/dtau = -(s_1 * dt_1/dtau + s_2 * dt_2/dtau)
+              with s = model(xs, t1(tau), t2(tau)) and (t1, t2, dt1, dt2) from self.curve.
+            - return torch.trapezoid along the tau axis.
+
+        Mirrors V2 sign convention. nan/inf integrand values are clamped.
         """
         if self.model is None:
             raise RuntimeError(
@@ -222,53 +213,26 @@ class TriangularCTSM2D(DensityRatioEstimator):
         self.model.eval()
         xs = xs.to(self.device).float()
         n = xs.shape[0]
-
-        # cache the model's parameter dtype/device for the ode_func tensor allocation
         dtype = next(self.model.parameters()).dtype
-        device = self.device
 
+        ts = torch.linspace(self.eps, 1.0 - self.eps, self.integration_steps, device=self.device)
         with torch.no_grad():
-
-            def ode_func(tau_scalar, y):
-                tau_v = float(tau_scalar)
+            integrand_rows = []
+            for t in ts:
+                tau_v = float(t.item())
                 t1_v = float(self.curve.t1(tau_v))
                 t2_v = float(self.curve.t2(tau_v))
                 dt1_v = float(self.curve.dt1(tau_v))
                 dt2_v = float(self.curve.dt2(tau_v))
-
-                # build (n, 1) constant tensors with the model's dtype/device
-                t1_t = torch.full((n, 1), t1_v, dtype=dtype, device=device)
-                t2_t = torch.full((n, 1), t2_v, dtype=dtype, device=device)
-
-                # forward
+                t1_t = torch.full((n, 1), t1_v, dtype=dtype, device=self.device)
+                t2_t = torch.full((n, 1), t2_v, dtype=dtype, device=self.device)
                 s = self.model(xs, t1_t, t2_t)  # [n, 2]
-
-                # line-integral integrand; mirror V2 sign convention
-                dy = -(s[:, 0] * dt1_v + s[:, 1] * dt2_v)  # [n]
-                dy = torch.nan_to_num(
-                    dy, nan=0.0, posinf=1e6, neginf=-1e6
-                )
-                return dy.cpu().numpy()
-
-            solution = integrate.solve_ivp(
-                ode_func,
-                (self.eps, 1.0 - self.eps),
-                np.zeros(n),
-                method="RK45",
-                rtol=self.rtol,
-                atol=self.atol,
-            )
-
-            if not solution.success:
-                raise RuntimeError(
-                    f"solve_ivp failed: {solution.message}. "
-                    f"Refusing to return solution.y[:, -1] which may be the last attempted "
-                    f"step rather than the integrated value."
-                )
-
-            log_ratios = solution.y[:, -1]  # [n]
-
-        return torch.from_numpy(log_ratios)
+                dy = -(s[:, 0] * dt1_v + s[:, 1] * dt2_v)
+                dy = torch.nan_to_num(dy, nan=0.0, posinf=1e6, neginf=-1e6)
+                integrand_rows.append(dy)
+            vals = torch.stack(integrand_rows)  # [integration_steps, n]
+        dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
+        return torch.trapezoid(vals, dx=dt, dim=0).cpu()
 
 
 if __name__ == "__main__":
