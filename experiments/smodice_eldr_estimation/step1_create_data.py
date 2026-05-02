@@ -177,8 +177,11 @@ def per_cell(
 
     alpha_star = res["alpha_star"]
     beta_star = res["beta_star"]
-    realized_K1 = res["realized_K1"]
-    realized_K2 = res["realized_K2"]
+    # res['realized_K1/2'] is np.interp(alpha*, grid) which equals K1/K2 by tautology;
+    # the true KL of the actual rollout occupancy is recomputed below from d_O, d_pi, d_E
+    # since linear interp inside steep grid bins (e.g. cliff regions) diverges from the
+    # underlying convex/concave KL curve by several percent at K1=2.8 in the gaussian_blob
+    # config.
 
     # ===== step 6: compute occupancies at (alpha*, beta*) =====
 
@@ -248,6 +251,11 @@ def per_cell(
     kl_pi_E = kl_occupancy(d_pi, grid["d_E"])
     kl_pi_O = kl_occupancy(d_pi, d_O)
     integrated_eldr = kl_pi_E - kl_pi_O
+
+    # honest realized KLs: actual occupancy KL at the inverted (alpha*, beta*),
+    # not the np.interp-on-grid value (which equals the prescribed target by tautology).
+    realized_K1 = float(kl_occupancy(grid["d_E"], d_O))
+    realized_K2 = float(kl_pi_E)
 
     # ===== step 10: prepare HDF5 output =====
 
