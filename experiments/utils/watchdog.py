@@ -1260,12 +1260,20 @@ def main() -> None:
                                     (len(popped) + args.cpu_n_per_element - 1)
                                     // args.cpu_n_per_element,
                                 )
-                                # encode payload inline (no NFS file). slurm
-                                # stores the wrap script for the job lifetime;
-                                # element decodes once at startup, no re-read.
+                                # payload too large for inline b64 in argv
+                                # (linux ARG_MAX ~128KB-2MB; sbatch wrap is
+                                # subject to it). use NFS assignment file
+                                # instead — element reads once at startup, then
+                                # the file is dead weight (cleaned up by audit).
                                 import base64
                                 payload = "\n".join(popped) + "\n"
                                 b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+                                INLINE_THRESHOLD = 64 * 1024  # 64KB safe argv ceiling
+                                use_inline = len(b64) <= INLINE_THRESHOLD
+                                af_path = None
+                                if not use_inline:
+                                    af_path = cpu_log_dir / f"assignments_{cycle:06d}.txt"
+                                    af_path.write_text(payload)
                                 new_jid = submit_cpu_array(
                                     queue_file=args.queue_file,  # ignored in push
                                     lock_file=args.state_file.parent / "queue.lock",
@@ -1279,14 +1287,16 @@ def main() -> None:
                                     inner_threads=args.cpu_inner_threads,
                                     n_jobs=args.cpu_n_jobs,
                                     job_name=f"arr_wd_{cycle}",
-                                    assignment_b64=b64,
+                                    assignment_b64=b64 if use_inline else None,
+                                    assignment_file=af_path,
                                 )
                                 cpu_array_jids.add(new_jid)
                                 cpu_array_assignments[new_jid] = popped  # for audit
                                 _log_event("CPU_ARRAY_DISPATCH", jid=new_jid,
                                            popped=len(popped), size=array_size,
                                            walltime=cpu_walltime,
-                                           payload_kb=len(b64) // 1024)
+                                           payload_kb=len(b64) // 1024,
+                                           mode="inline" if use_inline else "file")
                         except Exception as e:
                             _log_event("CPU_ARRAY_DISPATCH_FAIL", err=str(e)[:300])
 
