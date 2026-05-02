@@ -471,6 +471,99 @@ def _active_cpu_array_jids(our_jids: set[str]) -> set[str]:
     return our_jids & alive_parents
 
 
+def _append_to_queue(queue_file: Path, lock_file: Path, lines: list[str]) -> None:
+    """flock-protected append of lines to queue_file. used for requeuing."""
+    if not lines:
+        return
+    with open(lock_file, "a+") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            with open(queue_file, "a") as f:
+                for line in lines:
+                    f.write(line if line.endswith("\n") else line + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+
+def _audit_completed_cpu_arrays(
+    cpu_array_assignments: dict, cpu_array_jids: set[str],
+    queue_file: Path, lock_file: Path,
+) -> tuple[int, int]:
+    """for each cpu_array_jid not alive in slurm, diff assignment vs result
+    JSONs and requeue missing trials. mutates cpu_array_assignments by
+    popping audited jids. returns (n_audited_jids, n_requeued_lines).
+    """
+    if not cpu_array_assignments:
+        return (0, 0)
+    alive = _active_cpu_array_jids(cpu_array_jids)
+    finished = [j for j in list(cpu_array_assignments.keys()) if j not in alive]
+    if not finished:
+        return (0, 0)
+    n_requeued = 0
+    for jid in finished:
+        assigned = cpu_array_assignments.pop(jid)
+        missing: list[str] = []
+        for line in assigned:
+            parsed = parse_spec_line(line)
+            if parsed is None:
+                continue
+            _, _, sbatch_cmd = parsed
+            m_out = re.search(r"--output-dir\s+(\S+)", sbatch_cmd)
+            m_stg = re.search(r'--stage\s+([^\s"]+)', sbatch_cmd)
+            m_cfg = re.search(r"trial_(\d+)\.json", sbatch_cmd)
+            if not (m_out and m_stg and m_cfg):
+                continue  # malformed; can't audit
+            expected = (Path(m_out.group(1)) / m_stg.group(1)
+                        / f"trial_{m_cfg.group(1)}.json")
+            if not expected.exists():
+                missing.append(line)
+        if missing:
+            _append_to_queue(queue_file, lock_file, missing)
+            n_requeued += len(missing)
+    return (len(finished), n_requeued)
+
+
+def _check_walltime_near(submitted_jids: set[str],
+                         preempt_walltimes: dict[str, str],
+                         threshold: float = 0.9) -> list[tuple]:
+    """sacct-poll RUNNING preempt jobs; flag those at >threshold of walltime cap.
+
+    returns list of (jid, elapsed_str, walltime_cap_str) for near-cap jobs.
+    """
+    relevant = submitted_jids & set(preempt_walltimes.keys())
+    if not relevant:
+        return []
+    jid_csv = ",".join(sorted(relevant))
+    try:
+        out = subprocess.run(
+            ["sacct", "-j", jid_csv, "--format=JobID,State,Elapsed",
+             "--noheader", "--parsable2", "-X"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return []
+    if out.returncode != 0:
+        return []
+    near = []
+    for line in out.stdout.splitlines():
+        parts = line.split("|")
+        if len(parts) < 3:
+            continue
+        jid, state, elapsed = parts[0], parts[1], parts[2]
+        if state != "RUNNING" or jid not in preempt_walltimes:
+            continue
+        try:
+            cap_s = _parse_elapsed(preempt_walltimes[jid])
+            el_s = _parse_elapsed(elapsed)
+        except (ValueError, KeyError):
+            continue
+        if cap_s > 0 and el_s > threshold * cap_s:
+            near.append((jid, elapsed, preempt_walltimes[jid]))
+    return near
+
+
 def _save_state(state_file: Path, submitted_jids: set, seen_jid_node: set,
                 cpu_array_jids: Optional[set] = None) -> None:
     """atomic JSON dump: tmp, write, flush, fsync, replace.
@@ -939,6 +1032,10 @@ def main() -> None:
     # load state
     submitted_jids, seen_jid_node, cpu_array_jids = _load_state(args.state_file)
     cpu_eligible_set = cpu_eligible_methods()
+    # in-memory health-check state (not persisted; rebuilt on restart, orphan
+    # scan backstops any losses).
+    cpu_array_assignments: dict[str, list[str]] = {}  # jid -> popped lines
+    preempt_walltimes: dict[str, str] = {}            # jid -> walltime cap str
 
     # init state vars
     node_stats = {}
@@ -1034,6 +1131,7 @@ def main() -> None:
                 if jid is None:
                     continue
                 submitted_jids.add(jid)
+                preempt_walltimes[jid] = walltime  # for walltime-near audit
                 _log_event("DISPATCH", jid=jid, method=method, tag=tag,
                           walltime=walltime, excl_n=excl_n)
                 _append_submitted_tsv(submitted_tsv, jid, method, tag,
@@ -1046,8 +1144,25 @@ def main() -> None:
                 if new_slow:
                     append_exclude(args.exclude_file, new_slow)
                     _log_event("SLOW_NODES", nodes=sorted(new_slow))
+                # walltime-near alarm: piggyback on the same sacct cadence
+                near = _check_walltime_near(submitted_jids, preempt_walltimes)
+                if near:
+                    _log_event("WALLTIME_NEAR", count=len(near),
+                               examples=near[:5])
                 last_sacct_cycle = cycle
                 _save_state(args.state_file, submitted_jids, seen_jid_node, cpu_array_jids)
+
+            # cpu_array completion audit (every cycle; cheap dict diff until
+            # a jid actually transitions to done). requeues missing trials.
+            if args.cpu_array_relaunch and cpu_array_assignments:
+                n_jids, n_requeued = _audit_completed_cpu_arrays(
+                    cpu_array_assignments, cpu_array_jids,
+                    args.queue_file,
+                    args.state_file.parent / "queue.lock",
+                )
+                if n_jids > 0:
+                    _log_event("CPU_ARRAY_AUDIT", n_finished=n_jids,
+                               n_requeued=n_requeued)
 
             if cycle % 50 == 0:
                 active = _discover_active_studies(data_root)
@@ -1120,6 +1235,7 @@ def main() -> None:
                                     assignment_b64=b64,
                                 )
                                 cpu_array_jids.add(new_jid)
+                                cpu_array_assignments[new_jid] = popped  # for audit
                                 _log_event("CPU_ARRAY_DISPATCH", jid=new_jid,
                                            popped=len(popped), size=array_size,
                                            walltime=cpu_walltime,
