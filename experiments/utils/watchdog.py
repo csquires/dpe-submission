@@ -438,8 +438,12 @@ def _load_state(state_file: Path) -> tuple[set, set, set, list]:
 
 
 def _count_cpu_eligible_lines(queue_file: Path, lock_file: Path,
-                              eligible: set[str]) -> int:
-    """count queue lines whose method is in the cpu-eligible set (under flock)."""
+                              eligible: Optional[set[str]]) -> int:
+    """count queue lines (under flock).
+
+    if `eligible` is None, count all parseable lines (v3 no-filter mode).
+    if `eligible` is a set, count only lines whose method is in the set.
+    """
     if not queue_file.exists() or queue_file.stat().st_size == 0:
         return 0
     count = 0
@@ -452,7 +456,7 @@ def _count_cpu_eligible_lines(queue_file: Path, lock_file: Path,
                     if parsed is None:
                         continue
                     method, _, _ = parsed
-                    if method in eligible:
+                    if eligible is None or method in eligible:
                         count += 1
         finally:
             fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
@@ -1182,10 +1186,13 @@ def main() -> None:
                                n_requeued=n_requeued)
 
             if args.cpu_array_relaunch and cycle % args.cpu_array_check_interval == 0:
+                # v3: no eligibility filter on the gate either. count ALL queue
+                # lines; back-pop naturally biases toward FAST (queue is sorted
+                # by workflow_runner writing in speed_rank order).
                 eligible_count = _count_cpu_eligible_lines(
                     args.queue_file,
                     args.state_file.parent / "queue.lock",
-                    cpu_eligible_set,
+                    None,  # no filter
                 )
                 if eligible_count >= args.cpu_array_min_queue:
                     active = _active_cpu_array_jids(cpu_array_jids)
@@ -1201,12 +1208,18 @@ def main() -> None:
                                 cpu_walltime = compute_element_walltime(
                                     sorted(cpu_eligible_set), args.cpu_n_per_element
                                 )
+                            # v3 design: no method filter at the cpu_array level.
+                            # back-pop pulls from queue tail; with workflow_runner
+                            # writing in speed_rank order (SLOW first), the back
+                            # contains FAST > MEDIUM > SLOW naturally. SLOW
+                            # methods that do reach cpu side will hit walltime
+                            # cap and be requeued by orphan_recovery for preempt.
                             target_lines = args.cpu_array_size * args.cpu_n_per_element
                             popped = pop_lines_back_atomic(
                                 args.queue_file,
                                 args.state_file.parent / "queue.lock",
                                 target_lines,
-                                cpu_eligible_set,
+                                method_filter=None,
                             )
                             if not popped:
                                 _log_event("CPU_ARRAY_NO_POP", eligible=eligible_count)
