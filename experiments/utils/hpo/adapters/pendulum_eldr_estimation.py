@@ -3,7 +3,7 @@
 cell arity: 3-tuple (k1_idx, k2_idx, seed).
 pool: kl_targets.k1_values x k2_values x range(seeds_default).
 h5 keys: samples_p0, samples_p1, samples_pstar, true_ldrs.
-file pattern: {data_dir}/kl1_{k1}_kl2_{k2}_seed_{seed}.h5.
+file pattern: {data_dir}/k1_{k1}_k2_{k2}_seed_{seed}.h5.
 
 v2 stratification: stratify_key returns (k1, k2) so cell_schema covers all
 difficulty regimes even when pool is large (~480 cells) and naive random
@@ -72,7 +72,7 @@ class PendulumAdapter(ExperimentAdapter):
           cell: (k1_idx, k2_idx, seed) tuple.
           device: torch device string.
 
-        opens {data_dir}/kl1_{k1}_kl2_{k2}_seed_{seed}.h5.
+        opens {data_dir}/k1_{k1}_k2_{k2}_seed_{seed}.h5.
         extracts f["samples_p0"], f["samples_p1"], f["samples_pstar"], f["true_ldrs"].
         converts to float32 tensors on device.
 
@@ -81,7 +81,7 @@ class PendulumAdapter(ExperimentAdapter):
         raises FileNotFoundError if h5 path missing.
         """
         k1, k2, seed = cell
-        path = self.data_dir() / f"kl1_{k1}_kl2_{k2}_seed_{seed}.h5"
+        path = self.data_dir() / f"k1_{k1}_k2_{k2}_seed_{seed}.h5"
         if not path.exists():
             raise FileNotFoundError(f"pendulum h5 not found: {path}")
 
