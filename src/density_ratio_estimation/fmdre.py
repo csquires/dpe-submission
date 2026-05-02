@@ -35,7 +35,7 @@ class FMDRE(DensityRatioEstimator):
         eps: float = 0.01,
         device: Optional[str] = None,
         integration_steps: int = 10000,
-        div_method: str = "exact",
+        div_method: str = "hutch_rademacher",
         verbose: bool = False,
         log_every: int = 100,
         n_hidden_layers: int = 3,
@@ -59,7 +59,7 @@ class FMDRE(DensityRatioEstimator):
             eps: time clamping to [eps, 1-eps] (default 0.01)
             device: target device ('cuda' or 'cpu'); auto-detects if None
             integration_steps: number of ode integration steps (default 10000)
-            div_method: divergence estimation method (default 'exact')
+            div_method: divergence estimation method (default 'hutch_rademacher'); one of {'exact', 'hutch_gaussian', 'hutch_rademacher'}
             verbose: print training progress (default False)
             log_every: epoch interval for verbose logging (default 100)
             n_hidden_layers: number of hidden layers in velocity mlp (default 3)
