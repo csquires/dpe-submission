@@ -2,8 +2,13 @@
 
 cell arity: 3-tuple (k1_idx, k2_idx, seed).
 pool: kl_targets.k1_values x k2_values x range(seeds_default).
-h5 keys: samples_p0, samples_p1, samples_pstar, true_ldrs.
+h5 keys: samples_p0, samples_p1, samples_pstar, log_p_pstar.
 file pattern: {data_dir}/k1_{k1}_k2_{k2}_seed_{seed}.h5.
+
+per-sample true ldr is derived from log_p_pstar (shape [N, 3]) whose columns
+are [pi^beta*, pi_O, pi_E] = [mix, p0, p1] per step1_create_data.py:
+  true_ldrs = log p0(pstar) - log p1(pstar) = log_p_pstar[:, 1] - log_p_pstar[:, 2].
+mean over samples equals the stored attr `integrated_eldr` exactly (verified).
 
 v2 stratification: stratify_key returns (k1, k2) so cell_schema covers all
 difficulty regimes even when pool is large (~480 cells) and naive random
@@ -73,12 +78,18 @@ class PendulumAdapter(ExperimentAdapter):
           device: torch device string.
 
         opens {data_dir}/k1_{k1}_k2_{k2}_seed_{seed}.h5.
-        extracts f["samples_p0"], f["samples_p1"], f["samples_pstar"], f["true_ldrs"].
+        extracts f["samples_p0"], f["samples_p1"], f["samples_pstar"], f["log_p_pstar"].
+        derives per-sample true ldr at pstar samples as
+          true_ldrs = log_p_pstar[:, 1] - log_p_pstar[:, 2]
+        where columns of log_p_pstar are [mix, p0, p1] per step1_create_data.py.
         converts to float32 tensors on device.
 
         returns: {"pstar": tensor, "p0": tensor, "p1": tensor, "true_ldrs": tensor}.
 
         raises FileNotFoundError if h5 path missing.
+
+        caveat: assumes log_p_pstar column order is [mix, p0, p1]. if step1's
+        crossdens stack order ever changes, this derivation must be updated.
         """
         k1, k2, seed = cell
         path = self.data_dir() / f"k1_{k1}_k2_{k2}_seed_{seed}.h5"
@@ -86,10 +97,11 @@ class PendulumAdapter(ExperimentAdapter):
             raise FileNotFoundError(f"pendulum h5 not found: {path}")
 
         with h5py.File(path, "r") as f:
-            p0 = torch.from_numpy(np.array(f["samples_p0"])).float().to(device)       # (n, d)
-            p1 = torch.from_numpy(np.array(f["samples_p1"])).float().to(device)       # (n, d)
-            pstar = torch.from_numpy(np.array(f["samples_pstar"])).float().to(device) # (n, d)
-            true_ldrs = torch.from_numpy(np.array(f["true_ldrs"])).float().to(device) # (n,)
+            p0 = torch.from_numpy(np.array(f["samples_p0"])).float().to(device)         # (n, d)
+            p1 = torch.from_numpy(np.array(f["samples_p1"])).float().to(device)         # (n, d)
+            pstar = torch.from_numpy(np.array(f["samples_pstar"])).float().to(device)   # (n, d)
+            log_p_pstar = np.array(f["log_p_pstar"])                                    # (n, 3) cols [mix, p0, p1]
+            true_ldrs = torch.from_numpy(log_p_pstar[:, 1] - log_p_pstar[:, 2]).float().to(device)  # (n,)
 
         return {"pstar": pstar, "p0": p0, "p1": p1, "true_ldrs": true_ldrs}
 

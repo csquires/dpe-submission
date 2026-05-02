@@ -126,7 +126,22 @@ def per_cell(
       12. roll out N trajectories under each of three policies (π^β*, π_O, π_E)
       13. compute cross-densities: log_p_{pstar,p0,p1}[N, 3] (columns: π^β*, π_O, π_E)
       14. compute inverse-direction KLs and integrated ELDR via MC
-      15. write HDF5 atomically to {data_dir}/k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5
+      15. compute true_ldrs[N] = log p0(pstar) - log p1(pstar) at pstar samples
+          (column 1 minus column 2 of log_p_pstar; p0 = π_O, p1 = π_E)
+      16. write HDF5 atomically to {data_dir}/k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5
+
+    HDF5 schema written (per-cell):
+      datasets:
+        samples_pstar : float32, [N, (T+1)*3]
+        samples_p0    : float32, [N, (T+1)*3]
+        samples_p1    : float32, [N, (T+1)*3]
+        log_p_pstar   : float32, [N, 3], columns = (π^β*, π_O, π_E)
+        log_p_p0      : float32, [N, 3], columns = (π^β*, π_O, π_E)
+        log_p_p1      : float32, [N, 3], columns = (π^β*, π_O, π_E)
+        true_ldrs     : float32, [N], = log p0(pstar) - log p1(pstar)
+                        (consumed by HPO/eval as the ground-truth per-sample LDR)
+      attrs: alpha_star, beta_star, K1_*, K2_*, KL_*, integrated_eldr,
+             mc_se, T, N, sigma_pi, i_snap, seed, q_E_residual, q_O_residual
 
     args:
       config: loaded yaml config dict
@@ -250,6 +265,10 @@ def per_cell(
     integrated_eldr = KL_mix_E - KL_mix_O
     mc_se = float((log_p_pstar[:, 0] - log_p_pstar[:, 2]).std(ddof=1) / np.sqrt(N))
 
+    # per-sample log density ratio of p0 over p1 at pstar samples.
+    # columns of log_p_pstar are (π^β*, π_O, π_E); p0 = π_O (col 1), p1 = π_E (col 2).
+    true_ldrs = log_p_pstar[:, 1] - log_p_pstar[:, 2]
+
     output_path = os.path.join(
         config["data_dir"],
         f"k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5"
@@ -272,6 +291,7 @@ def per_cell(
         "log_p_pstar": log_p_pstar.astype(np.float32),
         "log_p_p0": log_p_p0.astype(np.float32),
         "log_p_p1": log_p_p1.astype(np.float32),
+        "true_ldrs": true_ldrs.astype(np.float32),
     }
 
     attrs = {
