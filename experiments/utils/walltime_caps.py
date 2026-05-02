@@ -152,6 +152,17 @@ WALLTIME_CAPS_CPU = {
     # TABULAR: cpu-only methods, expected fast (no neural training)
     "TabularPluginDRE":          "0:05:00",
     "SmoothedTabularPluginDRE":  "0:05:00",
+
+    # SLOW: gpu-preferred flow methods. v3 no-filter design lets these end up
+    # on cpu side when the queue head (slow methods, sorted front) is what
+    # remains.
+    "VFM":                       "0:30:00",
+    "TriangularVFM_V1":          "0:30:00",
+    "TriangularVFM_V2":          "0:30:00",
+    "TriangularVFM_V3":          "0:30:00",
+    "FMDRE":                     "0:35:00",
+    "FMDRE_S2":                  "0:35:00",
+    "TriangularFMDRE":           "0:35:00",
 }
 
 CPU_STARTUP_BUFFER_SECONDS = 60        # conda activate + python import + cell preload

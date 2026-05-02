@@ -1204,9 +1204,14 @@ def main() -> None:
                             from experiments.utils.hpo.cpu_dispatcher import submit_cpu_array
                             cpu_walltime = args.cpu_walltime
                             if cpu_walltime == "auto":
-                                from experiments.utils.walltime_caps import compute_element_walltime
+                                # v3 no-filter: ALL methods (incl SLOW) may be
+                                # popped, so walltime must cover the worst-case
+                                # method in WALLTIME_CAPS_CPU.
+                                from experiments.utils.walltime_caps import (
+                                    compute_element_walltime, WALLTIME_CAPS_CPU)
                                 cpu_walltime = compute_element_walltime(
-                                    sorted(cpu_eligible_set), args.cpu_n_per_element
+                                    sorted(WALLTIME_CAPS_CPU.keys()),
+                                    args.cpu_n_per_element,
                                 )
                             # v3 design: no method filter at the cpu_array level.
                             # back-pop pulls from queue tail; with workflow_runner
