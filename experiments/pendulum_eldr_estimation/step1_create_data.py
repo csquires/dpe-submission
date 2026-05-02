@@ -7,7 +7,7 @@ from typing import Callable, Dict, Tuple, Any
 
 from src.utils.io import _load_config, _set_seed, _hdf5_exists, _write_hdf5_atomic
 from src.utils.pendulum import PendulumCfg, F, sample_mu0, log_mu0, r_upright, r_swingdown
-from src.utils.pendulum_q import QGridCfg
+from src.utils.pendulum_q import QGridCfg, load_or_build_q
 from src.utils.pendulum_policies import GaussPolicy, MixPolicy
 from src.sampling.pendulum_traj import rollout, log_density, pack
 from experiments.utils.prescribed_kls import load_or_build_traj_grid, prescribe_traj
@@ -200,7 +200,21 @@ def per_cell(
     beta_star = float(res["beta_star"])
     i_snap = int(res["i_snap"])
 
-    q_O = grid["q_O_grid"][i_snap]
+    # build q_O at the inverted alpha_star (cached on disk by alpha key);
+    # avoids the grid-snap error that dominates k1_err in steep regions.
+    def _make_r_O(a: float) -> Callable:
+        def r_O(s, a_, s_next, cfg):
+            return (1.0 - a) * r_E(s, a_, s_next, cfg) + a * r_anti(s, a_, s_next, cfg)
+        return r_O
+
+    q_O_result = load_or_build_q(
+        env_cfg, _make_r_O(alpha_star), "r_O", q_cfg,
+        config["traj_kl_grid"]["cache_dir"],
+        F=F, alpha=alpha_star,
+        r_E_name=config["pendulum"]["r_E_name"],
+        r_anti_name=config["pendulum"]["r_anti_name"],
+    )
+    q_O = q_O_result["Q"]
     q_E = grid["q_E"]
 
     pi_E = GaussPolicy(q_E, sigma_pi, env_cfg, q_cfg)
@@ -279,7 +293,7 @@ def per_cell(
         "i_snap": i_snap,
         "seed": seed,
         "q_E_residual": float(grid.get("q_E_residual", np.nan)),
-        "q_O_residual": float(grid["q_O_residuals"][i_snap]) if "q_O_residuals" in grid else float("nan"),
+        "q_O_residual": float(q_O_result["bellman_residual"]),
     }
 
     _write_hdf5_atomic(output_path, datasets, attrs)

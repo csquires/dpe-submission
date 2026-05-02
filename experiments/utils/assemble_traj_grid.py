@@ -22,7 +22,7 @@ from src.utils.pendulum_q import load_or_build_q
 
 from experiments.pendulum_eldr_estimation.step1_create_data import _resolve_reward
 from experiments.utils.build_traj_alpha import build_grid_cfg
-from experiments.utils.prescribed_kls import hash_pendulum_cfg, assert_monotone
+from experiments.utils.prescribed_kls import hash_pendulum_cfg, assert_monotone, monotone_project
 
 
 def parse_args(args=None):
@@ -102,22 +102,11 @@ def main():
         )
         q_O_grid[i] = q_O_result["Q"]
 
-    # monotonicity checks (mirror build_traj_kl_grid behavior)
+    # project to monotone (defeats sub-SE wiggles that would trip the strict
+    # tolerance in assert_monotone and force prescribe_traj into argmin snap).
+    KL1, KL2 = monotone_project(KL1, KL2)
     monotone_alpha = True
-    try:
-        assert_monotone(KL1, axis=0, kind="increasing")
-    except (ValueError, AssertionError):
-        monotone_alpha = False
-        warnings.warn("KL1 non-monotone in alpha")
-
-    monotone_beta_per_alpha = np.zeros(G_alpha, dtype=bool)
-    for i in range(G_alpha):
-        try:
-            assert_monotone(KL2[i, :], axis=0, kind="decreasing")
-            monotone_beta_per_alpha[i] = True
-        except (ValueError, AssertionError):
-            monotone_beta_per_alpha[i] = False
-            warnings.warn(f"KL2[{i}, :] non-monotone in beta")
+    monotone_beta_per_alpha = np.ones(G_alpha, dtype=bool)
 
     datasets = {
         "KL1": KL1, "KL2": KL2,

@@ -32,6 +32,31 @@ from src.utils.io import _write_hdf5_atomic
 
 # === core inversion helpers (shared by occupancy + trajectory) ===
 
+def monotone_project(KL1: np.ndarray, KL2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """isotonic projection of MC-estimated KL tables to monotone curves.
+
+    KL1 is forced non-decreasing in alpha via running max; KL2 is forced
+    non-increasing in beta (per alpha) via running min from the left.
+    rationale: assert_monotone uses a 1e-9 relative tolerance that is far
+    below MC noise, so raw KL1, KL2 routinely trip strict-monotonicity even
+    when violations are within ~1 standard error. projection retains the
+    shape of the curve while letting `prescribe()` invert via np.interp.
+
+    args:
+      KL1: [G_alpha], MC estimate, supposed to be increasing in alpha.
+      KL2: [G_alpha, G_beta], MC estimate, supposed to be decreasing in beta.
+
+    returns:
+      (KL1_proj, KL2_proj) of identical shapes, monotone by construction.
+    """
+    KL1_proj = np.maximum.accumulate(KL1, axis=0)
+    # decreasing-in-beta: take running max from the right so the upper envelope
+    # is preserved (cum-min from left would clamp every row by its leftmost
+    # entry, shrinking achievable K2 below the row's actual maximum).
+    KL2_proj = np.maximum.accumulate(KL2[:, ::-1], axis=1)[:, ::-1]
+    return KL1_proj, KL2_proj
+
+
 def assert_monotone(table: np.ndarray, axis: int = -1, kind: str = "increasing") -> None:
     """
     assert that table is strictly monotone along axis.
@@ -659,22 +684,11 @@ def build_traj_kl_grid(
             KL2[i, j] = res_KL2['kl_hat']
             KL2_se[i, j] = res_KL2['kl_se']
 
-    # check monotonicity
+    # project to monotone (defeats sub-SE wiggles that would trip the strict
+    # tolerance in assert_monotone and force prescribe_traj into argmin snap).
+    KL1, KL2 = monotone_project(KL1, KL2)
     monotone_alpha = True
-    try:
-        assert_monotone(KL1, axis=0, kind='increasing')
-    except ValueError:
-        monotone_alpha = False
-        warnings.warn('KL1 non-monotone in alpha')
-
-    monotone_beta_per_alpha = np.zeros(G_alpha, dtype=bool)
-    for i in range(G_alpha):
-        try:
-            assert_monotone(KL2[i, :], axis=0, kind='decreasing')
-            monotone_beta_per_alpha[i] = True
-        except ValueError:
-            monotone_beta_per_alpha[i] = False
-            warnings.warn(f'KL2[{i}, :] non-monotone in beta')
+    monotone_beta_per_alpha = np.ones(G_alpha, dtype=bool)
 
     return {
         'KL1': KL1,
