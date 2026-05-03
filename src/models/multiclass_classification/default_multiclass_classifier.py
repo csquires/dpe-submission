@@ -15,6 +15,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         # training hyperparameters
         learning_rate: float = 0.05,
         num_epochs: int = 1000,
+        batch_size: int | None = None,
     ):
         super().__init__()
         if n_hidden_layers < 1:
@@ -30,6 +31,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         self.num_classes = num_classes
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
+        self.batch_size = batch_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -43,20 +45,36 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
                     nn.init.zeros_(module.bias)
 
     def fit(
-        self, 
+        self,
         xs: torch.Tensor,  # [n, dim]
         ys: torch.Tensor,  # [n], with values in {0, ..., num_classes-1}
     ) -> None:
+        """train via AdamW + CrossEntropyLoss.
+
+        falls back to full-batch when self.batch_size is None or >= n.
+        """
         self._reset_parameters()
         self.train()
         loss = nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        n = xs.shape[0]
+        bs = self.batch_size if (self.batch_size and self.batch_size < n) else n
         for epoch in range(self.num_epochs):
-            optimizer.zero_grad()
-            y_pred = self.forward(xs)
-            l = loss(y_pred, ys)
-            l.backward()
-            optimizer.step()
+            if bs == n:
+                optimizer.zero_grad()
+                y_pred = self.forward(xs)
+                l = loss(y_pred, ys)
+                l.backward()
+                optimizer.step()
+            else:
+                perm = torch.randperm(n, device=xs.device)
+                for start in range(0, n, bs):
+                    idx = perm[start:start + bs]
+                    optimizer.zero_grad()
+                    y_pred = self.forward(xs[idx])
+                    l = loss(y_pred, ys[idx])
+                    l.backward()
+                    optimizer.step()
         if y_pred.isnan().any():
             breakpoint()
 

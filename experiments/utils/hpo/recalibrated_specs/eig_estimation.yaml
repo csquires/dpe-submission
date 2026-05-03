@@ -195,6 +195,17 @@ methods:
     - log_uniform_int
     - 100
     - 500
+    # batch_size for classifier methods on EIG: max strictly > MS nsamples_train
+    # (4096) so MS always falls back to full-batch (bs >= n -> full-batch path);
+    # ceiling at 16384 to avoid cache thrash for MultiHeadTDRE where per-step
+    # rows = num_heads * bs (cpu bench at n=75K, 200 epochs, 4 threads:
+    # bs=32768 regressed MultiHeadTDRE to 0.91x; bs in {4096,8192,16384} is safe
+    # across BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE with 1.5-1.78x speedup).
+    batch_size: &classifier_minibatch_eig
+    - choice
+    - - 4096
+      - 8192
+      - 16384
   CTSM:
     n_epochs:
     - log_uniform_int
@@ -247,6 +258,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 1
+    batch_size: *classifier_minibatch_eig
   MultiHeadTDRE:
     learning_rate:
     - log_uniform
@@ -279,6 +291,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 2
+    batch_size: *classifier_minibatch_eig
   TSM:
     n_epochs:
     - log_uniform_int
@@ -434,6 +447,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 1
+    batch_size: *classifier_minibatch_eig
   TriangularVFM_V1:
     n_epochs:
     - log_uniform_int

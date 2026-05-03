@@ -16,6 +16,7 @@ class DefaultBinaryClassifier(BinaryClassifier):
         learning_rate: float = 0.005,
         # num_epochs: int = 100,
         num_epochs: int = 300,
+        batch_size: int | None = None,
     ):
         super().__init__()
         if n_hidden_layers < 1:
@@ -30,6 +31,7 @@ class DefaultBinaryClassifier(BinaryClassifier):
         self.model = nn.Sequential(*layers)
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
+        self.batch_size = batch_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -43,20 +45,39 @@ class DefaultBinaryClassifier(BinaryClassifier):
                     nn.init.zeros_(module.bias)
 
     def fit(
-        self, 
+        self,
         xs: torch.Tensor,  # [n, dim]
         ys: torch.Tensor,  # [n, 1], with values in {0, 1}
     ) -> None:
+        """train via AdamW + BCEWithLogitsLoss.
+
+        if self.batch_size is None or >= n, runs full-batch (legacy default).
+        otherwise: per epoch, shuffle indices and step through mini-batches of
+        size self.batch_size. mini-batch path enables training on datasets
+        whose forward pass on the full tensor would dominate wallclock.
+        """
         self._reset_parameters()
         self.train()
         loss = nn.BCEWithLogitsLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        n = xs.shape[0]
+        bs = self.batch_size if (self.batch_size and self.batch_size < n) else n
         for epoch in range(self.num_epochs):
-            optimizer.zero_grad()
-            y_pred = self.forward(xs)
-            l = loss(y_pred, ys)
-            l.backward()
-            optimizer.step()
+            if bs == n:
+                optimizer.zero_grad()
+                y_pred = self.forward(xs)
+                l = loss(y_pred, ys)
+                l.backward()
+                optimizer.step()
+            else:
+                perm = torch.randperm(n, device=xs.device)
+                for start in range(0, n, bs):
+                    idx = perm[start:start + bs]
+                    optimizer.zero_grad()
+                    y_pred = self.forward(xs[idx])
+                    l = loss(y_pred, ys[idx])
+                    l.backward()
+                    optimizer.step()
         if y_pred.isnan().any():
             breakpoint()
 

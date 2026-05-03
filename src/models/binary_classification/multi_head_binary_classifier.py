@@ -40,6 +40,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         epoch_scale: int = 1,
         lr_hidden_dim_scale: bool = False,
         lr_base_dim: int = 16,
+        batch_size: int | None = None,
     ) -> None:
         super().__init__()
 
@@ -64,6 +65,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         self.num_heads = num_heads
         self.hidden_dim = hidden_dim
         self.head_dim = head_dim
+        self.batch_size = batch_size
 
         # apply epoch scaling (match total optimization budget of separate classifiers)
         self.num_epochs = num_epochs * epoch_scale
@@ -129,12 +131,19 @@ class MultiHeadBinaryClassifier(nn.Module):
         xs_per_head: List[torch.Tensor],
         ys_per_head: List[torch.Tensor],
     ) -> None:
-        """Train with batched backbone pass and per-head loss.
+        """train shared backbone + per-head binary classifiers.
 
-        Optimizations:
-        1. Single backbone pass on concatenated data (O(1) vs O(num_heads))
-        2. Parallel head application via einsum
-        3. Efficient loss accumulation
+        single backbone pass per optimizer step on concatenated head data;
+        per-head losses summed (no averaging, see below) and back-propagated.
+
+        if self.batch_size is None or >= max(n_i), runs full-batch (legacy).
+        otherwise: per epoch, shuffle each head's indices independently and step
+        through mini-batches of size self.batch_size sampled from EACH head;
+        cyclic wrap-around when a head's permutation is exhausted within an epoch
+        (preserves per-head loss balance even with unequal n_i).
+
+        backprop without averaging: each head needs full gradient signal
+        (averaging by num_heads would undertrain individual heads).
 
         xs_per_head: list of [n_i, input_dim] tensors
         ys_per_head: list of [n_i, 1] tensors with values in {0, 1}
@@ -145,34 +154,44 @@ class MultiHeadBinaryClassifier(nn.Module):
         loss_fn = nn.BCEWithLogitsLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         num_heads = len(xs_per_head)
+        n_per_head = [xs.shape[0] for xs in xs_per_head]
+        max_n = max(n_per_head)
+        bs = self.batch_size if (self.batch_size and self.batch_size < max_n) else max_n
 
-        # precompute batch sizes for splitting
-        batch_sizes = [xs.shape[0] for xs in xs_per_head]
-
-        for _ in range(self.num_epochs):
+        def _step(xs_list, ys_list, sizes):
             optimizer.zero_grad()
-
-            # single backbone pass on all data
-            xs_cat = torch.cat(xs_per_head, dim=0)  # [total, input_dim]
-            features_cat = self.backbone(xs_cat)    # [total, hidden_dim]
-
-            # split features back by head
-            features_split = torch.split(features_cat, batch_sizes, dim=0)
-
-            # compute loss per head (heads applied in parallel per split)
+            xs_cat = torch.cat(xs_list, dim=0)
+            features_cat = self.backbone(xs_cat)
+            features_split = torch.split(features_cat, sizes, dim=0)
             total_loss = 0.0
-            for i, (feat_i, ys_i) in enumerate(zip(features_split, ys_per_head)):
-                # apply only head i to its features
-                # feat_i: [n_i, hidden_dim]
-                h = feat_i @ self.heads_w1[i] + self.heads_b1[i]  # [n_i, head_dim]
+            for i, (feat_i, ys_i) in enumerate(zip(features_split, ys_list)):
+                h = feat_i @ self.heads_w1[i] + self.heads_b1[i]
                 h = F.relu(h)
-                logits_i = (h @ self.heads_w2[i] + self.heads_b2[i]).squeeze(-1)  # [n_i]
+                logits_i = (h @ self.heads_w2[i] + self.heads_b2[i]).squeeze(-1)
                 total_loss = total_loss + loss_fn(logits_i, ys_i.squeeze(-1))
-
-            # backprop without averaging: each head needs full gradient signal
-            # (averaging would scale head gradients by 1/num_heads, undertrain them)
             total_loss.backward()
             optimizer.step()
+
+        if bs == max_n:
+            for _ in range(self.num_epochs):
+                _step(xs_per_head, ys_per_head, n_per_head)
+        else:
+            for _ in range(self.num_epochs):
+                perms = [
+                    torch.randperm(n_per_head[i], device=xs_per_head[i].device)
+                    for i in range(num_heads)
+                ]
+                for start in range(0, max_n, bs):
+                    xs_batch, ys_batch = [], []
+                    for i in range(num_heads):
+                        n_i = n_per_head[i]
+                        # cyclic wrap so each head sees bs samples per step even
+                        # when start+bs exceeds n_i (preserves per-head loss balance).
+                        idx = torch.arange(start, start + bs, device=perms[i].device) % n_i
+                        idx = perms[i][idx]
+                        xs_batch.append(xs_per_head[i][idx])
+                        ys_batch.append(ys_per_head[i][idx])
+                    _step(xs_batch, ys_batch, [bs] * num_heads)
 
         self.eval()
 
