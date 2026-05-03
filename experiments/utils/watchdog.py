@@ -7,7 +7,7 @@ optuna_study.cleanup_zombies() every 50 cycles for any active studies
 discovered under DPE_DATA_ROOT.
 """
 
-import argparse, collections, fcntl, json, logging, os, random, re
+import argparse, collections, fcntl, json, logging, math, os, random, re
 import signal, subprocess, sys, time
 from enum import Enum
 from pathlib import Path
@@ -622,6 +622,21 @@ def _save_state(state_file: Path, submitted_jids: set, seen_jid_node: set,
     os.replace(tmp_path, state_file)
 
 
+def _result_is_finite(result_file: Path) -> bool:
+    """true iff result_file holds a json with a finite numeric `score`.
+
+    used by orphan scanner + dispatch dedup to distinguish completed trials
+    (finite score, no rerun needed) from previously-failed trials (inf, nan,
+    missing, or unreadable; should be re-emitted).
+    """
+    try:
+        with open(result_file) as rf:
+            score = json.load(rf).get("score")
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    return isinstance(score, (int, float)) and math.isfinite(float(score))
+
+
 def _collect_experiment_output_dirs(queue_file: Path) -> list[Path]:
     """parse queue file to extract unique experiment output_dirs.
 
@@ -886,8 +901,8 @@ def scan_for_orphans(output_dirs: list[Path], queue_file: Path,
 
                     # check preconditions for orphan status
                     result_file = output_dir / stage / f"trial_{trial_id}.json"
-                    if result_file.exists():
-                        continue  # result exists; not orphan
+                    if result_file.exists() and _result_is_finite(result_file):
+                        continue  # finite result exists; not orphan
 
                     if _is_in_queue(queue_file, lock_file, method, trial_id):
                         continue  # in queue; not orphan
@@ -1302,7 +1317,7 @@ def main() -> None:
                 m_stg = re.search(r'--stage\s+([^\s"]+)', raw_cmd)
                 if m_cfg and m_out and m_stg:
                     expected = Path(m_out.group(1)) / m_stg.group(1) / f"trial_{m_cfg.group(1)}.json"
-                    if expected.exists():
+                    if expected.exists() and _result_is_finite(expected):
                         _log_event("DUPLICATE_SKIP", trial_id=m_cfg.group(1),
                                    method=method, stage=m_stg.group(1))
                         continue
