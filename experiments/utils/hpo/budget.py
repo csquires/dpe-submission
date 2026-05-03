@@ -10,17 +10,31 @@ STAGE_SPLIT: dict[str, int] = {
     "persist": 0,
 }
 
+# per-method overrides for stage budgets. methods listed here use a smaller
+# trial budget for broad and/or refined; missing keys fall back to STAGE_SPLIT.
+# rationale: FMDRE family (slow flow methods on `general` partition via lite
+# watchdog) is bottlenecked on partition cap and per-trial wallclock; reduce
+# their budget so the rest of the campaign can finish in a reasonable horizon.
+METHOD_BUDGET_OVERRIDES: dict[str, dict[str, int]] = {
+    "FMDRE":           {"broad": 50, "refined": 15},
+    "FMDRE_S2":        {"broad": 50, "refined": 15},
+    "TriangularFMDRE": {"broad": 50, "refined": 15},
+}
 
-def stage_budget(stage: str, total: int = TOTAL_BUDGET) -> int:
-    """return trial count for one stage under fixed 250-trial budget.
+
+def stage_budget(stage: str, method: str | None = None,
+                 total: int = TOTAL_BUDGET) -> int:
+    """return trial count for one stage; honors per-method overrides.
 
     args:
       stage: one of "broad", "refined", "holdout", "recalibrate", "persist".
+      method: optional method name; if listed in METHOD_BUDGET_OVERRIDES with
+        an entry for this stage, that override is returned. otherwise the
+        global STAGE_SPLIT value is returned.
       total: total budget (must equal TOTAL_BUDGET=250 in v1; no scaling).
 
     returns: integer trial count for this stage.
-    raises ValueError if stage not in STAGE_SPLIT.
-    raises ValueError if total != TOTAL_BUDGET.
+    raises ValueError if stage not in STAGE_SPLIT or total != TOTAL_BUDGET.
     """
     if total != TOTAL_BUDGET:
         raise ValueError(
@@ -32,6 +46,10 @@ def stage_budget(stage: str, total: int = TOTAL_BUDGET) -> int:
             f"unknown stage: {stage}. must be one of {list(STAGE_SPLIT.keys())}"
         )
 
+    if method and method in METHOD_BUDGET_OVERRIDES:
+        overrides = METHOD_BUDGET_OVERRIDES[method]
+        if stage in overrides:
+            return overrides[stage]
     return STAGE_SPLIT[stage]
 
 

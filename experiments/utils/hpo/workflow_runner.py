@@ -119,18 +119,18 @@ class Pair:
 
             elif self.stage == Stage.GEN_BROAD:
                 wf.broad(self.method, self.experiment, self._adapter_or_load(),
-                         n=stage_budget("broad"), seed=self.seed,
+                         n=stage_budget("broad", method=self.method), seed=self.seed,
                          output_dir=self.output_dir, queue_file=queue_file)
                 self.stage = Stage.WAIT_BROAD
 
             elif self.stage == Stage.WAIT_BROAD:
-                if self._count_results("broad") >= stage_budget("broad"):
+                if self._count_results("broad") >= stage_budget("broad", method=self.method):
                     self.stage = Stage.GEN_REFINED
 
             elif self.stage == Stage.GEN_REFINED:
                 result = wf.refined(self.method, self.experiment,
                                     self._adapter_or_load(),
-                                    n=stage_budget("refined"), seed=self.seed,
+                                    n=stage_budget("refined", method=self.method), seed=self.seed,
                                     output_dir=self.output_dir,
                                     queue_file=queue_file)
                 if result is None or result.get("skipped"):
@@ -139,7 +139,7 @@ class Pair:
                     self.stage = Stage.WAIT_REFINED
 
             elif self.stage == Stage.WAIT_REFINED:
-                if self._count_results("refined") >= stage_budget("refined"):
+                if self._count_results("refined") >= stage_budget("refined", method=self.method):
                     self.stage = Stage.GEN_HOLDOUT
 
             elif self.stage == Stage.GEN_HOLDOUT:
