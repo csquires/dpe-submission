@@ -1,14 +1,13 @@
 provenance:
-  source: "1200 trials offline scan at $DPE_DATA_ROOT/mnist_eldr_cond_flow/hpo_results"
-  derived_at: "2026-05-01"
-  rule: "top-10 per-param narrowed via recalibrated_rerun.md section 2"
-  fmdre_standardization: "integration_steps capped at 5000 (matched VFM range); div_method swept over [exact, hutch_gaussian, hutch_rademacher]"
-  note: "single-element choice lists (e.g., TriangularVFM_V2 k=[10]) indicate consensus across all top-10 trials"
-  patches_2026_05_02:
-    - "renamed legacy alias MHTTDRE -> MultiHeadTriangularTDRE (alias not honored by _load_recalibrated_spec)"
-    - "added BDRE, MDRE_15, MultiHeadTDRE, TriangularMDRE, TriangularTSM (5 methods previously missing -> fell back to METHOD_SPECS defaults)"
-    - "added integration_steps to TriangularCTSM_V1/V2/V3 (builders previously KeyError'd before patch; YAML now matches)"
-    - "TEMPORARY: removed FMDRE, FMDRE_S2, TriangularFMDRE entries to skip them this campaign (queue contention). re-add when queue is quiet — copy from git history of this file."
+  source: "mirrored from mnist_cond_flow.yaml; pendulum has h5 layout with samples_p0/p1 of shape (5000, 18) per cell, so per-cell training concat is 10000 rows. classifier methods get batch_size to engage mini-batch SGD on cpu when n > bs."
+  derived_at: "2026-05-03"
+  rule: "copy mnist hyperparameter ranges as starting point; pendulum sample count is 10K per cell concat (vs EIG/dbpedia ~80K), so batch_size choice [4096, 8192, 16384] gives mixed mini-batch (4096, 8192) vs full-batch (16384) coverage. all values strictly greater than MS nsamples_train (4096) so MS would auto-fall-back if shared."
+  notes:
+    - "classifier methods (BDRE, MDRE_15, MultiHeadTDRE, TriangularMDRE, MultiHeadTriangularTDRE) include batch_size: choice [4096, 8192, 16384]."
+    - "FMDRE/FMDRE_S2/TriangularFMDRE owned by lite watchdog (jid 7666009) on partition=general; do not include here."
+    - "MultiHeadTDRE batch_size capped at 16384 to avoid cpu cache thrash (per-step rows = num_heads * bs)."
+  patches_2026_05_03:
+    - "initial creation of pendulum recalibrated spec with batch_size for classifier methods."
 
 workflow_version: "v1"
 
@@ -38,12 +37,20 @@ methods:
     latent_dim: ['choice', [64, 128, 256]]
     learning_rate: ['log_uniform', 1.0e-4, 1.0e-2]
     num_epochs: ['log_uniform_int', 100, 500]
+    # pendulum per-cell concat is 10K (p0=5000 + p1=5000); 16384 would silently
+    # collapse to full-batch via the bs>=n fallback, wasting an HPO sample, so we
+    # encode the full-batch control explicitly as null. resulting choices:
+    #   4096 -> ~3 mini-batches per epoch
+    #   8192 -> 2 mini-batches per epoch (last tiny)
+    #   null -> full-batch (control)
+    batch_size: &classifier_minibatch_pendulum ['choice', [4096, 8192, null]]
 
   MDRE_15:
     latent_dim: ['choice', [64, 128, 256]]
     learning_rate: ['log_uniform', 1.0e-4, 1.0e-2]
     num_epochs: ['log_uniform_int', 100, 500]
     num_waypoints: ['choice', [5, 10, 15, 20]]
+    batch_size: *classifier_minibatch_pendulum
 
   MultiHeadTDRE:
     learning_rate: ['log_uniform', 1.0e-4, 1.0e-2]
@@ -52,6 +59,7 @@ methods:
     head_dim: ['choice', [10, 20, 40]]
     num_shared_layers: ['choice', [1, 2, 3]]
     num_waypoints: ['choice', [5, 10, 15]]
+    batch_size: *classifier_minibatch_pendulum
 
   MultiHeadTriangularTDRE:
     learning_rate: ['log_uniform', 0.0001386, 0.007548]
@@ -61,7 +69,7 @@ methods:
     num_shared_layers: ['choice', [1, 3]]
     num_waypoints: ['choice', [5, 10, 15]]
     vertex: ['uniform', 0.2, 0.8]
-    batch_size: ['choice', [4096, 8192, 16384]]
+    batch_size: *classifier_minibatch_pendulum
 
   TriangularMDRE:
     latent_dim: ['choice', [64, 128, 256]]
@@ -71,6 +79,7 @@ methods:
     gamma_power: ['uniform', 1.0, 5.0]
     num_waypoints: ['choice', [5, 10, 15]]
     vertex: ['uniform', 0.2, 0.8]
+    batch_size: *classifier_minibatch_pendulum
 
   TriangularTSM:
     n_epochs: ['log_uniform_int', 750, 1500]
@@ -139,7 +148,7 @@ methods:
     path_height: ['uniform', 1.0, 2.0]
     integration_steps: ['uniform_int', 579, 3000]
 
-# TEMPORARY EXCLUSIONS — re-add when preempt queue is quiet
-# Original entries preserved in git: see f353e24 or earlier for full FMDRE/FMDRE_S2/TriangularFMDRE specs.
-# When launching MNIST in this campaign, pass --methods explicitly excluding these 3:
+# FMDRE family deliberately omitted -- owned by lite watchdog (jid 7666009 as of 2026-05-03)
+# on partition=general. when launching pendulum in this campaign, pass --methods CSV explicitly
+# (excluding these 3):
 #   --methods BDRE,CTSM,MDRE_15,MultiHeadTDRE,MultiHeadTriangularTDRE,TSM,TriangularCTSM_V1,TriangularCTSM_V2,TriangularCTSM_V3,TriangularMDRE,TriangularTSM,TriangularVFM_V1,TriangularVFM_V2,TriangularVFM_V3,VFM

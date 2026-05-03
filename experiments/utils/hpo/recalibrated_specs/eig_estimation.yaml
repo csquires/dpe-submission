@@ -181,6 +181,13 @@ methods:
     n_hidden_layers:
     - choice
     - - 2
+    # inline (not anchor reference) because MultiHeadTriangularTDRE precedes
+    # the BDRE block where &classifier_minibatch_eig is defined.
+    batch_size:
+    - choice
+    - - 4096
+      - 8192
+      - 16384
   BDRE:
     latent_dim:
     - choice

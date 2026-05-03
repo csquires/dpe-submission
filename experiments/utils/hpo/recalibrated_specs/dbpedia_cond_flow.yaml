@@ -1,14 +1,14 @@
 provenance:
-  source: "1200 trials offline scan at $DPE_DATA_ROOT/mnist_eldr_cond_flow/hpo_results"
-  derived_at: "2026-05-01"
-  rule: "top-10 per-param narrowed via recalibrated_rerun.md section 2"
-  fmdre_standardization: "integration_steps capped at 5000 (matched VFM range); div_method swept over [exact, hutch_gaussian, hutch_rademacher]"
-  note: "single-element choice lists (e.g., TriangularVFM_V2 k=[10]) indicate consensus across all top-10 trials"
-  patches_2026_05_02:
-    - "renamed legacy alias MHTTDRE -> MultiHeadTriangularTDRE (alias not honored by _load_recalibrated_spec)"
-    - "added BDRE, MDRE_15, MultiHeadTDRE, TriangularMDRE, TriangularTSM (5 methods previously missing -> fell back to METHOD_SPECS defaults)"
-    - "added integration_steps to TriangularCTSM_V1/V2/V3 (builders previously KeyError'd before patch; YAML now matches)"
-    - "TEMPORARY: removed FMDRE, FMDRE_S2, TriangularFMDRE entries to skip them this campaign (queue contention). re-add when queue is quiet — copy from git history of this file."
+  source: "mirrored from mnist_cond_flow.yaml; dbpedia adapter is structurally identical (same h5 keys, same alphas x pairs cell pool, same num_waypoints=15) per dbpedia_cond_flow.py docstring."
+  derived_at: "2026-05-03"
+  rule: "copy mnist hyperparameter ranges as starting point; dbpedia has 64-dim latent (vs 14 for mnist) and 80K samples per cell concat (vs ~few K mnist), so classifier methods get explicit batch_size to engage mini-batch SGD on cpu and avoid full-batch wallclock blowup."
+  notes:
+    - "classifier methods (BDRE, MDRE_15, MultiHeadTDRE, TriangularMDRE) include batch_size: choice [4096, 8192, 16384]. all options strictly less than dbpedia per-cell concat (80000), so mini-batch always engages. all options strictly greater than MS nsamples_train (4096) so MS would auto-fall-back to full-batch if this anchor were ever shared across experiments."
+    - "FMDRE/FMDRE_S2/TriangularFMDRE owned by lite watchdog (jid 7666009) on partition=general; do not include here."
+    - "MultiHeadTDRE batch_size capped at 16384 to avoid cpu cache thrash (per-step rows = num_heads * bs)."
+  patches_2026_05_03:
+    - "initial creation of dbpedia recalibrated spec"
+    - "added batch_size hyperparam to BDRE, MDRE_15, MultiHeadTDRE, TriangularMDRE for cpu mini-batch SGD speedup."
 
 workflow_version: "v1"
 
@@ -38,12 +38,14 @@ methods:
     latent_dim: ['choice', [64, 128, 256]]
     learning_rate: ['log_uniform', 1.0e-4, 1.0e-2]
     num_epochs: ['log_uniform_int', 100, 500]
+    batch_size: &classifier_minibatch_dbpedia ['choice', [4096, 8192, 16384]]
 
   MDRE_15:
     latent_dim: ['choice', [64, 128, 256]]
     learning_rate: ['log_uniform', 1.0e-4, 1.0e-2]
     num_epochs: ['log_uniform_int', 100, 500]
     num_waypoints: ['choice', [5, 10, 15, 20]]
+    batch_size: *classifier_minibatch_dbpedia
 
   MultiHeadTDRE:
     learning_rate: ['log_uniform', 1.0e-4, 1.0e-2]
@@ -52,6 +54,7 @@ methods:
     head_dim: ['choice', [10, 20, 40]]
     num_shared_layers: ['choice', [1, 2, 3]]
     num_waypoints: ['choice', [5, 10, 15]]
+    batch_size: *classifier_minibatch_dbpedia
 
   MultiHeadTriangularTDRE:
     learning_rate: ['log_uniform', 0.0001386, 0.007548]
@@ -61,7 +64,7 @@ methods:
     num_shared_layers: ['choice', [1, 3]]
     num_waypoints: ['choice', [5, 10, 15]]
     vertex: ['uniform', 0.2, 0.8]
-    batch_size: ['choice', [4096, 8192, 16384]]
+    batch_size: *classifier_minibatch_dbpedia
 
   TriangularMDRE:
     latent_dim: ['choice', [64, 128, 256]]
@@ -71,6 +74,7 @@ methods:
     gamma_power: ['uniform', 1.0, 5.0]
     num_waypoints: ['choice', [5, 10, 15]]
     vertex: ['uniform', 0.2, 0.8]
+    batch_size: *classifier_minibatch_dbpedia
 
   TriangularTSM:
     n_epochs: ['log_uniform_int', 750, 1500]
@@ -139,7 +143,7 @@ methods:
     path_height: ['uniform', 1.0, 2.0]
     integration_steps: ['uniform_int', 579, 3000]
 
-# TEMPORARY EXCLUSIONS — re-add when preempt queue is quiet
-# Original entries preserved in git: see f353e24 or earlier for full FMDRE/FMDRE_S2/TriangularFMDRE specs.
-# When launching MNIST in this campaign, pass --methods explicitly excluding these 3:
+# FMDRE family deliberately omitted -- owned by lite watchdog (jid 7666009 as of 2026-05-03)
+# on partition=general. when launching dbpedia in this campaign, pass --methods CSV explicitly
+# (excluding these 3):
 #   --methods BDRE,CTSM,MDRE_15,MultiHeadTDRE,MultiHeadTriangularTDRE,TSM,TriangularCTSM_V1,TriangularCTSM_V2,TriangularCTSM_V3,TriangularMDRE,TriangularTSM,TriangularVFM_V1,TriangularVFM_V2,TriangularVFM_V3,VFM
