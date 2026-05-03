@@ -81,6 +81,11 @@ def run_trial(
         except FileNotFoundError as e:
             logger.warning("cell %s: data missing: %s", cs, e)
             continue
+        except (RuntimeError, OSError, ImportError, MemoryError):
+            # infrastructure failure (cuda init, broken nfs, oom): propagate
+            # so the process exits non-zero, slurm marks failed, orphan scan
+            # re-queues. distinct from numerical divergence (returns non-finite).
+            raise
         except Exception as e:
             logger.warning("cell %s: %s: %s", cs, type(e).__name__, e)
             continue

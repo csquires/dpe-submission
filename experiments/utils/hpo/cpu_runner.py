@@ -144,6 +144,10 @@ def _eval_trial(
             mae = adapter.eval_cell(
                 cell, method, builder, hyperparams, requires_pstar, "cpu", data=data
             )
+        except (RuntimeError, OSError, ImportError, MemoryError):
+            # infrastructure failure (broken nfs, oom): propagate so the
+            # element exits non-zero, slurm marks failed, orphan scan re-queues.
+            raise
         except Exception as e:
             print(f"  [trial {trial_id}] cell {cs}: {type(e).__name__}: {e}", flush=True)
             continue
