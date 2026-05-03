@@ -220,6 +220,10 @@ methods:
     n_hidden_layers:
     - choice
     - - 2
+    integration_steps: &id001
+    - uniform_int
+    - 300
+    - 2600
   MDRE_15:
     latent_dim:
     - choice
@@ -325,6 +329,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 2
+    integration_steps: *id001
   TriangularCTSM_V2:
     n_epochs:
     - log_uniform_int
@@ -350,6 +355,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 2
+    integration_steps: *id001
   TriangularCTSM_V3:
     n_epochs:
     - log_uniform_int
@@ -392,6 +398,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 2
+    integration_steps: *id001
   TriangularMDRE:
     latent_dim:
     - choice

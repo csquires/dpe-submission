@@ -53,3 +53,4 @@ experiments/mnist_eldr_cond_flow/step5_compare.py
 # experiments/mnist_eldr_estimation/diagnostic_mem_profile.py
 # experiments/mnist_eldr_estimation/diagnostic_mem_profile.py
 slurm*
+tests/ablate.py

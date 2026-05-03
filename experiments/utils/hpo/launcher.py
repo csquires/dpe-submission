@@ -543,6 +543,11 @@ def parse_args() -> argparse.Namespace:
                    help="BLAS threads per worker (default 1 to match n_jobs=4 on 4 cpus)")
     p.add_argument("--cpu-mem", type=str, default="16G",
                    help="memory per array element task")
+    p.add_argument("--output-suffix", type=str, default="",
+                   help="suffix appended to per-pair output_dir leaf "
+                        "(data_root/<exp>/<method><suffix>); empty by default. "
+                        "use to run a parallel mini-campaign without clobbering "
+                        "an existing run's trial files.")
     return p.parse_args()
 
 
@@ -608,10 +613,11 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
     # submitted as separate cpu_qos jobs — the watchdog ticks each pair's
     # broad->refined->holdout->persist state machine in its main loop.
     data_root = Path(os.environ["DPE_DATA_ROOT"])
+    suffix = getattr(args, "output_suffix", "") or ""
     workflow_pairs_data = [
         {"method": method,
          "experiment": exp,
-         "output_dir": str(data_root / exp / method),
+         "output_dir": str(data_root / exp / f"{method}{suffix}"),
          "budget": args.budget}
         for method, exp in valid_pairs
     ]

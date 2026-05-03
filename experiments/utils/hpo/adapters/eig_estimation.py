@@ -130,7 +130,9 @@ class EIGAdapter(ExperimentAdapter):
             num_waypoints=nwp,
             **flat,
         )
-        if method.startswith("Triangular"):
+        # wrap any pstar-requiring estimator (covers MultiHeadTriangularTDRE too,
+        # whose name doesn't start with "Triangular")
+        if requires_pstar:
             est = _TriEIGAdapter(est)
         plugin = EIGPlugin(est)
         est_eig = plugin.estimate_eig(data["theta"], data["y"])
