@@ -97,7 +97,8 @@ def build_MHTTDRE(input_dim: int, device: str | torch.device, num_waypoints: int
         head_dim=flat_hp["head_dim"],
         num_shared_layers=flat_hp["num_shared_layers"],
         learning_rate=flat_hp["learning_rate"],
-        num_epochs=flat_hp["num_epochs"]
+        num_epochs=flat_hp["num_epochs"],
+        batch_size=flat_hp.get("batch_size"),
     )
     return MultiHeadTriangularTDRE(
         classifier=classifier,
@@ -122,7 +123,8 @@ def build_MHTDRE(input_dim: int, device: str | torch.device, num_waypoints: int,
         head_dim=flat_hp["head_dim"],
         num_shared_layers=flat_hp["num_shared_layers"],
         learning_rate=flat_hp["learning_rate"],
-        num_epochs=flat_hp["num_epochs"]
+        num_epochs=flat_hp["num_epochs"],
+        batch_size=flat_hp.get("batch_size"),
     )
     return MultiHeadTDRE(
         classifier=classifier,
