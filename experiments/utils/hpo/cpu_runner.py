@@ -174,6 +174,11 @@ def _eval_trial(
         "training_cells": [list(c) for c in cells],
         "workflow_version": "v1",
     }
+    # preserve trial_config._meta (e.g., holdout winner_config carries source_trial_id);
+    # workflow.persist() reads result["_meta"]["source_trial_id"] to locate the
+    # training-stage trial, so dropping it strands the method in error.
+    if "_meta" in trial_config:
+        result["_meta"] = trial_config["_meta"]
 
     out_dir = Path(output_dir) / stage
     out_dir.mkdir(parents=True, exist_ok=True)
