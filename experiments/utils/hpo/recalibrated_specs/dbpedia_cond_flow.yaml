@@ -58,11 +58,11 @@ methods:
 
   MultiHeadTriangularTDRE:
     learning_rate: ['log_uniform', 0.0001386, 0.007548]
-    num_epochs: ['log_uniform_int', 117, 793]
+    num_epochs: ['log_uniform_int', 117, 500]
     hidden_dim: ['choice', [16, 32, 64, 128]]
     head_dim: ['choice', [10, 20, 40]]
     num_shared_layers: ['choice', [1, 3]]
-    num_waypoints: ['choice', [5, 10, 15]]
+    num_waypoints: ['choice', [3, 5, 10, 15]]
     vertex: ['uniform', 0.2, 0.8]
     batch_size: *classifier_minibatch_dbpedia
 

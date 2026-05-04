@@ -16,9 +16,13 @@ STAGE_SPLIT: dict[str, int] = {
 # watchdog) is bottlenecked on partition cap and per-trial wallclock; reduce
 # their budget so the rest of the campaign can finish in a reasonable horizon.
 METHOD_BUDGET_OVERRIDES: dict[str, dict[str, int]] = {
-    "FMDRE":           {"broad": 50, "refined": 15},
-    "FMDRE_S2":        {"broad": 50, "refined": 15},
-    "TriangularFMDRE": {"broad": 50, "refined": 15},
+    "FMDRE":            {"broad": 40,  "refined": 10},
+    "FMDRE_S2":         {"broad": 40,  "refined": 10},
+    "TriangularFMDRE":  {"broad": 40,  "refined": 10},
+    "VFM":              {"broad": 100, "refined": 25},
+    "TriangularVFM_V1": {"broad": 100, "refined": 25},
+    "TriangularVFM_V2": {"broad": 100, "refined": 25},
+    "TriangularVFM_V3": {"broad": 100, "refined": 25},
 }
 
 

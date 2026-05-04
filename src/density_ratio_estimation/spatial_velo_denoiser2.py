@@ -13,6 +13,7 @@ import torch.optim as optim
 from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.models.flow.div_estimators import exact_div, hutch_div
 
 
 class MLP(nn.Module):
@@ -125,6 +126,9 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         verbose: bool = False,
         log_every: int = 100,
         antithetic: bool = False,
+        div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
+        div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
+        n_hutch_samples: int = 1,
     ):
         super().__init__(input_dim)
         self.integration_type = integration_type
@@ -140,6 +144,15 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         self.verbose = verbose
         self.log_every = log_every
         self.antithetic = antithetic
+        if div_method not in ('hutchinson', 'exact'):
+            raise ValueError(f"div_method must be 'hutchinson' or 'exact'; got {div_method!r}")
+        if div_noise not in ('rademacher', 'gaussian'):
+            raise ValueError(f"div_noise must be 'rademacher' or 'gaussian'; got {div_noise!r}")
+        if n_hutch_samples < 1:
+            raise ValueError(f"n_hutch_samples must be >= 1; got {n_hutch_samples}")
+        self.div_method = div_method
+        self.div_noise = div_noise
+        self.n_hutch_samples = n_hutch_samples
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -215,11 +228,13 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         def b_single(x_single):
             return self.net_b(t_scalar.view(1, 1), x_single.unsqueeze(0)).squeeze(0)
 
-        def jac_trace(x_single):
-            jac = torch.func.jacrev(b_single)(x_single)  # [dim, dim]
-            return torch.trace(jac)
-
-        div_b = torch.vmap(jac_trace)(x)  # [n_samples]
+        if self.div_method == 'exact':
+            div_b = exact_div(b_single, x)  # [n_samples]
+        else:
+            div_b = hutch_div(b_single, x, noise=self.div_noise)
+            for _ in range(self.n_hutch_samples - 1):
+                div_b = div_b + hutch_div(b_single, x, noise=self.div_noise)
+            div_b = div_b / self.n_hutch_samples
         b_dot_eta = (b_pred * eta_pred).sum(dim=-1)  # [n_samples]
 
         return -div_b + b_dot_eta / gamma_t  # [n_samples]
@@ -369,7 +384,8 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         compute_vmapped = torch.vmap(
             self._compute_time_score_single,
             in_dims=(0, None),  # batch over t, broadcast samples
-            out_dims=0
+            out_dims=0,
+            randomness='different',  # required for Hutchinson noise inside
         )
         chunk_size = max(1, 100000 // n_samples)
         time_score_chunks = []

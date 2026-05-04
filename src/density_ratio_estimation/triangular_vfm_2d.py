@@ -4,7 +4,7 @@ Mirrors TriangularVFM (1D) but trains two velocity heads (b_1, b_2) and one
 denoiser (eta) sequentially on a 2D-time stacked interpolant path. Inference
 integrates the time-score along a Curve2D from tau=eps to 1-eps.
 """
-from typing import Optional
+from typing import Optional, Literal
 import warnings
 import itertools
 
@@ -12,6 +12,7 @@ import torch
 import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.models.flow.div_estimators import exact_div, hutch_div
 from src.waypoints.path_2d import VfmPath2D
 from src.waypoints.triangular_continuous_2d import Stacked2DVfm
 from src.waypoints.curve_2d import Curve2D
@@ -43,6 +44,9 @@ class TriangularVFM2D(DensityRatioEstimator):
         device: Optional[str] = None,
         integration_steps: int = 200,
         antithetic: bool = True,
+        div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
+        div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
+        n_hutch_samples: int = 1,
         verbose: bool = False,
         log_every: int = 100,
     ) -> None:
@@ -82,6 +86,15 @@ class TriangularVFM2D(DensityRatioEstimator):
         self.eps = eps
         self.integration_steps = integration_steps
         self.antithetic = antithetic
+        if div_method not in ('hutchinson', 'exact'):
+            raise ValueError(f"div_method must be 'hutchinson' or 'exact'; got {div_method!r}")
+        if div_noise not in ('rademacher', 'gaussian'):
+            raise ValueError(f"div_noise must be 'rademacher' or 'gaussian'; got {div_noise!r}")
+        if n_hutch_samples < 1:
+            raise ValueError(f"n_hutch_samples must be >= 1; got {n_hutch_samples}")
+        self.div_method = div_method
+        self.div_noise = div_noise
+        self.n_hutch_samples = n_hutch_samples
         self.verbose = verbose
         self.log_every = log_every
 
@@ -364,6 +377,7 @@ class TriangularVFM2D(DensityRatioEstimator):
             self._compute_time_score_single,
             in_dims=(0, None),
             out_dims=0,
+            randomness='different',  # required for Hutchinson noise inside
         )
 
         time_score_chunks = []
@@ -423,14 +437,17 @@ class TriangularVFM2D(DensityRatioEstimator):
         def b2_single(x_single):
             return self.net_b2(t1_one, t2_one, x_single.unsqueeze(0)).squeeze(0)
 
-        def jac_trace_b1(x_single):
-            return torch.trace(torch.func.jacrev(b1_single)(x_single))
-
-        def jac_trace_b2(x_single):
-            return torch.trace(torch.func.jacrev(b2_single)(x_single))
-
-        div_b1 = torch.vmap(jac_trace_b1)(x)  # [n_samples]
-        div_b2 = torch.vmap(jac_trace_b2)(x)  # [n_samples]
+        if self.div_method == 'exact':
+            div_b1 = exact_div(b1_single, x)  # [n_samples]
+            div_b2 = exact_div(b2_single, x)  # [n_samples]
+        else:
+            div_b1 = hutch_div(b1_single, x, noise=self.div_noise)
+            div_b2 = hutch_div(b2_single, x, noise=self.div_noise)
+            for _ in range(self.n_hutch_samples - 1):
+                div_b1 = div_b1 + hutch_div(b1_single, x, noise=self.div_noise)
+                div_b2 = div_b2 + hutch_div(b2_single, x, noise=self.div_noise)
+            div_b1 = div_b1 / self.n_hutch_samples
+            div_b2 = div_b2 / self.n_hutch_samples
 
         # dot products
         b1_dot_eta = (b1_pred * eta_pred).sum(dim=-1)  # [n_samples]

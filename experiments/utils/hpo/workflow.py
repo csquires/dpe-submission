@@ -8,6 +8,7 @@ and tmp+os.replace. persist must be invoked separately (see main() docstring).
 import os
 import sys
 import json
+import math
 import yaml
 import time
 import fcntl
@@ -68,6 +69,22 @@ def _atomically_write_json(json_file: Path, data: Any) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, json_file)
+
+
+def _has_completed_result(result_file: Path) -> bool:
+    """true iff result_file exists with a finite numeric `score` field.
+
+    used by broad/refined to skip ID re-issue on relaunch (idempotency).
+    silently swallows malformed JSON / missing score; treats those as "not done".
+    """
+    if not result_file.exists():
+        return False
+    try:
+        d = json.loads(result_file.read_text())
+    except Exception:
+        return False
+    score = d.get("score")
+    return isinstance(score, (int, float)) and math.isfinite(score)
 
 
 def _append_queue_line(queue_file: Path, method: str, pilot_tag: str,
@@ -313,12 +330,18 @@ def broad(method: str, exp: str, adapter, n: int = 200, seed: int = 1729,
     # build registry wrapper for gen_config (expects {"search_space": ...})
     registry = {method: {"search_space": spec}}
 
+    # idempotent: skip IDs whose result already has a finite score so we
+    # neither overwrite the config nor re-queue the trial on watchdog restart.
     for trial_id in range(n):
+        if _has_completed_result(results_dir / f"trial_{trial_id}.json"):
+            continue
         config = gen_config(registry, method, trial_id)
         _atomically_write_json(config_dir / f"trial_{trial_id}.json", config)
 
     logdir = _ensure_dir(output_dir / "logs")
     for trial_id in range(n):
+        if _has_completed_result(results_dir / f"trial_{trial_id}.json"):
+            continue
         config_file = config_dir / f"trial_{trial_id}.json"
         sbatch_cmd = _build_sbatch_cmd(
             exp, method, config_file, cells_file, output_dir, "broad", logdir)
@@ -383,7 +406,10 @@ def refined(method: str, exp: str, adapter, n: int = 49, seed: int = 1729,
     results_dir = _ensure_dir(output_dir / "refined")  # B10
 
     registry = {method: {"search_space": narrowed}}
+    # idempotent: skip IDs whose result already has a finite score.
     for trial_id in range(n):
+        if _has_completed_result(results_dir / f"trial_{trial_id}.json"):
+            continue
         config = gen_config(registry, method, trial_id)
         _atomically_write_json(config_dir / f"trial_{trial_id}.json", config)
 
@@ -409,6 +435,8 @@ def refined(method: str, exp: str, adapter, n: int = 49, seed: int = 1729,
 
     logdir = _ensure_dir(output_dir / "logs")
     for trial_id in range(n):
+        if _has_completed_result(results_dir / f"trial_{trial_id}.json"):
+            continue
         config_file = config_dir / f"trial_{trial_id}.json"
         sbatch_cmd = _build_sbatch_cmd(
             exp, method, config_file, broad_cells_file, output_dir, "refined", logdir)
