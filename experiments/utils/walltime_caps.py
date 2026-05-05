@@ -99,7 +99,7 @@ def cpu_eligible_methods() -> set[str]:
 WALLTIME_CAPS_PREEMPT = {
     "TSM":                       "0:05:00",  # observed 4-cell 15s
     "CTSM":                      "0:05:00",
-    "VFM":                       "1:15:00",  # int_steps capped at 3000; covers heaviest path at p99 rate
+    "VFM":                       "1:45:00",  # bumped from 1:15 — hit timeouts at 1:15
     "BDRE":                      "0:05:00",
     "MDRE":                      "0:05:00",
     "MDRE_15":                   "0:05:00",
@@ -115,10 +115,10 @@ WALLTIME_CAPS_PREEMPT = {
     "TriangularCTSM":            "0:05:00",  # legacy alias for V1
     "TriangularCTSM_V2":         "0:05:00",
     "TriangularCTSM_V3":         "0:10:00",  # heavier 2D path
-    "TriangularVFM_V1":          "1:15:00",  # int_steps capped at 3000; covers V3 (heaviest) at p99 rate
-    "TriangularVFM":             "1:15:00",  # legacy alias for V1
-    "TriangularVFM_V2":          "1:15:00",
-    "TriangularVFM_V3":          "1:15:00",  # heaviest path; 3000 steps * 1.35 s/step ~= 67 min
+    "TriangularVFM_V1":          "1:45:00",  # bumped from 1:15 — observed timeouts
+    "TriangularVFM":             "1:45:00",  # legacy alias for V1
+    "TriangularVFM_V2":          "1:45:00",  # bumped from 1:15
+    "TriangularVFM_V3":          "1:45:00",  # bumped from 1:15
     "TabularPluginDRE":          "0:05:00",
     "SmoothedTabularPluginDRE":  "0:05:00",
 }
