@@ -15,28 +15,38 @@ class ScoreNetwork2D(nn.Module):
     inputs; the output dimensionality differs.
     """
 
-    def __init__(self, input_dim: int, hidden_dim: int = 256, n_hidden_layers: int = 3):
+    def __init__(self, input_dim: int, hidden_dim: int = 256, n_hidden_layers: int = 3, activation: str = "elu"):
         """Initialize score network.
 
         Args:
             input_dim: spatial dimension D.
             hidden_dim: hidden layer width (default 256).
             n_hidden_layers: number of hidden layers in backbone (default 3).
+            activation: activation function {"elu", "gelu", "silu"}; default "elu" for byte-identical behavior.
 
         Raises:
-            ValueError: if n_hidden_layers < 1.
+            ValueError: if n_hidden_layers < 1 or activation not in allowed set.
         """
         if n_hidden_layers < 1:
             raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}")
 
         super().__init__()
 
-        # build backbone: input projection + n_hidden_layers pairs of (Linear, ELU) + output projection
-        layers = [nn.Linear(input_dim + 2, hidden_dim), nn.ELU()]
+        # map activation string to nn module
+        act_map = {
+            "elu": nn.ELU(),
+            "gelu": nn.GELU(),
+            "silu": nn.SiLU(),
+        }
+
+        # build backbone: input projection + n_hidden_layers pairs of (Linear, activation) + output projection
+        layers = [nn.Linear(input_dim + 2, hidden_dim), act_map[activation]]
 
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ELU())
+            layers.append(act_map[activation])
 
         layers.append(nn.Linear(hidden_dim, 2))
 
