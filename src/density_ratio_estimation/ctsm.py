@@ -4,6 +4,7 @@ import torch
 import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation._ema import EMA, maybe_clip_grad, sample_time_and_iw
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 
 
@@ -30,11 +31,22 @@ class CTSM(DensityRatioEstimator):
         device: Optional[str] = None,
         integration_steps: int = 200,
         n_hidden_layers: int = 3,
+        ema_decay: Optional[float] = None,
+        grad_clip_norm: Optional[float] = None,
+        time_dist: str = "uniform",
+        activation: str = "elu",
     ) -> None:
         """
         Initialize CTSM estimator.
 
-        Store hyperparameters, set device, initialize model and optimizer to None.
+        Args mostly inherited from base. ema_decay (default None) enables EMA
+        of model parameters for inference; if set, must be in (0, 1).
+        grad_clip_norm (default None) clips gradient norm at the given value
+        before each optimizer step; None disables clipping.
+        time_dist: importance sampling time distribution. in {"uniform", "beta_2_2",
+        "beta_5_5"}; default "uniform" preserves current behavior.
+        activation: score network activation function {"elu", "gelu", "silu"};
+        default "elu" preserves byte-identical behavior.
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -45,12 +57,26 @@ class CTSM(DensityRatioEstimator):
         self.eps = eps
         self.integration_steps = integration_steps
         self.n_hidden_layers = n_hidden_layers
+        self.ema_decay = ema_decay
+        self.grad_clip_norm = grad_clip_norm
+        if time_dist not in {"uniform", "beta_2_2", "beta_5_5"}:
+            raise ValueError(
+                f"time_dist must be in {{'uniform', 'beta_2_2', 'beta_5_5'}}; "
+                f"got {time_dist!r}"
+            )
+        self.time_dist = time_dist
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(
+                f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
+            )
+        self.activation = activation
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
         self.model = None
         self.optimizer = None
+        self.ema: Optional[EMA] = None
 
     def init_model(self) -> None:
         """
@@ -58,10 +84,11 @@ class CTSM(DensityRatioEstimator):
 
         Instantiate TimeScoreNetwork1D on device, create Adam optimizer.
         """
-        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8
         )
+        self.ema = EMA(self.model, self.ema_decay) if self.ema_decay is not None else None
 
     def _epsilon_target(
         self,
@@ -136,8 +163,8 @@ class CTSM(DensityRatioEstimator):
             x0 = samples_p0[idx0]  # [B, dim]
             x1 = samples_p1[idx1]  # [B, dim]
 
-            # sample t and epsilon
-            t = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2 * self.eps) + self.eps  # [B, 1]
+            # sample t with importance weighting
+            t, iw = sample_time_and_iw(self.time_dist, self.batch_size, self.eps, self.device)  # [B, 1], [B, 1]
             epsilon = torch.randn_like(x0)  # [B, dim]
 
             # construct SB path
@@ -149,13 +176,17 @@ class CTSM(DensityRatioEstimator):
             # forward pass
             pred = self.model(x_t, t)  # [B, 1]
 
-            # loss
-            mse_loss = torch.mean((target - lambda_t * pred) ** 2)
+            # loss with importance weighting
+            err = target - lambda_t * pred  # [B, 1]
+            mse_loss = torch.mean(iw * (err ** 2))
 
             # backprop
             self.optimizer.zero_grad()
             mse_loss.backward()
+            maybe_clip_grad(self.model.parameters(), self.grad_clip_norm)
             self.optimizer.step()
+            if self.ema is not None:
+                self.ema.update(self.model)
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """Estimate log density ratio via trapezoidal quadrature.
@@ -176,14 +207,21 @@ class CTSM(DensityRatioEstimator):
         xs = xs.to(self.device)
         n = xs.shape[0]
 
-        ts = torch.linspace(self.eps, 1.0 - self.eps, self.integration_steps, device=self.device)
-        with torch.no_grad():
-            vals = torch.stack([
-                -self.model(xs, torch.full((n, 1), float(t.item()), device=self.device)).squeeze(-1)
-                for t in ts
-            ])
-        dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
-        return torch.trapezoid(vals, dx=dt, dim=0).cpu()
+        # if EMA is active, evaluate with the shadow weights and restore on exit
+        if self.ema is not None:
+            self.ema.apply_to(self.model)
+        try:
+            ts = torch.linspace(self.eps, 1.0 - self.eps, self.integration_steps, device=self.device)
+            with torch.no_grad():
+                vals = torch.stack([
+                    -self.model(xs, torch.full((n, 1), float(t.item()), device=self.device)).squeeze(-1)
+                    for t in ts
+                ])
+            dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
+            return torch.trapezoid(vals, dx=dt, dim=0).cpu()
+        finally:
+            if self.ema is not None:
+                self.ema.restore(self.model)
 
 
 if __name__ == "__main__":
