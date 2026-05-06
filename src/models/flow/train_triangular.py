@@ -20,6 +20,10 @@ def train_triangular_flow(
     device: Optional[str] = None,
     verbose: bool = False,
     log_every: int = 100,
+    adam_betas: tuple = (0.9, 0.999),
+    weight_decay: float = 0.0,
+    cosine_min_factor: float = 1.0,
+    triangular_p_uncond: float = 0.0,
 ) -> nn.Module:
     """train 3-class triangular flow matching with masked score loss.
 
@@ -142,7 +146,10 @@ def train_triangular_flow(
     model.train()
 
     # initialize optimizer
-    optimizer = optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-8)
+    optimizer = optim.Adam(model.parameters(), lr=lr, betas=tuple(adam_betas), eps=1e-8, weight_decay=float(weight_decay))
+    scheduler = (None if cosine_min_factor == 1.0 else
+                 optim.lr_scheduler.CosineAnnealingLR(
+                     optimizer, T_max=n_epochs, eta_min=lr * float(cosine_min_factor)))
 
     # training loop
     for epoch in range(n_epochs):
@@ -171,6 +178,13 @@ def train_triangular_flow(
             torch.full((n_pstar,), 2, dtype=torch.long, device=device),
         ], dim=0)  # [batch_size]
         y_onehot = F.one_hot(y_idx, num_classes=3).to(x_data.dtype)  # [batch_size, 3]
+
+        # class-conditioning dropout (mirrors p_uncond in train_conditional).
+        # with prob triangular_p_uncond, zero the onehot row -> "unconditional"
+        # signal to the model; it must learn a class-agnostic scaffold.
+        if triangular_p_uncond > 0.0:
+            mask = torch.bernoulli(torch.full((batch_size, 1), triangular_p_uncond, device=device))
+            y_onehot = torch.where(mask > 0.5, torch.zeros_like(y_onehot), y_onehot)
 
         # sample noise and time
         z = torch.randn(batch_size, D, device=device)  # [batch_size, D]
@@ -202,6 +216,8 @@ def train_triangular_flow(
         optimizer.zero_grad()
         loss_total.backward()
         optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
 
         # verbose logging
         if verbose and (epoch + 1) % log_every == 0:
