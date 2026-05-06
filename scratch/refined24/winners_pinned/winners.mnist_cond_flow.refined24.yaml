@@ -1,19 +1,19 @@
 methods:
-  MultiHeadTriangularTDRE:
+  TriangularTSM:
     hyperparams:
-      learning_rate: 0.0022530072018111585
-      num_epochs: 405
-      hidden_dim: 64
-      head_dim: 10
-      num_shared_layers: 3
-      num_waypoints: 5
-      vertex: 0.6762207419321176
+      n_epochs: 865
+      lr: 0.0004732850082774607
+      batch_size: 128
+      hidden_dim: 128
+      eps: 1.7598287914001732e-05
+      vertex: 0.27500042857213536
+      peak_max: 0.6407954840202743
     score:
       training_stage: hardcoded_clear_winner
-      training_score: 3.086106
-      training_trial_id: 40
+      training_score: 3.809537
+      training_trial_id: 148
       training_seed: 1729
-      holdout_score: 3.086106
+      holdout_score: 3.809537
       holdout_seed: 4096
       source_summary: clear-winner gate (gap, spread, no extrema)
 provenance:

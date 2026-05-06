@@ -1,16 +1,19 @@
 methods:
-  TSM:
+  CTSM:
     hyperparams:
-      n_epochs: 1367
-      lr: 0.00048458554143078687
-      batch_size: 64
-      eps: 1.687538539320584e-05
+      n_epochs: 980
+      lr: 0.00045179334352317115
+      batch_size: 256
+      sigma: 1.0618661988954665
+      eps: 0.0007577819736388536
+      n_hidden_layers: 2
+      integration_steps: 1707
     score:
       training_stage: hardcoded_clear_winner
-      training_score: 6.422818
-      training_trial_id: 193
+      training_score: 0.465567
+      training_trial_id: 13
       training_seed: 1729
-      holdout_score: 6.422818
+      holdout_score: 0.465567
       holdout_seed: 4096
       source_summary: clear-winner gate (gap, spread, no extrema)
 provenance:

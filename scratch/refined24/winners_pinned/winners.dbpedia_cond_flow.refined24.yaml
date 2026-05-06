@@ -1,16 +1,20 @@
 methods:
-  BDRE:
+  FMDRE_S2:
     hyperparams:
-      latent_dim: 128
-      learning_rate: 0.0004427837109640731
-      num_epochs: 398
-      batch_size: 16384
+      n_epochs: 849
+      lr: 0.0017246599435371832
+      batch_size: 256
+      eps: 0.01808613021947169
+      integration_steps: 1272
+      hidden_dim: 512
+      score_weight: 0.16048020023369494
+      p_uncond: 0.3094836649997901
     score:
       training_stage: hardcoded_clear_winner
-      training_score: 2.059264
-      training_trial_id: 92
+      training_score: 2.789888
+      training_trial_id: 3
       training_seed: 1729
-      holdout_score: 2.059264
+      holdout_score: 2.789888
       holdout_seed: 4096
       source_summary: clear-winner gate (gap, spread, no extrema)
   TriangularFMDRE:

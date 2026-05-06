@@ -1,23 +1,35 @@
 provenance:
   derived_at: '2026-05-05'
-  rule: 'clear-winner gate: gap>=0.03, spread<=0.1, no HP within 0.1 of search-space
-    bound; every HP pinned as single-value choice. insert per-method block into recalibrated_specs/<exp>.yaml.refined24
+  rule: 'clear-winner gate: gap>=0.02, spread<=0.12, no HP within 0.1 of search-space
+    bound; every HP pinned as single-value choice. insert per-method block into recalibrated_specs/<exp>_refined24.yaml
     to skip refined24 HPO for these cells.'
 experiments:
   dbpedia_cond_flow:
-    BDRE:
-      latent_dim:
+    FMDRE_S2:
+      n_epochs:
       - choice
-      - - 128
-      learning_rate:
+      - - 849
+      lr:
       - choice
-      - - 0.0004427837109640731
-      num_epochs:
-      - choice
-      - - 398
+      - - 0.0017246599435371832
       batch_size:
       - choice
-      - - 16384
+      - - 256
+      eps:
+      - choice
+      - - 0.01808613021947169
+      integration_steps:
+      - choice
+      - - 1272
+      hidden_dim:
+      - choice
+      - - 512
+      score_weight:
+      - choice
+      - - 0.16048020023369494
+      p_uncond:
+      - choice
+      - - 0.3094836649997901
     TriangularFMDRE:
       n_epochs:
       - choice
@@ -73,6 +85,29 @@ experiments:
       integration_steps:
       - choice
       - - 2164
+  eig_estimation:
+    CTSM:
+      n_epochs:
+      - choice
+      - - 980
+      lr:
+      - choice
+      - - 0.00045179334352317115
+      batch_size:
+      - choice
+      - - 256
+      sigma:
+      - choice
+      - - 1.0618661988954665
+      eps:
+      - choice
+      - - 0.0007577819736388536
+      n_hidden_layers:
+      - choice
+      - - 2
+      integration_steps:
+      - choice
+      - - 1707
   elbo_estimation:
     CTSM:
       n_epochs:
@@ -151,28 +186,28 @@ experiments:
       - choice
       - - 0.6529308024549572
   mnist_cond_flow:
-    MultiHeadTriangularTDRE:
-      learning_rate:
+    TriangularTSM:
+      n_epochs:
       - choice
-      - - 0.0022530072018111585
-      num_epochs:
+      - - 865
+      lr:
       - choice
-      - - 405
+      - - 0.0004732850082774607
+      batch_size:
+      - choice
+      - - 128
       hidden_dim:
       - choice
-      - - 64
-      head_dim:
+      - - 128
+      eps:
       - choice
-      - - 10
-      num_shared_layers:
-      - choice
-      - - 3
-      num_waypoints:
-      - choice
-      - - 5
+      - - 1.7598287914001732e-05
       vertex:
       - choice
-      - - 0.6762207419321176
+      - - 0.27500042857213536
+      peak_max:
+      - choice
+      - - 0.6407954840202743
   model_selection:
     CTSM:
       n_epochs:
@@ -194,50 +229,6 @@ experiments:
       - choice
       - - 2
   pendulum_eldr_estimation:
-    MultiHeadTDRE:
-      learning_rate:
-      - choice
-      - - 0.005911344279462825
-      num_epochs:
-      - choice
-      - - 199
-      hidden_dim:
-      - choice
-      - - 128
-      head_dim:
-      - choice
-      - - 10
-      num_shared_layers:
-      - choice
-      - - 2
-      num_waypoints:
-      - choice
-      - - 5
-      batch_size:
-      - choice
-      - - 4096
-    MultiHeadTriangularTDRE:
-      learning_rate:
-      - choice
-      - - 0.004708598260871802
-      num_epochs:
-      - choice
-      - - 632
-      hidden_dim:
-      - choice
-      - - 128
-      head_dim:
-      - choice
-      - - 40
-      num_shared_layers:
-      - choice
-      - - 2
-      num_waypoints:
-      - choice
-      - - 5
-      vertex:
-      - choice
-      - - 0.5822985134908336
     TSM:
       n_epochs:
       - choice
@@ -251,25 +242,6 @@ experiments:
       eps:
       - choice
       - - 1.687538539320584e-05
-    TriangularVFM_V2:
-      n_epochs:
-      - choice
-      - - 804
-      lr:
-      - choice
-      - - 0.0006984066440630359
-      batch_size:
-      - choice
-      - - 128
-      k:
-      - choice
-      - - 10
-      eps:
-      - choice
-      - - 0.003247761999201006
-      integration_steps:
-      - choice
-      - - 1070
   plugin_dre:
     CTSM:
       n_epochs:
@@ -291,28 +263,6 @@ experiments:
       - choice
       - - 618
   pstar_sample_complexity:
-    MultiHeadTriangularTDRE:
-      learning_rate:
-      - choice
-      - - 0.0005900822658897279
-      num_epochs:
-      - choice
-      - - 292
-      hidden_dim:
-      - choice
-      - - 64
-      head_dim:
-      - choice
-      - - 10
-      num_shared_layers:
-      - choice
-      - - 1
-      num_waypoints:
-      - choice
-      - - 10
-      vertex:
-      - choice
-      - - 0.34531027727840424
     TriangularCTSM_V1:
       n_epochs:
       - choice
@@ -405,41 +355,38 @@ experiments:
       p_uncond:
       - choice
       - - 0.46196080194721534
-    MultiHeadTDRE:
-      learning_rate:
-      - choice
-      - - 0.00029579456294815277
-      num_epochs:
-      - choice
-      - - 523
-      hidden_dim:
-      - choice
-      - - 128
-      head_dim:
-      - choice
-      - - 40
-      num_shared_layers:
-      - choice
-      - - 3
-      num_waypoints:
-      - choice
-      - - 5
-    TriangularCTSM_V2:
+    TSM:
       n_epochs:
       - choice
-      - - 1048
+      - - 1323
       lr:
       - choice
-      - - 0.0007124618064899702
+      - - 0.0010907567936405676
       batch_size:
       - choice
-      - - 256
-      sigma:
-      - choice
-      - - 0.753590175152413
+      - - 128
       eps:
       - choice
-      - - 0.0021624605666345537
-      integration_steps:
+      - - 5.551378127079014e-05
+    TriangularMDRE:
+      latent_dim:
       - choice
-      - - 733
+      - - 128
+      learning_rate:
+      - choice
+      - - 0.0028426453624454217
+      num_epochs:
+      - choice
+      - - 269
+      midpoint_oversample:
+      - choice
+      - - 5
+      gamma_power:
+      - choice
+      - - 1.5242413254267717
+      num_waypoints:
+      - choice
+      - - 15
+      vertex:
+      - choice
+      - - 0.7391908994709506

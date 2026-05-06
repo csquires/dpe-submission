@@ -1,21 +1,4 @@
 methods:
-  MultiHeadTriangularTDRE:
-    hyperparams:
-      learning_rate: 0.0005900822658897279
-      num_epochs: 292
-      hidden_dim: 64
-      head_dim: 10
-      num_shared_layers: 1
-      num_waypoints: 10
-      vertex: 0.34531027727840424
-    score:
-      training_stage: hardcoded_clear_winner
-      training_score: 0.903781
-      training_trial_id: 39
-      training_seed: 1729
-      holdout_score: 0.903781
-      holdout_seed: 4096
-      source_summary: clear-winner gate (gap, spread, no extrema)
   TriangularCTSM_V1:
     hyperparams:
       n_epochs: 1230

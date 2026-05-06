@@ -56,11 +56,6 @@ methods:
     - - uniform
       - beta_2_2
       - beta_5_5
-    activation:
-    - choice
-    - - elu
-      - gelu
-      - silu
     n_hidden_layers:
     - choice
     - - 3
@@ -282,11 +277,6 @@ methods:
     - - uniform
       - beta_2_2
       - beta_5_5
-    activation:
-    - choice
-    - - elu
-      - gelu
-      - silu
     n_hidden_layers:
     - choice
     - - 3
@@ -329,11 +319,6 @@ methods:
     - - uniform
       - beta_2_2
       - beta_5_5
-    activation:
-    - choice
-    - - elu
-      - gelu
-      - silu
     n_hidden_layers:
     - choice
     - - 3
@@ -396,11 +381,6 @@ methods:
     - - uniform
       - beta_2_2
       - beta_5_5
-    activation:
-    - choice
-    - - elu
-      - gelu
-      - silu
     n_hidden_layers:
     - choice
     - - 3
@@ -546,11 +526,6 @@ methods:
     - - 1
       - 4
       - 16
-    activation:
-    - choice
-    - - gelu
-      - elu
-      - silu
     inner_eps:
     - choice
     - - 0.0
@@ -600,11 +575,6 @@ methods:
     - - 1
       - 4
       - 16
-    activation:
-    - choice
-    - - gelu
-      - elu
-      - silu
     n_hidden_layers:
     - choice
     - - 3
@@ -653,11 +623,6 @@ methods:
     ema_decay:
     - choice
     - - null
-    activation:
-    - choice
-    - - gelu
-      - elu
-      - silu
     grad_clip_norm:
     - choice
     - - null
@@ -709,11 +674,6 @@ methods:
     - - 1
       - 4
       - 16
-    activation:
-    - choice
-    - - gelu
-      - elu
-      - silu
     n_hidden_layers:
     - choice
     - - 3
