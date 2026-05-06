@@ -19,7 +19,7 @@ methods:
     - 370
     n_hidden_layers:
     - choice
-    - - 1
+    - - 3
   CTSM:
     n_epochs:
     - log_uniform_int
@@ -47,8 +47,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -67,6 +65,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   FMDRE:
     n_epochs:
     - log_uniform_int
@@ -100,6 +99,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   FMDRE_S2:
     n_epochs:
     - log_uniform_int
@@ -137,6 +137,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   MDRE_15:
     latent_dim:
     - choice
@@ -154,12 +155,12 @@ methods:
     - - 20
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
   MultiHeadTDRE:
     learning_rate:
     - log_uniform
     - 0.00029579456294815277
-    - 0.001840897513678707
+    - 0.1
     num_epochs:
     - log_uniform_int
     - 168
@@ -188,7 +189,7 @@ methods:
     learning_rate:
     - log_uniform
     - 0.0008418216356999812
-    - 0.002752410152662178
+    - 0.1
     num_epochs:
     - log_uniform_int
     - 431
@@ -235,6 +236,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   TriangularCTSM_V1:
     n_epochs:
     - log_uniform_int
@@ -272,8 +274,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -292,6 +292,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   TriangularCTSM_V2:
     n_epochs:
     - log_uniform_int
@@ -319,8 +320,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -339,6 +338,11 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
   TriangularCTSM_V3:
     n_epochs:
     - log_uniform_int
@@ -382,8 +386,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -402,6 +404,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   TriangularFMDRE:
     n_epochs:
     - log_uniform_int
@@ -435,6 +438,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   TriangularMDRE:
     latent_dim:
     - choice
@@ -465,7 +469,7 @@ methods:
     - 0.7391908994709506
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
   TriangularTSM:
     n_epochs:
     - log_uniform_int
@@ -497,6 +501,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   TriangularVFM_V1:
     n_epochs:
     - log_uniform_int
@@ -533,8 +538,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -559,6 +562,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   TriangularVFM_V2:
     n_epochs:
     - log_uniform_int
@@ -585,8 +589,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -605,6 +607,11 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
   TriangularVFM_V3:
     n_epochs:
     - log_uniform_int
@@ -645,8 +652,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     activation:
     - choice
     - - gelu
@@ -665,6 +670,7 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4
   VFM:
     n_epochs:
     - log_uniform_int
@@ -691,8 +697,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -711,3 +715,4 @@ methods:
     n_hidden_layers:
     - choice
     - - 3
+      - 4

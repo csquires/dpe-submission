@@ -18,7 +18,7 @@ methods:
     - 463
     n_hidden_layers:
     - choice
-    - - 1
+    - - 2
   CTSM:
     n_epochs:
     - log_uniform_int
@@ -46,8 +46,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -65,7 +63,8 @@ methods:
       - silu
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   FMDRE:
     n_epochs:
     - log_uniform_int
@@ -96,7 +95,8 @@ methods:
     - 0.6360650056672356
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   FMDRE_S2:
     n_epochs:
     - log_uniform_int
@@ -132,7 +132,8 @@ methods:
     - 0.2131958131797477
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   MDRE_15:
     latent_dim:
     - choice
@@ -152,12 +153,12 @@ methods:
       - 10
     n_hidden_layers:
     - choice
-    - - 1
+    - - 2
   MultiHeadTDRE:
     learning_rate:
     - log_uniform
     - 0.0005629415617520045
-    - 0.009861782574713011
+    - 0.1
     num_epochs:
     - log_uniform_int
     - 317
@@ -187,7 +188,7 @@ methods:
     learning_rate:
     - log_uniform
     - 0.002887091264817025
-    - 0.008729102397337193
+    - 0.1
     num_epochs:
     - log_uniform_int
     - 382
@@ -233,7 +234,8 @@ methods:
     - 1.0761758825795506e-05
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   TriangularCTSM_V1:
     n_epochs:
     - log_uniform_int
@@ -270,8 +272,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -289,7 +289,8 @@ methods:
       - silu
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   TriangularCTSM_V2:
     n_epochs:
     - log_uniform_int
@@ -318,8 +319,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -337,7 +336,12 @@ methods:
       - silu
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
   TriangularCTSM_V3:
     n_epochs:
     - log_uniform_int
@@ -382,8 +386,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -401,7 +403,8 @@ methods:
       - silu
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   TriangularFMDRE:
     n_epochs:
     - log_uniform_int
@@ -433,7 +436,8 @@ methods:
     - 2.1716017512550336
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   TriangularMDRE:
     latent_dim:
     - choice
@@ -464,7 +468,7 @@ methods:
     - 0.7680182736772245
     n_hidden_layers:
     - choice
-    - - 1
+    - - 2
   TriangularTSM:
     n_epochs:
     - log_uniform_int
@@ -494,7 +498,8 @@ methods:
     - 0.6529308024549572
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   TriangularVFM_V1:
     n_epochs:
     - log_uniform_int
@@ -531,8 +536,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -556,7 +559,8 @@ methods:
       - 0.2
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   TriangularVFM_V2:
     n_epochs:
     - log_uniform_int
@@ -586,8 +590,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -605,7 +607,12 @@ methods:
       - silu
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
   TriangularVFM_V3:
     n_epochs:
     - log_uniform_int
@@ -646,8 +653,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     activation:
     - choice
     - - gelu
@@ -665,7 +670,8 @@ methods:
       - 16
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
   VFM:
     n_epochs:
     - log_uniform_int
@@ -693,8 +699,6 @@ methods:
     ema_decay:
     - choice
     - - null
-      - 0.999
-      - 0.9999
     grad_clip_norm:
     - choice
     - - null
@@ -712,4 +716,5 @@ methods:
       - silu
     n_hidden_layers:
     - choice
-    - - 2
+    - - 3
+      - 4
