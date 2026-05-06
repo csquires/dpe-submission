@@ -33,6 +33,37 @@ methods:
       holdout_score: 0.931489
       holdout_seed: 4096
       source_summary: clear-winner gate (gap, spread, no extrema)
+  TSM:
+    hyperparams:
+      n_epochs: 1323
+      lr: 0.0010907567936405676
+      batch_size: 128
+      eps: 5.551378127079014e-05
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 0.753112
+      training_trial_id: 170
+      training_seed: 1729
+      holdout_score: 0.753112
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  TriangularMDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.0028426453624454217
+      num_epochs: 269
+      midpoint_oversample: 5
+      gamma_power: 1.5242413254267717
+      num_waypoints: 15
+      vertex: 0.7391908994709506
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 0.467115
+      training_trial_id: 91
+      training_seed: 1729
+      holdout_score: 0.467115
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
 provenance:
   generated_at: '2026-05-05T00:00:00Z'
   workflow_version: v1

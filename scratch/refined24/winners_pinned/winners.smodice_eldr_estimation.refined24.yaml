@@ -33,36 +33,35 @@ methods:
       holdout_score: 0.931489
       holdout_seed: 4096
       source_summary: clear-winner gate (gap, spread, no extrema)
-  MultiHeadTDRE:
+  TSM:
     hyperparams:
-      learning_rate: 0.00029579456294815277
-      num_epochs: 523
-      hidden_dim: 128
-      head_dim: 40
-      num_shared_layers: 3
-      num_waypoints: 5
+      n_epochs: 1323
+      lr: 0.0010907567936405676
+      batch_size: 128
+      eps: 5.551378127079014e-05
     score:
       training_stage: hardcoded_clear_winner
-      training_score: 0.576301
-      training_trial_id: 2
+      training_score: 0.753112
+      training_trial_id: 170
       training_seed: 1729
-      holdout_score: 0.576301
+      holdout_score: 0.753112
       holdout_seed: 4096
       source_summary: clear-winner gate (gap, spread, no extrema)
-  TriangularCTSM_V2:
+  TriangularMDRE:
     hyperparams:
-      n_epochs: 1048
-      lr: 0.0007124618064899702
-      batch_size: 256
-      sigma: 0.753590175152413
-      eps: 0.0021624605666345537
-      integration_steps: 733
+      latent_dim: 128
+      learning_rate: 0.0028426453624454217
+      num_epochs: 269
+      midpoint_oversample: 5
+      gamma_power: 1.5242413254267717
+      num_waypoints: 15
+      vertex: 0.7391908994709506
     score:
       training_stage: hardcoded_clear_winner
-      training_score: 0.97897
-      training_trial_id: 1
+      training_score: 0.467115
+      training_trial_id: 91
       training_seed: 1729
-      holdout_score: 0.97897
+      holdout_score: 0.467115
       holdout_seed: 4096
       source_summary: clear-winner gate (gap, spread, no extrema)
 provenance:

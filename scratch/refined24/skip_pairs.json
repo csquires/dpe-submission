@@ -1,6 +1,6 @@
 [
   {
-    "method": "BDRE",
+    "method": "FMDRE_S2",
     "experiment": "dbpedia_cond_flow"
   },
   {
@@ -14,6 +14,10 @@
   {
     "method": "VFM",
     "experiment": "dre_sample_complexity"
+  },
+  {
+    "method": "CTSM",
+    "experiment": "eig_estimation"
   },
   {
     "method": "CTSM",
@@ -32,7 +36,7 @@
     "experiment": "elbo_estimation"
   },
   {
-    "method": "MultiHeadTriangularTDRE",
+    "method": "TriangularTSM",
     "experiment": "mnist_cond_flow"
   },
   {
@@ -40,28 +44,12 @@
     "experiment": "model_selection"
   },
   {
-    "method": "MultiHeadTDRE",
-    "experiment": "pendulum_eldr_estimation"
-  },
-  {
-    "method": "MultiHeadTriangularTDRE",
-    "experiment": "pendulum_eldr_estimation"
-  },
-  {
     "method": "TSM",
-    "experiment": "pendulum_eldr_estimation"
-  },
-  {
-    "method": "TriangularVFM_V2",
     "experiment": "pendulum_eldr_estimation"
   },
   {
     "method": "CTSM",
     "experiment": "plugin_dre"
-  },
-  {
-    "method": "MultiHeadTriangularTDRE",
-    "experiment": "pstar_sample_complexity"
   },
   {
     "method": "TriangularCTSM_V1",
@@ -80,11 +68,11 @@
     "experiment": "smodice_eldr_estimation"
   },
   {
-    "method": "MultiHeadTDRE",
+    "method": "TSM",
     "experiment": "smodice_eldr_estimation"
   },
   {
-    "method": "TriangularCTSM_V2",
+    "method": "TriangularMDRE",
     "experiment": "smodice_eldr_estimation"
   }
 ]
