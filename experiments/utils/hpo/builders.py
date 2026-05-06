@@ -52,7 +52,11 @@ def build_TSM(input_dim: int, device: str | torch.device, num_waypoints: int, **
 
 
 def build_CTSM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> CTSM:
-    """return CTSM estimator initialized from flat_hp dict."""
+    """return CTSM estimator initialized from flat_hp dict.
+
+    flat_hp may carry the new pilot-fix knobs ema_decay and grad_clip_norm;
+    CTSM accepts them; defaults preserve current behavior.
+    """
     return CTSM(input_dim=input_dim, device=device, **flat_hp)
 
 
@@ -139,7 +143,8 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
     path = PiecewiseSBCtsm1D(
         sigma=flat_hp["sigma"],
         vertex=flat_hp["vertex"],
-        eps=flat_hp["eps"]
+        eps=flat_hp["eps"],
+        inner_eps=flat_hp.get("inner_eps", 0.0),
     )
     return TriangularCTSM(
         input_dim=input_dim,
@@ -150,7 +155,11 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
         eps=flat_hp["eps"],
         integration_steps=flat_hp.get("integration_steps", 1000),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        device=device
+        ema_decay=flat_hp.get("ema_decay"),
+        grad_clip_norm=flat_hp.get("grad_clip_norm"),
+        time_dist=flat_hp.get("time_dist", "uniform"),
+        activation=flat_hp.get("activation", "elu"),
+        device=device,
     )
 
 
@@ -170,7 +179,11 @@ def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_wayp
         eps=flat_hp["eps"],
         integration_steps=flat_hp.get("integration_steps", 1000),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        device=device
+        ema_decay=flat_hp.get("ema_decay"),
+        grad_clip_norm=flat_hp.get("grad_clip_norm"),
+        time_dist=flat_hp.get("time_dist", "uniform"),
+        activation=flat_hp.get("activation", "elu"),
+        device=device,
     )
 
 
@@ -194,7 +207,11 @@ def build_TriangularCTSM_V3(input_dim: int, device: str | torch.device, num_wayp
         eps=flat_hp["eps"],
         integration_steps=flat_hp.get("integration_steps", 1000),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        device=device
+        ema_decay=flat_hp.get("ema_decay"),
+        grad_clip_norm=flat_hp.get("grad_clip_norm"),
+        time_dist=flat_hp.get("time_dist", "uniform"),
+        activation=flat_hp.get("activation", "elu"),
+        device=device,
     )
 
 
@@ -204,7 +221,8 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         sigma=flat_hp["sigma"],
         vertex=flat_hp["vertex"],
         gamma_min=flat_hp["gamma_min"],
-        eps=flat_hp["eps"]
+        eps=flat_hp["eps"],
+        inner_eps=flat_hp.get("inner_eps", 0.0),
     )
     return TriangularVFM(
         input_dim=input_dim,
@@ -215,6 +233,9 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         eps=flat_hp["eps"],
         integration_steps=flat_hp["integration_steps"],
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        ema_decay=flat_hp.get("ema_decay"),
+        grad_clip_norm=flat_hp.get("grad_clip_norm"),
+        activation=flat_hp.get("activation", "gelu"),
         device=device
     )
 
@@ -235,6 +256,9 @@ def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypo
         eps=flat_hp["eps"],
         integration_steps=flat_hp["integration_steps"],
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        ema_decay=flat_hp.get("ema_decay"),
+        grad_clip_norm=flat_hp.get("grad_clip_norm"),
+        activation=flat_hp.get("activation", "gelu"),
         device=device
     )
 
@@ -258,6 +282,9 @@ def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypo
         eps=flat_hp["eps"],
         integration_steps=flat_hp["integration_steps"],
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        ema_decay=flat_hp.get("ema_decay"),
+        grad_clip_norm=flat_hp.get("grad_clip_norm"),
+        activation=flat_hp.get("activation", "gelu"),
         device=device
     )
 
@@ -304,6 +331,8 @@ def build_TriangularMDRE(input_dim: int, device: str | torch.device, num_waypoin
         nwp = 10
     midpoint_oversample = flat_hp.pop("midpoint_oversample")
     gamma_power = flat_hp.pop("gamma_power")
+    # estimator-only HPs popped before forwarding to classifier factory.
+    max_train_samples = flat_hp.pop("max_train_samples", None)
     classifier = make_multiclass_classifier(
         name=classifier_name, input_dim=input_dim, num_classes=nwp, **flat_hp,
     )
@@ -313,6 +342,7 @@ def build_TriangularMDRE(input_dim: int, device: str | torch.device, num_waypoin
         midpoint_oversample=midpoint_oversample,
         gamma_power=gamma_power,
         vertex=vertex,
+        max_train_samples=max_train_samples,
     )
 
 

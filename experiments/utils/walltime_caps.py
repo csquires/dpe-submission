@@ -104,8 +104,8 @@ WALLTIME_CAPS_PREEMPT = {
     "MDRE":                      "0:05:00",
     "MDRE_15":                   "0:05:00",
     "MultiHeadTDRE":             "0:05:00",
-    "MHTTDRE":                   "0:05:00",  # observed 4-cell 14s
-    "MultiHeadTriangularTDRE":   "0:05:00",  # canonical alias
+    "MHTTDRE":                   "0:30:00",  # bumped from 0:05 — frequent silent failures, more headroom
+    "MultiHeadTriangularTDRE":   "0:30:00",  # bumped from 0:05
     "TriangularMDRE":            "0:05:00",
     "FMDRE":                     "1:45:00",  # int_steps capped at 3000; 3 flow integrations -> 1.5x VFM cap
     "FMDRE_S2":                  "1:45:00",
@@ -146,7 +146,7 @@ WALLTIME_CAPS_CPU = {
     # FAST: small models, expected ~3-5 min per trial on cpu
     "MDRE_15":                   "0:05:00",
     "MultiHeadTDRE":             "0:05:00",
-    "MultiHeadTriangularTDRE":   "0:05:00",
+    "MultiHeadTriangularTDRE":   "0:30:00",
     "TriangularMDRE":            "0:05:00",
 
     # TABULAR: cpu-only methods, expected fast (no neural training)

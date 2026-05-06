@@ -80,6 +80,12 @@ def parse_args() -> argparse.Namespace:
                    help="suffix appended to per-pair output_dir leaf "
                         "(data_root/<exp>/<method><suffix>); empty by default. "
                         "useful to keep a lite run disjoint from a preempt run")
+    p.add_argument("--skip-pairs-file", type=Path, default=None,
+                   help="optional JSON file listing (method, experiment) pairs "
+                        "to drop from the matrix. format: list of "
+                        '{"method": ..., "experiment": ...} objects. used to '
+                        "exclude clear-winner cells whose HPs are already "
+                        "pinned downstream.")
     p.add_argument("--partition", default="general",
                    help="slurm partition for trial sbatch + cap polling")
     p.add_argument("--run-id", default=None,
@@ -103,6 +109,17 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
     exp_order = {e: i for i, e in enumerate(exps)}
     valid_pairs.sort(key=lambda p: (exp_order.get(p[1], 1_000_000),
                                    speed_rank(p[0]), p[0]))
+
+    # drop pairs the caller has flagged as already-pinned (clear winners)
+    skip_set: set[tuple[str, str]] = set()
+    if args.skip_pairs_file is not None:
+        skip_data = json.loads(args.skip_pairs_file.read_text())
+        skip_set = {(d["method"], d["experiment"]) for d in skip_data}
+    if skip_set:
+        before = len(valid_pairs)
+        valid_pairs = [p for p in valid_pairs if p not in skip_set]
+        logger.info("skip-pairs: dropped %d pairs from matrix (%d remain)",
+                    before - len(valid_pairs), len(valid_pairs))
 
     all_skipped: dict = {**{k: [v] for k, v in adapter_skipped.items()}, **pair_skipped}
 

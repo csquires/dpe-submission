@@ -548,6 +548,12 @@ def parse_args() -> argparse.Namespace:
                         "(data_root/<exp>/<method><suffix>); empty by default. "
                         "use to run a parallel mini-campaign without clobbering "
                         "an existing run's trial files.")
+    p.add_argument("--skip-pairs-file", type=Path, default=None,
+                   help="optional JSON file listing (method, experiment) pairs "
+                        "to drop from the matrix. format: list of "
+                        '{"method": ..., "experiment": ...} objects. used to '
+                        "exclude clear-winner cells whose HPs are already "
+                        "pinned downstream.")
     return p.parse_args()
 
 
@@ -587,6 +593,17 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
     # this orders queue entries approximately by method speed (slow at front)
     # so bidirectional drain (watchdog pops front, cpu pops back) is balanced.
     valid_pairs.sort(key=lambda p: (speed_rank(p[0]), p[0], p[1]))
+
+    # 4.6. drop pairs the caller has flagged as already-pinned (clear winners)
+    skip_set: set[tuple[str, str]] = set()
+    if getattr(args, "skip_pairs_file", None) is not None:
+        skip_data = json.loads(args.skip_pairs_file.read_text())
+        skip_set = {(d["method"], d["experiment"]) for d in skip_data}
+    if skip_set:
+        before = len(valid_pairs)
+        valid_pairs = [p for p in valid_pairs if p not in skip_set]
+        logger.info("skip-pairs: dropped %d pairs from matrix (%d remain)",
+                    before - len(valid_pairs), len(valid_pairs))
 
     # merge skip records: adapter-level + pair-level
     all_skipped: dict = {**{k: [v] for k, v in adapter_skipped.items()}, **pair_skipped}

@@ -113,8 +113,14 @@ def _load_recalibrated_spec(exp: str, method: str,
     B13: (exp, method, output_dir) signature.
     B14: outer spec list -> tuple; choice inner list preserved as list.
 
+    wave-3 short-circuit: if DPE_WAVE3=1 is set, skip recalibrated yamls so
+    the wave-3 lock applied to METHOD_SPECS at module load is what gets used.
+
     returns None if file missing or method absent.
     """
+    import os as _os
+    if _os.environ.get("DPE_WAVE3") == "1":
+        return None
     spec_file = output_dir.parent / "recalibrated_specs" / f"{exp}.yaml"
     if not spec_file.exists():
         return None
@@ -171,6 +177,26 @@ def _resolve_stratify_fn(adapter) -> Optional[Callable]:
     return adapter.stratify_key
 
 
+def _training_M(adapter) -> int:
+    """env-var override DPE_TRAINING_M takes precedence over adapter default.
+
+    falls back to adapter.default_training_M(); intended for refined-only mini
+    campaigns that want a fixed eval-cell count without editing each adapter.
+    """
+    v = os.environ.get("DPE_TRAINING_M")
+    if v is not None:
+        return int(v)
+    return adapter.default_training_M()
+
+
+def _holdout_M(adapter) -> int:
+    """same pattern as _training_M for the holdout draw."""
+    v = os.environ.get("DPE_HOLDOUT_M")
+    if v is not None:
+        return int(v)
+    return adapter.default_holdout_M()
+
+
 def _wait_for_trials(results_dir: Path, n: int, timeout_sec: int = 3600,
                      poll_sec: int = 30) -> int:
     """poll results_dir for trial_*.json count; return when >= n or timeout.
@@ -208,7 +234,7 @@ def _build_sbatch_cmd(experiment: str, method: str, config_file: Path,
     job_name = f"{trial_id}_{stage}_{method}_{experiment}"
     return (
         f"sbatch --partition=preempt --time={{time}} --exclude={{exclude}} "
-        f"--gpus=1 --cpus-per-task=4 --mem=24G --requeue "
+        f"--gpus=1 --cpus-per-task=4 --mem=32G --requeue "
         f"--job-name={job_name} "
         f"--output={logdir}/%j.out "
         f"--wrap=\"set +u && source ~/.bashrc && conda activate fac && set -u && "
@@ -318,7 +344,7 @@ def broad(method: str, exp: str, adapter, n: int = 200, seed: int = 1729,
 
     # draw training cells and persist
     cells = draw_training_sample(
-        adapter.cell_pool(), M=adapter.default_training_M(), seed=seed,
+        adapter.cell_pool(), M=_training_M(adapter), seed=seed,
         stratify_fn=_resolve_stratify_fn(adapter))
     cells_manifest = {
         "eval_sample_seed": seed,
@@ -420,7 +446,7 @@ def refined(method: str, exp: str, adapter, n: int = 49, seed: int = 1729,
         cells = coerce_cells_from_json(cells_raw["cells"])
     else:
         cells = draw_training_sample(
-        adapter.cell_pool(), M=adapter.default_training_M(), seed=seed,
+        adapter.cell_pool(), M=_training_M(adapter), seed=seed,
         stratify_fn=_resolve_stratify_fn(adapter))
 
     refined_meta_dir = _ensure_dir(output_dir / "refined_metadata")
@@ -491,7 +517,7 @@ def holdout(method: str, exp: str, adapter, output_dir: Path = None,
 
     # draw holdout cells (clamped)
     pool = adapter.cell_pool()
-    M = adapter.default_holdout_M()
+    M = _holdout_M(adapter)
     holdout_cells, actual_M = draw_holdout_sample_clamped(
         pool, exclude=training_cells, M=M, seed=4096
     )
@@ -544,15 +570,20 @@ N_ALPHAS = 4
 
 def persist(method: str, exp: str, holdout_result_file: Path, output_dir: Path,
             training_result_file: Optional[Path] = None) -> Dict[str, Any]:
-    """read holdout + training results; merge into winners.<exp>.yaml.
+    """read holdout + training results; merge into winners.<exp>[suffix].yaml.
 
     B2: writes both new-schema winners["methods"][method] and legacy
         winners[method][alpha_idx] for downstream readers.
     M3: output_dir explicit; no .parent chain.
 
+    env var `DPE_WINNERS_SUFFIX` (e.g. ".refined24") is inserted between the
+    experiment name and the .yaml extension so a parallel mini-campaign does
+    not clobber the canonical winners file. unset -> default winners.<exp>.yaml.
+
     returns {winners_file, entry_written}.
     """
-    winners_file = output_dir.parent / f"winners.{exp}.yaml"  # M3
+    suffix = os.environ.get("DPE_WINNERS_SUFFIX", "")
+    winners_file = output_dir.parent / f"winners.{exp}{suffix}.yaml"  # M3
 
     holdout_result = json.loads(holdout_result_file.read_text())
     holdout_score = float(holdout_result["score"])
