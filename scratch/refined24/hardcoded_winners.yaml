@@ -1,0 +1,445 @@
+provenance:
+  derived_at: '2026-05-05'
+  rule: 'clear-winner gate: gap>=0.03, spread<=0.1, no HP within 0.1 of search-space
+    bound; every HP pinned as single-value choice. insert per-method block into recalibrated_specs/<exp>.yaml.refined24
+    to skip refined24 HPO for these cells.'
+experiments:
+  dbpedia_cond_flow:
+    BDRE:
+      latent_dim:
+      - choice
+      - - 128
+      learning_rate:
+      - choice
+      - - 0.0004427837109640731
+      num_epochs:
+      - choice
+      - - 398
+      batch_size:
+      - choice
+      - - 16384
+    TriangularFMDRE:
+      n_epochs:
+      - choice
+      - - 745
+      lr:
+      - choice
+      - - 0.0013476627282510906
+      batch_size:
+      - choice
+      - - 512
+      eps:
+      - choice
+      - - 0.005747624776346856
+      integration_steps:
+      - choice
+      - - 1772
+      hidden_dim:
+      - choice
+      - - 512
+      score_weight:
+      - choice
+      - - 0.25263306606342945
+  dre_sample_complexity:
+    TSM:
+      n_epochs:
+      - choice
+      - - 1333
+      lr:
+      - choice
+      - - 0.0005686317137246282
+      batch_size:
+      - choice
+      - - 256
+      eps:
+      - choice
+      - - 1.998030136460194e-06
+    VFM:
+      n_epochs:
+      - choice
+      - - 939
+      lr:
+      - choice
+      - - 0.0021268296005499997
+      batch_size:
+      - choice
+      - - 128
+      k:
+      - choice
+      - - 10
+      eps:
+      - choice
+      - - 0.0030379740522000548
+      integration_steps:
+      - choice
+      - - 2164
+  elbo_estimation:
+    CTSM:
+      n_epochs:
+      - choice
+      - - 1289
+      lr:
+      - choice
+      - - 0.0003955278516718609
+      batch_size:
+      - choice
+      - - 256
+      sigma:
+      - choice
+      - - 0.6514663525074535
+      eps:
+      - choice
+      - - 0.0007110480768752433
+      integration_steps:
+      - choice
+      - - 1145
+    TSM:
+      n_epochs:
+      - choice
+      - - 1214
+      lr:
+      - choice
+      - - 0.0004998024869834205
+      batch_size:
+      - choice
+      - - 256
+      eps:
+      - choice
+      - - 3.3498230884124737e-06
+    TriangularMDRE:
+      latent_dim:
+      - choice
+      - - 64
+      learning_rate:
+      - choice
+      - - 0.005620959591751155
+      num_epochs:
+      - choice
+      - - 334
+      midpoint_oversample:
+      - choice
+      - - 7
+      gamma_power:
+      - choice
+      - - 2.9249951543726125
+      num_waypoints:
+      - choice
+      - - 5
+      vertex:
+      - choice
+      - - 0.6585970950737196
+    TriangularTSM:
+      n_epochs:
+      - choice
+      - - 1010
+      lr:
+      - choice
+      - - 0.0006515421415684888
+      batch_size:
+      - choice
+      - - 256
+      hidden_dim:
+      - choice
+      - - 128
+      eps:
+      - choice
+      - - 1.7388858928236543e-05
+      vertex:
+      - choice
+      - - 0.5202952081219945
+      peak_max:
+      - choice
+      - - 0.6529308024549572
+  mnist_cond_flow:
+    MultiHeadTriangularTDRE:
+      learning_rate:
+      - choice
+      - - 0.0022530072018111585
+      num_epochs:
+      - choice
+      - - 405
+      hidden_dim:
+      - choice
+      - - 64
+      head_dim:
+      - choice
+      - - 10
+      num_shared_layers:
+      - choice
+      - - 3
+      num_waypoints:
+      - choice
+      - - 5
+      vertex:
+      - choice
+      - - 0.6762207419321176
+  model_selection:
+    CTSM:
+      n_epochs:
+      - choice
+      - - 1295
+      lr:
+      - choice
+      - - 0.0017931278208056253
+      batch_size:
+      - choice
+      - - 256
+      sigma:
+      - choice
+      - - 0.7600374958019976
+      eps:
+      - choice
+      - - 0.0009886010954134473
+      n_hidden_layers:
+      - choice
+      - - 2
+  pendulum_eldr_estimation:
+    MultiHeadTDRE:
+      learning_rate:
+      - choice
+      - - 0.005911344279462825
+      num_epochs:
+      - choice
+      - - 199
+      hidden_dim:
+      - choice
+      - - 128
+      head_dim:
+      - choice
+      - - 10
+      num_shared_layers:
+      - choice
+      - - 2
+      num_waypoints:
+      - choice
+      - - 5
+      batch_size:
+      - choice
+      - - 4096
+    MultiHeadTriangularTDRE:
+      learning_rate:
+      - choice
+      - - 0.004708598260871802
+      num_epochs:
+      - choice
+      - - 632
+      hidden_dim:
+      - choice
+      - - 128
+      head_dim:
+      - choice
+      - - 40
+      num_shared_layers:
+      - choice
+      - - 2
+      num_waypoints:
+      - choice
+      - - 5
+      vertex:
+      - choice
+      - - 0.5822985134908336
+    TSM:
+      n_epochs:
+      - choice
+      - - 1367
+      lr:
+      - choice
+      - - 0.00048458554143078687
+      batch_size:
+      - choice
+      - - 64
+      eps:
+      - choice
+      - - 1.687538539320584e-05
+    TriangularVFM_V2:
+      n_epochs:
+      - choice
+      - - 804
+      lr:
+      - choice
+      - - 0.0006984066440630359
+      batch_size:
+      - choice
+      - - 128
+      k:
+      - choice
+      - - 10
+      eps:
+      - choice
+      - - 0.003247761999201006
+      integration_steps:
+      - choice
+      - - 1070
+  plugin_dre:
+    CTSM:
+      n_epochs:
+      - choice
+      - - 1332
+      lr:
+      - choice
+      - - 0.0011263681944808474
+      batch_size:
+      - choice
+      - - 256
+      sigma:
+      - choice
+      - - 0.5027611871238511
+      eps:
+      - choice
+      - - 0.0012524472632478776
+      integration_steps:
+      - choice
+      - - 618
+  pstar_sample_complexity:
+    MultiHeadTriangularTDRE:
+      learning_rate:
+      - choice
+      - - 0.0005900822658897279
+      num_epochs:
+      - choice
+      - - 292
+      hidden_dim:
+      - choice
+      - - 64
+      head_dim:
+      - choice
+      - - 10
+      num_shared_layers:
+      - choice
+      - - 1
+      num_waypoints:
+      - choice
+      - - 10
+      vertex:
+      - choice
+      - - 0.34531027727840424
+    TriangularCTSM_V1:
+      n_epochs:
+      - choice
+      - - 1230
+      lr:
+      - choice
+      - - 0.00042313251942218864
+      batch_size:
+      - choice
+      - - 128
+      sigma:
+      - choice
+      - - 1.1240021777293092
+      vertex:
+      - choice
+      - - 0.35209999531058384
+      eps:
+      - choice
+      - - 0.0017710342829498561
+      integration_steps:
+      - choice
+      - - 1864
+    TriangularVFM_V1:
+      n_epochs:
+      - choice
+      - - 1219
+      lr:
+      - choice
+      - - 0.0017087920567769766
+      batch_size:
+      - choice
+      - - 256
+      sigma:
+      - choice
+      - - 2.1802774942279344
+      vertex:
+      - choice
+      - - 0.4869341115013749
+      gamma_min:
+      - choice
+      - - 0.013385471962600265
+      eps:
+      - choice
+      - - 0.0013156093894859482
+      integration_steps:
+      - choice
+      - - 1034
+  smodice_eldr_estimation:
+    CTSM:
+      n_epochs:
+      - choice
+      - - 1146
+      lr:
+      - choice
+      - - 0.000825443935299117
+      batch_size:
+      - choice
+      - - 256
+      sigma:
+      - choice
+      - - 0.5642305134888792
+      eps:
+      - choice
+      - - 0.0003976618325465019
+      integration_steps:
+      - choice
+      - - 737
+    FMDRE_S2:
+      n_epochs:
+      - choice
+      - - 1001
+      lr:
+      - choice
+      - - 0.0017516283630018249
+      batch_size:
+      - choice
+      - - 128
+      eps:
+      - choice
+      - - 0.014334183015431712
+      integration_steps:
+      - choice
+      - - 2234
+      hidden_dim:
+      - choice
+      - - 128
+      score_weight:
+      - choice
+      - - 0.1673723216645271
+      p_uncond:
+      - choice
+      - - 0.46196080194721534
+    MultiHeadTDRE:
+      learning_rate:
+      - choice
+      - - 0.00029579456294815277
+      num_epochs:
+      - choice
+      - - 523
+      hidden_dim:
+      - choice
+      - - 128
+      head_dim:
+      - choice
+      - - 40
+      num_shared_layers:
+      - choice
+      - - 3
+      num_waypoints:
+      - choice
+      - - 5
+    TriangularCTSM_V2:
+      n_epochs:
+      - choice
+      - - 1048
+      lr:
+      - choice
+      - - 0.0007124618064899702
+      batch_size:
+      - choice
+      - - 256
+      sigma:
+      - choice
+      - - 0.753590175152413
+      eps:
+      - choice
+      - - 0.0021624605666345537
+      integration_steps:
+      - choice
+      - - 733
