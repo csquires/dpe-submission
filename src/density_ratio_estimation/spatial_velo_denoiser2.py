@@ -13,6 +13,7 @@ import torch.optim as optim
 from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation._ema import EMA, maybe_clip_grad
 from src.models.flow.div_estimators import exact_div, hutch_div
 
 
@@ -25,30 +26,55 @@ class MLP(nn.Module):
         hidden_dim: hidden layer width
         output_dim: output dimension (defaults to input_dim)
         n_hidden_layers: number of hidden layers in backbone (>= 1)
+        activation: activation function {"elu", "gelu", "silu"}; default "gelu" for byte-identical behavior.
 
     Procedure:
         input (input_dim+1: t+x) -> linear -> hidden_dim
-        -> [ReLU -> linear -> hidden_dim] x (n_hidden_layers-1)
-        -> ReLU -> linear -> output_dim
+        -> [activation -> linear -> hidden_dim] x (n_hidden_layers-1)
+        -> activation -> linear -> output_dim
     """
-    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = None, n_hidden_layers: int = 3):
+    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = None, n_hidden_layers: int = 3, activation: str = "gelu", layernorm: str = "off"):
         super().__init__()
         if output_dim is None:
             output_dim = input_dim
 
         if n_hidden_layers < 1:
             raise ValueError("n_hidden_layers must be >= 1")
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}")
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
 
         self.n_hidden_layers = n_hidden_layers
 
-        # build backbone: input -> hidden, then (n_hidden_layers - 1) hidden -> hidden
+        # map activation string to nn module
+        act_map = {
+            "elu": nn.ELU(),
+            "gelu": nn.GELU(),
+            "silu": nn.SiLU(),
+        }
+
+        # build backbone: input -> hidden, then (n_hidden_layers - 1) hidden -> hidden.
+        # layernorm "off" preserves byte-identical pre-S7 behavior. "pre" inserts
+        # a LayerNorm BEFORE each hidden activation; "post" inserts AFTER.
+        def maybe_norm():
+            return [nn.LayerNorm(hidden_dim)] if layernorm in ("pre", "post") else []
+
         layers = []
         layers.append(nn.Linear(input_dim + 1, hidden_dim))
-        layers.append(nn.GELU())
+        if layernorm == "pre":
+            layers.append(nn.LayerNorm(hidden_dim))
+        layers.append(act_map[activation])
+        if layernorm == "post":
+            layers.append(nn.LayerNorm(hidden_dim))
 
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.GELU())
+            if layernorm == "pre":
+                layers.append(nn.LayerNorm(hidden_dim))
+            layers.append(act_map[activation])
+            if layernorm == "post":
+                layers.append(nn.LayerNorm(hidden_dim))
 
         # output projection
         layers.append(nn.Linear(hidden_dim, output_dim))
@@ -129,6 +155,9 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
         div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
         n_hutch_samples: int = 1,
+        ema_decay: Optional[float] = None,
+        grad_clip_norm: Optional[float] = None,
+        activation: str = "gelu",
     ):
         super().__init__(input_dim)
         self.integration_type = integration_type
@@ -153,6 +182,13 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         self.div_method = div_method
         self.div_noise = div_noise
         self.n_hutch_samples = n_hutch_samples
+        self.ema_decay = ema_decay
+        self.grad_clip_norm = grad_clip_norm
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(
+                f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
+            )
+        self.activation = activation
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -161,14 +197,20 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
 
         self.net_b = None
         self.net_eta = None
+        self.ema_b: Optional[EMA] = None
+        self.ema_eta: Optional[EMA] = None
 
     def init_model(self) -> None:
         self.net_b = MLP(self.input_dim, self.hidden_dim,
                          output_dim=self.input_dim,
-                         n_hidden_layers=self.n_hidden_layers).to(self.device)
+                         n_hidden_layers=self.n_hidden_layers,
+                         activation=self.activation).to(self.device)
         self.net_eta = MLP(self.input_dim, self.hidden_dim,
                            output_dim=self.input_dim,
-                           n_hidden_layers=self.n_hidden_layers).to(self.device)
+                           n_hidden_layers=self.n_hidden_layers,
+                           activation=self.activation).to(self.device)
+        self.ema_b = EMA(self.net_b, self.ema_decay) if self.ema_decay is not None else None
+        self.ema_eta = EMA(self.net_eta, self.ema_decay) if self.ema_decay is not None else None
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """gamma(t) = (1 - exp(-k*t)) * (1 - exp(-k*(1-t)))"""
@@ -310,7 +352,10 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
 
             optimizer_b.zero_grad()
             loss_b.backward()
+            maybe_clip_grad(self.net_b.parameters(), self.grad_clip_norm)
             optimizer_b.step()
+            if self.ema_b is not None:
+                self.ema_b.update(self.net_b)
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_b={loss_b.item():.4f}")
@@ -346,7 +391,10 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
 
             optimizer_eta.zero_grad()
             loss_eta.backward()
+            maybe_clip_grad(self.net_eta.parameters(), self.grad_clip_norm)
             optimizer_eta.step()
+            if self.ema_eta is not None:
+                self.ema_eta.update(self.net_eta)
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_eta={loss_eta.item():.4f}")
@@ -381,40 +429,52 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
             n_points += 1
         t_vals = torch.linspace(self.eps, 1 - self.eps, n_points, device=self.device)
 
-        compute_vmapped = torch.vmap(
-            self._compute_time_score_single,
-            in_dims=(0, None),  # batch over t, broadcast samples
-            out_dims=0,
-            randomness='different',  # required for Hutchinson noise inside
-        )
-        chunk_size = max(1, 100000 // n_samples)
-        time_score_chunks = []
-        for i in range(0, n_points, chunk_size):
-            t_chunk = t_vals[i:i + chunk_size]
-            chunk_scores = compute_vmapped(t_chunk, samples).detach()
-            time_score_chunks.append(chunk_scores)
-        time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
+        # if EMA is active, swap in shadow weights
+        if self.ema_b is not None:
+            self.ema_b.apply_to(self.net_b)
+        if self.ema_eta is not None:
+            self.ema_eta.apply_to(self.net_eta)
 
-        if self.integration_type == '3':
-            # Simpson's rule integration
-            t_np = t_vals.cpu().numpy()
-            h = (t_np[-1] - t_np[0]) / (n_points - 1)
+        try:
+            compute_vmapped = torch.vmap(
+                self._compute_time_score_single,
+                in_dims=(0, None),  # batch over t, broadcast samples
+                out_dims=0,
+                randomness='different',  # required for Hutchinson noise inside
+            )
+            chunk_size = max(1, 100000 // n_samples)
+            time_score_chunks = []
+            for i in range(0, n_points, chunk_size):
+                t_chunk = t_vals[i:i + chunk_size]
+                chunk_scores = compute_vmapped(t_chunk, samples).detach()
+                time_score_chunks.append(chunk_scores)
+            time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
 
-            integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
-            integral = integrand[0] + integrand[-1]
-            for i in range(1, n_points - 1):
-                if i % 2 == 0:
-                    integral += 2 * integrand[i]
-                else:
-                    integral += 4 * integrand[i]
-            integral *= h / 3
-            out = -torch.from_numpy(integral)
-        elif self.integration_type == '1':
-            out = -time_scores.mean(dim=0).cpu()
-        elif self.integration_type == '2':
-            out = -torch.trapz(time_scores, t_vals, dim=0).cpu()
+            if self.integration_type == '3':
+                # Simpson's rule integration
+                t_np = t_vals.cpu().numpy()
+                h = (t_np[-1] - t_np[0]) / (n_points - 1)
 
-        return out
+                integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
+                integral = integrand[0] + integrand[-1]
+                for i in range(1, n_points - 1):
+                    if i % 2 == 0:
+                        integral += 2 * integrand[i]
+                    else:
+                        integral += 4 * integrand[i]
+                integral *= h / 3
+                out = -torch.from_numpy(integral)
+            elif self.integration_type == '1':
+                out = -time_scores.mean(dim=0).cpu()
+            elif self.integration_type == '2':
+                out = -torch.trapz(time_scores, t_vals, dim=0).cpu()
+
+            return out
+        finally:
+            if self.ema_b is not None:
+                self.ema_b.restore(self.net_b)
+            if self.ema_eta is not None:
+                self.ema_eta.restore(self.net_eta)
 
 
 if __name__ == '__main__':

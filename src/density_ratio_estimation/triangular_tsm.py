@@ -26,6 +26,9 @@ class TriangularTSM(DensityRatioEstimator):
         vertex: float = 0.5,
         peak_max: float = 1.0,
         n_hidden_layers: int = 3,
+        adam_betas: Tuple[float, float] = (0.9, 0.999),
+        weight_decay: float = 0.0,
+        cosine_min_factor: float = 1.0,
     ):
         super().__init__(input_dim)
         if not 0.0 < vertex < 1.0:
@@ -43,6 +46,11 @@ class TriangularTSM(DensityRatioEstimator):
         self.vertex = vertex
         self.peak_max = peak_max
         self.n_hidden_layers = n_hidden_layers
+        self.adam_betas = tuple(adam_betas)
+        self.weight_decay = float(weight_decay)
+        if not (0.0 <= cosine_min_factor <= 1.0):
+            raise ValueError(f"cosine_min_factor must be in [0, 1], got {cosine_min_factor}")
+        self.cosine_min_factor = float(cosine_min_factor)
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -53,7 +61,10 @@ class TriangularTSM(DensityRatioEstimator):
 
     def init_model(self) -> None:
         self.model = TimeScoreNetwork2D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
+        self.optimizer = optim.Adam(
+            self.model.parameters(), lr=self.lr,
+            betas=self.adam_betas, eps=1e-8, weight_decay=self.weight_decay,
+        )
 
     def path_t_tprime(self, tau: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """piecewise-quadratic deterministic bell with peak (vertex, peak_max).
@@ -135,6 +146,12 @@ class TriangularTSM(DensityRatioEstimator):
         n_p1 = samples_p1.shape[0]
         n_pstar = samples_pstar.shape[0]
 
+        # cosine LR schedule: lr -> lr * cosine_min_factor across n_epochs.
+        # cosine_min_factor=1.0 -> constant LR (no-op, default).
+        scheduler = (None if self.cosine_min_factor == 1.0 else
+                     optim.lr_scheduler.CosineAnnealingLR(
+                         self.optimizer, T_max=self.n_epochs,
+                         eta_min=self.lr * self.cosine_min_factor))
         for _ in range(self.n_epochs):
             p0_idx = torch.randint(0, n_p0, (self.batch_size,))
             p1_idx = torch.randint(0, n_p1, (self.batch_size,))
@@ -151,6 +168,8 @@ class TriangularTSM(DensityRatioEstimator):
             loss = self.time_score_loss(p0_batch, p1_batch, x_tau, tau)
             loss.backward()
             self.optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         if self.model is None:

@@ -45,6 +45,11 @@ class TriangularFMDRE(DensityRatioEstimator):
         verbose: bool = False,
         log_every: int = 100,
         n_hidden_layers: int = 3,
+        adam_betas: tuple = (0.9, 0.999),
+        weight_decay: float = 0.0,
+        cosine_min_factor: float = 1.0,
+        triangular_p_uncond: float = 0.0,
+        layernorm: str = "off",
     ) -> None:
         """initialize triangular fmdre estimator with hyperparameters.
 
@@ -81,6 +86,17 @@ class TriangularFMDRE(DensityRatioEstimator):
         self.verbose = verbose
         self.log_every = log_every
         self.n_hidden_layers = n_hidden_layers
+        self.adam_betas = tuple(adam_betas)
+        self.weight_decay = float(weight_decay)
+        if not (0.0 <= cosine_min_factor <= 1.0):
+            raise ValueError(f"cosine_min_factor must be in [0, 1], got {cosine_min_factor}")
+        self.cosine_min_factor = float(cosine_min_factor)
+        if not (0.0 <= triangular_p_uncond <= 1.0):
+            raise ValueError(f"triangular_p_uncond must be in [0, 1], got {triangular_p_uncond}")
+        self.triangular_p_uncond = float(triangular_p_uncond)
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
+        self.layernorm = layernorm
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,7 +117,8 @@ class TriangularFMDRE(DensityRatioEstimator):
             self.input_dim,
             num_classes=3,
             hidden_dim=self.hidden_dim,
-            n_hidden_layers=self.n_hidden_layers
+            n_hidden_layers=self.n_hidden_layers,
+            layernorm=self.layernorm,
         ).to(self.device)
 
     def fit(
@@ -147,6 +164,10 @@ class TriangularFMDRE(DensityRatioEstimator):
             device=str(self.device),
             verbose=self.verbose,
             log_every=self.log_every,
+            adam_betas=self.adam_betas,
+            weight_decay=self.weight_decay,
+            cosine_min_factor=self.cosine_min_factor,
+            triangular_p_uncond=self.triangular_p_uncond,
         )
 
         if self.verbose:

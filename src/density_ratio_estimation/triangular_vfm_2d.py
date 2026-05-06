@@ -12,6 +12,7 @@ import torch
 import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation._ema import EMA, maybe_clip_grad
 from src.models.flow.div_estimators import exact_div, hutch_div
 from src.waypoints.path_2d import VfmPath2D
 from src.waypoints.triangular_continuous_2d import Stacked2DVfm
@@ -49,6 +50,9 @@ class TriangularVFM2D(DensityRatioEstimator):
         n_hutch_samples: int = 1,
         verbose: bool = False,
         log_every: int = 100,
+        ema_decay: Optional[float] = None,
+        grad_clip_norm: Optional[float] = None,
+        activation: str = "gelu",
     ) -> None:
         """Initialize TriangularVFM2D.
 
@@ -97,6 +101,13 @@ class TriangularVFM2D(DensityRatioEstimator):
         self.n_hutch_samples = n_hutch_samples
         self.verbose = verbose
         self.log_every = log_every
+        self.ema_decay = ema_decay
+        self.grad_clip_norm = grad_clip_norm
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(
+                f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
+            )
+        self.activation = activation
 
         # resolve device
         if device is None:
@@ -121,12 +132,18 @@ class TriangularVFM2D(DensityRatioEstimator):
         self.net_b1 = None
         self.net_b2 = None
         self.net_eta = None
+        self.ema_b1: Optional[EMA] = None
+        self.ema_b2: Optional[EMA] = None
+        self.ema_eta: Optional[EMA] = None
 
     def init_model(self) -> None:
         """Instantiate three independent MLP2D networks on self.device."""
-        self.net_b1 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
-        self.net_b2 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
-        self.net_eta = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.net_b1 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
+        self.net_b2 = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
+        self.net_eta = MLP2D(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
+        self.ema_b1 = EMA(self.net_b1, self.ema_decay) if self.ema_decay is not None else None
+        self.ema_b2 = EMA(self.net_b2, self.ema_decay) if self.ema_decay is not None else None
+        self.ema_eta = EMA(self.net_eta, self.ema_decay) if self.ema_decay is not None else None
 
     def fit(
         self,
@@ -273,7 +290,12 @@ class TriangularVFM2D(DensityRatioEstimator):
 
             optimizer_b.zero_grad()
             loss.backward()
+            maybe_clip_grad(list(self.net_b1.parameters()) + list(self.net_b2.parameters()), self.grad_clip_norm)
             optimizer_b.step()
+            if self.ema_b1 is not None:
+                self.ema_b1.update(self.net_b1)
+            if self.ema_b2 is not None:
+                self.ema_b2.update(self.net_b2)
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 # log per-direction losses (NOT summed)
@@ -325,7 +347,10 @@ class TriangularVFM2D(DensityRatioEstimator):
 
             optimizer_eta.zero_grad()
             loss_eta.backward()
+            maybe_clip_grad(self.net_eta.parameters(), self.grad_clip_norm)
             optimizer_eta.step()
+            if self.ema_eta is not None:
+                self.ema_eta.update(self.net_eta)
 
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_eta={loss_eta.item():.4f}")
@@ -371,24 +396,40 @@ class TriangularVFM2D(DensityRatioEstimator):
             dtype=samples.dtype,
         )  # [n_points, 4]
 
-        # chunked inference: vmap over leading dim of t_data
-        chunk_size = max(1, 100000 // n_samples)
-        compute_vmapped = torch.vmap(
-            self._compute_time_score_single,
-            in_dims=(0, None),
-            out_dims=0,
-            randomness='different',  # required for Hutchinson noise inside
-        )
+        # if EMA is active, swap in shadow weights
+        if self.ema_b1 is not None:
+            self.ema_b1.apply_to(self.net_b1)
+        if self.ema_b2 is not None:
+            self.ema_b2.apply_to(self.net_b2)
+        if self.ema_eta is not None:
+            self.ema_eta.apply_to(self.net_eta)
 
-        time_score_chunks = []
-        for i in range(0, n_points, chunk_size):
-            t_chunk = t_data[i:i + chunk_size]  # [chunk_len, 4]
-            chunk_scores = compute_vmapped(t_chunk, samples).detach()  # [chunk_len, n_samples]
-            time_score_chunks.append(chunk_scores)
+        try:
+            # chunked inference: vmap over leading dim of t_data
+            chunk_size = max(1, 100000 // n_samples)
+            compute_vmapped = torch.vmap(
+                self._compute_time_score_single,
+                in_dims=(0, None),
+                out_dims=0,
+                randomness='different',  # required for Hutchinson noise inside
+            )
 
-        time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
+            time_score_chunks = []
+            for i in range(0, n_points, chunk_size):
+                t_chunk = t_data[i:i + chunk_size]  # [chunk_len, 4]
+                chunk_scores = compute_vmapped(t_chunk, samples).detach()  # [chunk_len, n_samples]
+                time_score_chunks.append(chunk_scores)
 
-        return -torch.trapezoid(time_scores, tau_vals, dim=0).cpu()  # [n_samples]
+            time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
+
+            return -torch.trapezoid(time_scores, tau_vals, dim=0).cpu()  # [n_samples]
+        finally:
+            if self.ema_b1 is not None:
+                self.ema_b1.restore(self.net_b1)
+            if self.ema_b2 is not None:
+                self.ema_b2.restore(self.net_b2)
+            if self.ema_eta is not None:
+                self.ema_eta.restore(self.net_eta)
 
     def _compute_time_score_single(
         self, t_tau: torch.Tensor, x: torch.Tensor

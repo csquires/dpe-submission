@@ -16,6 +16,7 @@ import torch
 import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation._ema import EMA, maybe_clip_grad, sample_time_and_iw
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
 from src.waypoints.curve_2d import Curve2D
 from src.waypoints.path_2d import CtsmPath2D
@@ -54,6 +55,10 @@ class TriangularCTSM2D(DensityRatioEstimator):
         device: Optional[str] = None,
         integration_steps: int = 200,
         log_every: int = 100,
+        ema_decay: Optional[float] = None,
+        grad_clip_norm: Optional[float] = None,
+        time_dist: str = "uniform",
+        activation: str = "elu",
     ) -> None:
         super().__init__(input_dim)
 
@@ -65,6 +70,19 @@ class TriangularCTSM2D(DensityRatioEstimator):
         self.eps = eps
         self.integration_steps = integration_steps
         self.log_every = log_every
+        self.ema_decay = ema_decay
+        self.grad_clip_norm = grad_clip_norm
+        if time_dist not in {"uniform", "beta_2_2", "beta_5_5"}:
+            raise ValueError(
+                f"time_dist must be in {{'uniform', 'beta_2_2', 'beta_5_5'}}; "
+                f"got {time_dist!r}"
+            )
+        self.time_dist = time_dist
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(
+                f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
+            )
+        self.activation = activation
 
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -88,16 +106,18 @@ class TriangularCTSM2D(DensityRatioEstimator):
 
         self.model = None
         self.optimizer = None
+        self.ema: Optional[EMA] = None
 
     def init_model(self) -> None:
         """Construct ScoreNetwork2D + Adam optimizer on self.device."""
-        self.model = ScoreNetwork2D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.model = ScoreNetwork2D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=self.lr,
             betas=(0.9, 0.999),
             eps=1e-8,
         )
+        self.ema = EMA(self.model, self.ema_decay) if self.ema_decay is not None else None
 
     def fit(
         self,
@@ -148,12 +168,8 @@ class TriangularCTSM2D(DensityRatioEstimator):
             x1 = samples_p1[idx1]  # [B, D]
             xstar = samples_pstar[idx_star]  # [B, D]
 
-            # sample t1 ~ U(eps, 1-eps) and t2 ~ U(eps, t2_max)
-            t1 = (
-                torch.rand(self.batch_size, 1, device=self.device)
-                * (1.0 - 2.0 * self.eps)
-                + self.eps
-            )  # [B, 1]
+            # sample t1 ~ time_dist with importance weighting; t2 ~ U(eps, t2_max)
+            t1, iw = sample_time_and_iw(self.time_dist, self.batch_size, self.eps, self.device)  # [B, 1], [B, 1]
             t2 = (
                 torch.rand(self.batch_size, 1, device=self.device)
                 * (t2_max - self.eps)
@@ -172,9 +188,9 @@ class TriangularCTSM2D(DensityRatioEstimator):
             # forward
             pred = self.model(x, t1, t2)  # [B, 2]
 
-            # mse loss; mean over batch and over both heads
+            # mse loss with importance weighting; mean over batch and over both heads
             err = target - lambda_t * pred  # [B, 2]
-            loss = (err ** 2).mean()
+            loss = (iw * (err ** 2)).mean()  # broadcast iw [B, 1] over [B, 2]
 
             # diagnostic: per-head losses
             if self.log_every > 0 and (epoch_idx + 1) % self.log_every == 0:
@@ -188,7 +204,10 @@ class TriangularCTSM2D(DensityRatioEstimator):
 
             self.optimizer.zero_grad()
             loss.backward()
+            maybe_clip_grad(self.model.parameters(), self.grad_clip_norm)
             self.optimizer.step()
+            if self.ema is not None:
+                self.ema.update(self.model)
 
         self.model.eval()
 
@@ -215,24 +234,30 @@ class TriangularCTSM2D(DensityRatioEstimator):
         n = xs.shape[0]
         dtype = next(self.model.parameters()).dtype
 
-        ts = torch.linspace(self.eps, 1.0 - self.eps, self.integration_steps, device=self.device)
-        with torch.no_grad():
-            integrand_rows = []
-            for t in ts:
-                tau_v = float(t.item())
-                t1_v = float(self.curve.t1(tau_v))
-                t2_v = float(self.curve.t2(tau_v))
-                dt1_v = float(self.curve.dt1(tau_v))
-                dt2_v = float(self.curve.dt2(tau_v))
-                t1_t = torch.full((n, 1), t1_v, dtype=dtype, device=self.device)
-                t2_t = torch.full((n, 1), t2_v, dtype=dtype, device=self.device)
-                s = self.model(xs, t1_t, t2_t)  # [n, 2]
-                dy = -(s[:, 0] * dt1_v + s[:, 1] * dt2_v)
-                dy = torch.nan_to_num(dy, nan=0.0, posinf=1e6, neginf=-1e6)
-                integrand_rows.append(dy)
-            vals = torch.stack(integrand_rows)  # [integration_steps, n]
-        dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
-        return torch.trapezoid(vals, dx=dt, dim=0).cpu()
+        if self.ema is not None:
+            self.ema.apply_to(self.model)
+        try:
+            ts = torch.linspace(self.eps, 1.0 - self.eps, self.integration_steps, device=self.device)
+            with torch.no_grad():
+                integrand_rows = []
+                for t in ts:
+                    tau_v = float(t.item())
+                    t1_v = float(self.curve.t1(tau_v))
+                    t2_v = float(self.curve.t2(tau_v))
+                    dt1_v = float(self.curve.dt1(tau_v))
+                    dt2_v = float(self.curve.dt2(tau_v))
+                    t1_t = torch.full((n, 1), t1_v, dtype=dtype, device=self.device)
+                    t2_t = torch.full((n, 1), t2_v, dtype=dtype, device=self.device)
+                    s = self.model(xs, t1_t, t2_t)  # [n, 2]
+                    dy = -(s[:, 0] * dt1_v + s[:, 1] * dt2_v)
+                    dy = torch.nan_to_num(dy, nan=0.0, posinf=1e6, neginf=-1e6)
+                    integrand_rows.append(dy)
+                vals = torch.stack(integrand_rows)  # [integration_steps, n]
+            dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
+            return torch.trapezoid(vals, dx=dt, dim=0).cpu()
+        finally:
+            if self.ema is not None:
+                self.ema.restore(self.model)
 
 
 if __name__ == "__main__":

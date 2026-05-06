@@ -10,7 +10,7 @@ tau ~ Uniform([eps, 1-eps]), geometrically expected (mu_{0.5} = x_*, locally
 stationary), and empirically navigated by the sibling TriangularCTSM V2 which uses
 the identical BarycentricCtsm1D path. 
 """
-from typing import Optional, Literal
+from typing import Optional, Literal, Tuple
 import warnings
 
 import numpy as np
@@ -18,6 +18,7 @@ import torch
 import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation._ema import EMA, maybe_clip_grad
 from src.density_ratio_estimation.spatial_velo_denoiser2 import MLP, compute_divergence
 from src.models.flow.div_estimators import exact_div, hutch_div
 from src.waypoints.path_1d import VfmPath1D
@@ -55,6 +56,13 @@ class TriangularVFM(DensityRatioEstimator):
         n_hutch_samples: int = 1,
         verbose: bool = False,
         log_every: int = 100,
+        ema_decay: Optional[float] = None,
+        grad_clip_norm: Optional[float] = None,
+        activation: str = "gelu",
+        adam_betas: Tuple[float, float] = (0.9, 0.999),
+        weight_decay: float = 0.0,
+        cosine_min_factor: float = 1.0,
+        layernorm: str = "off",
     ) -> None:
         """
         Initialize TriangularVFM.
@@ -75,6 +83,8 @@ class TriangularVFM(DensityRatioEstimator):
             antithetic: If True, use antithetic variance reduction in b-phase training.
             verbose: If True, print loss per epoch.
             log_every: Log frequency (epochs between prints).
+            activation: MLP activation function {"elu", "gelu", "silu"};
+            default "gelu" preserves byte-identical behavior.
         """
         # BLOCKING: boundary-regularity validation (must be FIRST)
         if eps < 1e-3:
@@ -106,6 +116,21 @@ class TriangularVFM(DensityRatioEstimator):
         self.n_hutch_samples = n_hutch_samples
         self.verbose = verbose
         self.log_every = log_every
+        self.ema_decay = ema_decay
+        self.grad_clip_norm = grad_clip_norm
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(
+                f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
+            )
+        self.activation = activation
+        self.adam_betas = tuple(adam_betas)
+        self.weight_decay = float(weight_decay)
+        if not (0.0 <= cosine_min_factor <= 1.0):
+            raise ValueError(f"cosine_min_factor must be in [0, 1], got {cosine_min_factor}")
+        self.cosine_min_factor = float(cosine_min_factor)
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
+        self.layernorm = layernorm
 
         # resolve device
         if device is None:
@@ -122,6 +147,8 @@ class TriangularVFM(DensityRatioEstimator):
         # initialize network placeholders
         self.net_b = None
         self.net_eta = None
+        self.ema_b: Optional[EMA] = None
+        self.ema_eta: Optional[EMA] = None
 
     def init_model(self) -> None:
         """
@@ -129,8 +156,10 @@ class TriangularVFM(DensityRatioEstimator):
 
         Creates MLPs with forward signature forward(t: [B, 1], x: [B, D]) -> [B, D].
         """
-        self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
-        self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation, layernorm=self.layernorm).to(self.device)
+        self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation, layernorm=self.layernorm).to(self.device)
+        self.ema_b = EMA(self.net_b, self.ema_decay) if self.ema_decay is not None else None
+        self.ema_eta = EMA(self.net_eta, self.ema_decay) if self.ema_decay is not None else None
 
     def fit(
         self,
@@ -207,7 +236,11 @@ class TriangularVFM(DensityRatioEstimator):
 
         self.net_b.train()
         self.net_eta.eval()
-        optimizer_b = optim.Adam(self.net_b.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
+        optimizer_b = optim.Adam(self.net_b.parameters(), lr=self.lr, betas=self.adam_betas, eps=1e-8, weight_decay=self.weight_decay)
+        scheduler_b = (None if self.cosine_min_factor == 1.0 else
+                       optim.lr_scheduler.CosineAnnealingLR(
+                           optimizer_b, T_max=self.n_epochs,
+                           eta_min=self.lr * self.cosine_min_factor))
 
         for epoch in range(self.n_epochs):
             # bootstrap sampling (with replacement)
@@ -218,8 +251,13 @@ class TriangularVFM(DensityRatioEstimator):
             x1 = samples_p1[idx1]  # [B, D]
             xstar = samples_pstar[idx_star]  # [B, D]
 
-            # time sampling (clamped to [eps, 1-eps])
-            tau = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps  # [B, 1]
+            # time sampling: defer to path.sample_tau if provided (e.g. V1
+            # with inner_eps for vertex-band guard), else uniform on [eps, 1-eps].
+            sampler = getattr(self.path, "sample_tau", None)
+            if callable(sampler):
+                tau = sampler(self.batch_size, self.eps, self.device)  # [B, 1]
+            else:
+                tau = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps
 
             # noise and path derivatives
             z = torch.randn_like(x0)  # [B, D]
@@ -262,7 +300,12 @@ class TriangularVFM(DensityRatioEstimator):
             # gradient step
             optimizer_b.zero_grad()
             loss_b.backward()
+            maybe_clip_grad(self.net_b.parameters(), self.grad_clip_norm)
             optimizer_b.step()
+            if scheduler_b is not None:
+                scheduler_b.step()
+            if self.ema_b is not None:
+                self.ema_b.update(self.net_b)
 
             # logging
             if self.verbose and (epoch + 1) % self.log_every == 0:
@@ -291,7 +334,11 @@ class TriangularVFM(DensityRatioEstimator):
 
         self.net_b.eval()
         self.net_eta.train()
-        optimizer_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
+        optimizer_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=self.adam_betas, eps=1e-8, weight_decay=self.weight_decay)
+        scheduler_eta = (None if self.cosine_min_factor == 1.0 else
+                         optim.lr_scheduler.CosineAnnealingLR(
+                             optimizer_eta, T_max=self.n_epochs,
+                             eta_min=self.lr * self.cosine_min_factor))
 
         for epoch in range(self.n_epochs):
             # bootstrap sampling (identical to b-phase)
@@ -302,8 +349,13 @@ class TriangularVFM(DensityRatioEstimator):
             x1 = samples_p1[idx1]  # [B, D]
             xstar = samples_pstar[idx_star]  # [B, D]
 
-            # time sampling (CLAMPED to [eps, 1-eps] — KEY DEVIATION FROM STOCK VFM)
-            tau = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps  # [B, 1]
+            # time sampling: defer to path.sample_tau when provided (e.g. V1
+            # with inner_eps for vertex-band guard), else CLAMPED to [eps, 1-eps].
+            sampler = getattr(self.path, "sample_tau", None)
+            if callable(sampler):
+                tau = sampler(self.batch_size, self.eps, self.device)  # [B, 1]
+            else:
+                tau = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps
 
             # noise and path sampling
             z = torch.randn_like(x0)  # [B, D]
@@ -321,7 +373,12 @@ class TriangularVFM(DensityRatioEstimator):
             # gradient step
             optimizer_eta.zero_grad()
             loss_eta.backward()
+            maybe_clip_grad(self.net_eta.parameters(), self.grad_clip_norm)
             optimizer_eta.step()
+            if scheduler_eta is not None:
+                scheduler_eta.step()
+            if self.ema_eta is not None:
+                self.ema_eta.update(self.net_eta)
 
             # logging
             if self.verbose and (epoch + 1) % self.log_every == 0:
@@ -357,46 +414,58 @@ class TriangularVFM(DensityRatioEstimator):
             n_points += 1
         t_vals = torch.linspace(self.eps, 1.0 - self.eps, steps=n_points, device=self.device)
 
-        # EXPLICIT CHUNKING (mirrors spatial_velo_denoiser2.py lines 348–352)
-        chunk_size = max(1, 100000 // n_samples)
-        compute_vmapped = torch.vmap(
-            self._compute_time_score_single,
-            in_dims=(0, None),
-            out_dims=0,  # explicit (matches spatial_velo_denoiser2.py:346)
-            randomness='different',  # required for Hutchinson noise inside
-        )
+        # if EMA is active, swap in shadow weights
+        if self.ema_b is not None:
+            self.ema_b.apply_to(self.net_b)
+        if self.ema_eta is not None:
+            self.ema_eta.apply_to(self.net_eta)
 
-        time_score_chunks = []
-        for i in range(0, n_points, chunk_size):
-            t_chunk = t_vals[i:i + chunk_size]
-            chunk_scores = compute_vmapped(t_chunk, samples).detach()  # [chunk_len, n_samples]
-            time_score_chunks.append(chunk_scores)
+        try:
+            # EXPLICIT CHUNKING (mirrors spatial_velo_denoiser2.py lines 348–352)
+            chunk_size = max(1, 100000 // n_samples)
+            compute_vmapped = torch.vmap(
+                self._compute_time_score_single,
+                in_dims=(0, None),
+                out_dims=0,  # explicit (matches spatial_velo_denoiser2.py:346)
+                randomness='different',  # required for Hutchinson noise inside
+            )
 
-        time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
+            time_score_chunks = []
+            for i in range(0, n_points, chunk_size):
+                t_chunk = t_vals[i:i + chunk_size]
+                chunk_scores = compute_vmapped(t_chunk, samples).detach()  # [chunk_len, n_samples]
+                time_score_chunks.append(chunk_scores)
 
-        # integration
-        if self.integration_type == '2':
-            # trapezoidal rule (default)
-            out = -torch.trapz(time_scores, t_vals, dim=0).cpu()
-        elif self.integration_type == '3':
-            # Simpson's rule (mirror spatial_velo_denoiser2.py:356–369)
-            t_np = t_vals.cpu().numpy()
-            h = (t_np[-1] - t_np[0]) / (n_points - 1)
+            time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
 
-            integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
-            integral = integrand[0] + integrand[-1]
-            for i in range(1, n_points - 1):
-                if i % 2 == 0:
-                    integral += 2 * integrand[i]
-                else:
-                    integral += 4 * integrand[i]
-            integral *= h / 3
-            out = -torch.from_numpy(integral)
-        elif self.integration_type == '1':
-            # mean (uniform quadrature)
-            out = -time_scores.mean(dim=0).cpu()
+            # integration
+            if self.integration_type == '2':
+                # trapezoidal rule (default)
+                out = -torch.trapz(time_scores, t_vals, dim=0).cpu()
+            elif self.integration_type == '3':
+                # Simpson's rule (mirror spatial_velo_denoiser2.py:356–369)
+                t_np = t_vals.cpu().numpy()
+                h = (t_np[-1] - t_np[0]) / (n_points - 1)
 
-        return out  # [n_samples], CPU, float32
+                integrand = time_scores.cpu().numpy()  # [n_points, n_samples]
+                integral = integrand[0] + integrand[-1]
+                for i in range(1, n_points - 1):
+                    if i % 2 == 0:
+                        integral += 2 * integrand[i]
+                    else:
+                        integral += 4 * integrand[i]
+                integral *= h / 3
+                out = -torch.from_numpy(integral)
+            elif self.integration_type == '1':
+                # mean (uniform quadrature)
+                out = -time_scores.mean(dim=0).cpu()
+
+            return out  # [n_samples], CPU, float32
+        finally:
+            if self.ema_b is not None:
+                self.ema_b.restore(self.net_b)
+            if self.ema_eta is not None:
+                self.ema_eta.restore(self.net_eta)
 
     def _compute_time_score_single(self, t_scalar: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
