@@ -25,7 +25,7 @@ class MultiClassVelScoreMLP(nn.Module):
       this MLP is K-general; convention is external.
     """
 
-    def __init__(self, input_dim: int, num_classes: int, hidden_dim: int = 256, n_hidden_layers: int = 3) -> None:
+    def __init__(self, input_dim: int, num_classes: int, hidden_dim: int = 256, n_hidden_layers: int = 3, layernorm: str = "off") -> None:
         """
         initialize MultiClassVelScoreMLP.
 
@@ -47,16 +47,30 @@ class MultiClassVelScoreMLP(nn.Module):
         super().__init__()
         if n_hidden_layers < 1:
             raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
 
         self.input_dim = input_dim
         self.num_classes = num_classes
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
+        self.layernorm = layernorm
 
-        layers = [nn.Linear(input_dim + 1 + num_classes, hidden_dim), nn.GELU()]
+        # backbone: layernorm "off" preserves byte-identical pre-S7 behavior.
+        # "pre" inserts a LayerNorm BEFORE each hidden activation, "post" AFTER.
+        layers = [nn.Linear(input_dim + 1 + num_classes, hidden_dim)]
+        if layernorm == "pre":
+            layers.append(nn.LayerNorm(hidden_dim))
+        layers.append(nn.GELU())
+        if layernorm == "post":
+            layers.append(nn.LayerNorm(hidden_dim))
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
+            if layernorm == "pre":
+                layers.append(nn.LayerNorm(hidden_dim))
             layers.append(nn.GELU())
+            if layernorm == "post":
+                layers.append(nn.LayerNorm(hidden_dim))
 
         self.backbone = nn.Sequential(*layers)
 
