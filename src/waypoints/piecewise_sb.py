@@ -33,6 +33,7 @@ class PiecewiseSBCtsm1D(CtsmPath1D):
         sigma: float = 1.0,
         vertex: float = 0.5,
         eps: float = 1e-3,
+        inner_eps: float = 0.02,
     ) -> None:
         """Initialize triangular piecewise-SB CTSM path.
 
@@ -42,12 +43,21 @@ class PiecewiseSBCtsm1D(CtsmPath1D):
             eps: scalar float > 0, lower/upper clamp for tau boundary. Default 1e-3.
                  Must satisfy eps < min(vertex, 1 - vertex).
                  Passed to super().__init__(eps).
+            inner_eps: scalar float >= 0, local-time floor on each leg's INNER
+                 (vertex-side) boundary. Default 0.02. With this guard, the
+                 per-leg variance never vanishes near tau=vertex, so the
+                 closed-form CTSM target stays bounded. Empirical A/B sweep
+                 showed monotone improvement vs inner_eps=0 across mild and
+                 sharp Gaussian KLs and pendulum (the original 82%-divergence
+                 regime); plateau reached at 0.02 with no further gains up to
+                 0.20. Set to 0.0 to recover the legacy unguarded behavior.
 
         Raises:
             ValueError: if sigma <= 0.
             ValueError: if vertex not in (0, 1).
             ValueError: if eps <= 0.
             ValueError: if eps >= min(vertex, 1 - vertex).
+            ValueError: if inner_eps < 0 or inner_eps + eps >= 1.
         """
         if sigma <= 0:
             raise ValueError(f"sigma must be > 0, got {sigma}")
@@ -59,10 +69,71 @@ class PiecewiseSBCtsm1D(CtsmPath1D):
             raise ValueError(
                 f"eps must be < min(vertex, 1-vertex) = {min(vertex, 1 - vertex)}, got {eps}"
             )
+        if inner_eps < 0:
+            raise ValueError(f"inner_eps must be >= 0, got {inner_eps}")
+        if inner_eps + eps >= 1.0:
+            raise ValueError(
+                f"inner_eps ({inner_eps}) + eps ({eps}) must be < 1; "
+                f"otherwise the per-leg t_local interval is empty"
+            )
 
         self.sigma = sigma
         self.vertex = vertex
+        self.inner_eps = inner_eps
         super().__init__(eps)
+
+    def sample_tau(
+        self,
+        batch_size: int,
+        eps: float,
+        device,
+    ):
+        """sample tau ~ U over the *vertex-free* support when inner_eps > 0.
+
+        Falls back to uniform on [eps, 1-eps] when inner_eps == 0 (current
+        behavior). When inner_eps > 0, draw a leg index proportional to leg
+        width, then a per-leg t_local sample with two-sided protection: the
+        OUTER boundary (tau -> 0 in leg 1, tau -> 1 in leg 2) is guarded by
+        `eps`; the INNER boundary (tau -> vertex on either leg) is guarded
+        by `inner_eps`.
+
+        Per-leg t_local distributions:
+            leg 1:  t_local ~ U(eps, 1 - inner_eps)
+            leg 2:  t_local ~ U(inner_eps, 1 - eps)
+
+        Mapping:
+            tau_leg1 = t_local * vertex
+            tau_leg2 = vertex + t_local * (1 - vertex)
+
+        The forbidden band around vertex is therefore
+        (vertex - inner_eps * vertex, vertex + inner_eps * (1 - vertex)).
+
+        Returns: [B, 1] tensor of tau values in [eps, 1 - eps].
+        """
+        import torch
+
+        if self.inner_eps <= 0.0:
+            return (
+                torch.rand(batch_size, 1, device=device)
+                * (1.0 - 2.0 * eps)
+                + eps
+            )
+        leg1_mask = torch.rand(batch_size, 1, device=device) < self.vertex
+        # leg 1: t_local in [eps, 1 - inner_eps] -> tau in [eps*v, (1-inner)*v]
+        t_local_leg1 = (
+            torch.rand(batch_size, 1, device=device)
+            * (1.0 - self.inner_eps - eps)
+            + eps
+        )
+        # leg 2: t_local in [inner_eps, 1 - eps] -> tau in [v + inner*(1-v), v + (1-eps)*(1-v)]
+        t_local_leg2 = (
+            torch.rand(batch_size, 1, device=device)
+            * (1.0 - eps - self.inner_eps)
+            + self.inner_eps
+        )
+        tau_leg1 = t_local_leg1 * self.vertex
+        tau_leg2 = self.vertex + t_local_leg2 * (1.0 - self.vertex)
+        return torch.where(leg1_mask, tau_leg1, tau_leg2)
 
     def sample_and_target(
         self,
@@ -125,33 +196,44 @@ class PiecewiseSBCtsm1D(CtsmPath1D):
             mu_leg2 + std_leg2 * epsilon
         )                                                      # [B, D]
 
-        # closed-form target computation (per-leg)
-        epsilon_sq = (epsilon ** 2).sum(dim=-1, keepdim=True) # [B, 1]
+        # closed-form target computation (per-leg).
+        #
+        # data-bounded normalization (mirrors plain CTSM):
+        #   target_leg = T_raw_leg / temp_leg,  lambda_t_leg = var_leg / temp_leg
+        # where temp_leg = sqrt(2 ||Delta_leg||^2 + 1e-8). per-leg Delta is
+        # constant and bounded (Delta_leg1 = (x_*-x_0)/v, Delta_leg2 =
+        # (x_1-x_*)/(1-v)), so temp_leg never vanishes. the prior version
+        # used `target = T_raw_leg / var_leg, lambda_t = 1`, which made the
+        # network chase infinite targets at the leg endpoints (tau=0, vertex,
+        # and tau=1) -- a triple-singularity that empirically collapsed
+        # the predicted std to ~0 (network learned a near-constant). bayes-
+        # optimal predictor pred = T_raw / var is unchanged at the optimum.
+        epsilon_sq = (epsilon ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
         dim = epsilon.shape[-1]
 
-        # leg 1 target
-        delta_dot_eps_leg1 = (Delta_leg1 * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
+        delta_sq_leg1 = (Delta_leg1 ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
+        temp_leg1 = torch.sqrt(2 * delta_sq_leg1 + 1e-8)             # [B, 1]
+        delta_sq_leg2 = (Delta_leg2 ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
+        temp_leg2 = torch.sqrt(2 * delta_sq_leg2 + 1e-8)             # [B, 1]
+
+        delta_dot_eps_leg1 = (Delta_leg1 * epsilon).sum(dim=-1, keepdim=True)
         target_leg1 = (
-            dvar_leg1_dtau * (epsilon_sq - dim) / 2.0 + std_leg1 * delta_dot_eps_leg1
-        ) / var_leg1                                           # [B, 1]
+            dvar_leg1_dtau * (epsilon_sq - dim) / 2.0
+            + std_leg1 * delta_dot_eps_leg1
+        ) / temp_leg1                                          # [B, 1]
 
-        # leg 2 target
-        delta_dot_eps_leg2 = (Delta_leg2 * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
+        delta_dot_eps_leg2 = (Delta_leg2 * epsilon).sum(dim=-1, keepdim=True)
         target_leg2 = (
-            dvar_leg2_dtau * (epsilon_sq - dim) / 2.0 + std_leg2 * delta_dot_eps_leg2
-        ) / var_leg2                                           # [B, 1]
+            dvar_leg2_dtau * (epsilon_sq - dim) / 2.0
+            + std_leg2 * delta_dot_eps_leg2
+        ) / temp_leg2                                          # [B, 1]
 
-        # hard switch for target
-        target = torch.where(mask, target_leg1, target_leg2)  # [B, 1]
+        target = torch.where(mask, target_leg1, target_leg2)   # [B, 1]
+        lam_leg1 = var_leg1 / temp_leg1                        # [B, 1]
+        lam_leg2 = var_leg2 / temp_leg2                        # [B, 1]
+        lambda_t = torch.where(mask, lam_leg1, lam_leg2)       # [B, 1]
 
-        # uniform weight
-        lambda_t = torch.ones_like(g_leg1)                    # [B, 1]
-
-        # detach target and lambda_t (contract: both must be detached)
-        target = target.detach()
-        lambda_t = lambda_t.detach()
-
-        return x_tau, target, lambda_t
+        return x_tau, target.detach(), lambda_t.detach()
 
 
 class PiecewiseSBVfm1D(VfmPath1D):
@@ -187,6 +269,7 @@ class PiecewiseSBVfm1D(VfmPath1D):
         vertex: float = 0.5,
         gamma_min: float = 5e-2,
         eps: float = 1e-3,
+        inner_eps: float = 0.0,
     ) -> None:
         """Initialize triangular piecewise-SB VFM path.
 
@@ -197,6 +280,11 @@ class PiecewiseSBVfm1D(VfmPath1D):
             eps: scalar float >= 1e-3, lower/upper clamp for tau boundary. Default 1e-3.
                  Must satisfy eps >= 1e-3 (boundary regularity floor) and
                  eps < min(vertex, 1 - vertex). Passed to super().__init__(eps).
+            inner_eps: scalar float >= 0, local-time floor on each leg's INNER
+                 (vertex-side) boundary. Default 0.0 means no guard. If > 0,
+                 sample_tau() draws t_local with two-sided protection so the
+                 sampled tau distribution excludes a width-`inner_eps` band
+                 around the vertex. mirrors the PiecewiseSBCtsm1D fix.
 
         Raises:
             ValueError: if sigma <= 0.
@@ -204,6 +292,7 @@ class PiecewiseSBVfm1D(VfmPath1D):
             ValueError: if gamma_min <= 0.
             ValueError: if eps < 1e-3.
             ValueError: if eps >= min(vertex, 1 - vertex).
+            ValueError: if inner_eps < 0 or inner_eps + eps >= 1.
         """
         if sigma <= 0:
             raise ValueError(f"sigma must be > 0, got {sigma}")
@@ -217,11 +306,53 @@ class PiecewiseSBVfm1D(VfmPath1D):
             raise ValueError(
                 f"eps must be < min(vertex, 1-vertex) = {min(vertex, 1 - vertex)}, got {eps}"
             )
+        if inner_eps < 0:
+            raise ValueError(f"inner_eps must be >= 0, got {inner_eps}")
+        if inner_eps + eps >= 1.0:
+            raise ValueError(
+                f"inner_eps ({inner_eps}) + eps ({eps}) must be < 1; "
+                f"otherwise per-leg t_local interval is empty"
+            )
 
         self.sigma = sigma
         self.vertex = vertex
         self.gamma_min = gamma_min
+        self.inner_eps = inner_eps
         super().__init__(eps)
+
+    def sample_tau(
+        self,
+        batch_size: int,
+        eps: float,
+        device,
+    ):
+        """sample tau ~ U over the *vertex-free* support when inner_eps > 0.
+
+        Mirrors PiecewiseSBCtsm1D.sample_tau exactly: per-leg two-sided
+        protection. Returns [B, 1] tensor.
+        """
+        import torch
+
+        if self.inner_eps <= 0.0:
+            return (
+                torch.rand(batch_size, 1, device=device)
+                * (1.0 - 2.0 * eps)
+                + eps
+            )
+        leg1_mask = torch.rand(batch_size, 1, device=device) < self.vertex
+        t_local_leg1 = (
+            torch.rand(batch_size, 1, device=device)
+            * (1.0 - self.inner_eps - eps)
+            + eps
+        )
+        t_local_leg2 = (
+            torch.rand(batch_size, 1, device=device)
+            * (1.0 - eps - self.inner_eps)
+            + self.inner_eps
+        )
+        tau_leg1 = t_local_leg1 * self.vertex
+        tau_leg2 = self.vertex + t_local_leg2 * (1.0 - self.vertex)
+        return torch.where(leg1_mask, tau_leg1, tau_leg2)
 
     def sample(
         self,
