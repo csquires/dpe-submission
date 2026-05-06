@@ -24,8 +24,11 @@ class TSM(DensityRatioEstimator):
         rtol: float = 1e-6,
         atol: float = 1e-6,
         n_hidden_layers: int = 3,
+        activation: str = "silu",
     ):
         super().__init__(input_dim)
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}")
         self.hidden_dim = hidden_dim
         self.n_epochs = n_epochs
         self.batch_size = batch_size
@@ -35,6 +38,7 @@ class TSM(DensityRatioEstimator):
         self.rtol = rtol
         self.atol = atol
         self.n_hidden_layers = n_hidden_layers
+        self.activation = activation
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -43,7 +47,7 @@ class TSM(DensityRatioEstimator):
         self.optimizer = None
 
     def init_model(self) -> None:
-        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
 
     def time_score_loss(

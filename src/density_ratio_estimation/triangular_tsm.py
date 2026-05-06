@@ -29,12 +29,16 @@ class TriangularTSM(DensityRatioEstimator):
         adam_betas: Tuple[float, float] = (0.9, 0.999),
         weight_decay: float = 0.0,
         cosine_min_factor: float = 1.0,
+        activation: str = "silu",
     ):
         super().__init__(input_dim)
         if not 0.0 < vertex < 1.0:
             raise ValueError(f"vertex must be in (0, 1), got {vertex}")
         if not 0.0 < peak_max <= 1.0:
             raise ValueError(f"peak_max must be in (0, 1], got {peak_max}")
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}")
+        self.activation = activation
         self.hidden_dim = hidden_dim
         self.n_epochs = n_epochs
         self.batch_size = batch_size
@@ -60,7 +64,7 @@ class TriangularTSM(DensityRatioEstimator):
         self.optimizer = None
 
     def init_model(self) -> None:
-        self.model = TimeScoreNetwork2D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.model = TimeScoreNetwork2D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=self.lr,
             betas=self.adam_betas, eps=1e-8, weight_decay=self.weight_decay,

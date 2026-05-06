@@ -26,14 +26,14 @@ class MLP(nn.Module):
         hidden_dim: hidden layer width
         output_dim: output dimension (defaults to input_dim)
         n_hidden_layers: number of hidden layers in backbone (>= 1)
-        activation: activation function {"elu", "gelu", "silu"}; default "gelu" for byte-identical behavior.
+        activation: activation function {"elu", "gelu", "silu"}; default "silu" (best on MNIST cond-flow A/B 2026-05-05).
 
     Procedure:
         input (input_dim+1: t+x) -> linear -> hidden_dim
         -> [activation -> linear -> hidden_dim] x (n_hidden_layers-1)
         -> activation -> linear -> output_dim
     """
-    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = None, n_hidden_layers: int = 3, activation: str = "gelu", layernorm: str = "off"):
+    def __init__(self, input_dim: int, hidden_dim: int = 256, output_dim: int = None, n_hidden_layers: int = 3, activation: str = "silu", layernorm: str = "off"):
         super().__init__()
         if output_dim is None:
             output_dim = input_dim
@@ -157,7 +157,7 @@ class SpatialVeloDenoiser(DensityRatioEstimator):
         n_hutch_samples: int = 1,
         ema_decay: Optional[float] = None,
         grad_clip_norm: Optional[float] = None,
-        activation: str = "gelu",
+        activation: str = "silu",
     ):
         super().__init__(input_dim)
         self.integration_type = integration_type
