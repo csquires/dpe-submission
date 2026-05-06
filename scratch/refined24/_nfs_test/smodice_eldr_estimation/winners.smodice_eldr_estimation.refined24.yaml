@@ -1,0 +1,71 @@
+methods:
+  CTSM:
+    hyperparams:
+      n_epochs: 1146
+      lr: 0.000825443935299117
+      batch_size: 256
+      sigma: 0.5642305134888792
+      eps: 0.0003976618325465019
+      integration_steps: 737
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 0.591018
+      training_trial_id: 38
+      training_seed: 1729
+      holdout_score: 0.591018
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  FMDRE_S2:
+    hyperparams:
+      n_epochs: 1001
+      lr: 0.0017516283630018249
+      batch_size: 128
+      eps: 0.014334183015431712
+      integration_steps: 2234
+      hidden_dim: 128
+      score_weight: 0.1673723216645271
+      p_uncond: 0.46196080194721534
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 0.931489
+      training_trial_id: 9
+      training_seed: 1729
+      holdout_score: 0.931489
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  MultiHeadTDRE:
+    hyperparams:
+      learning_rate: 0.00029579456294815277
+      num_epochs: 523
+      hidden_dim: 128
+      head_dim: 40
+      num_shared_layers: 3
+      num_waypoints: 5
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 0.576301
+      training_trial_id: 2
+      training_seed: 1729
+      holdout_score: 0.576301
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  TriangularCTSM_V2:
+    hyperparams:
+      n_epochs: 1048
+      lr: 0.0007124618064899702
+      batch_size: 256
+      sigma: 0.753590175152413
+      eps: 0.0021624605666345537
+      integration_steps: 733
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 0.97897
+      training_trial_id: 1
+      training_seed: 1729
+      holdout_score: 0.97897
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+provenance:
+  generated_at: '2026-05-05T00:00:00Z'
+  workflow_version: v1
+  source: clear_winners.py

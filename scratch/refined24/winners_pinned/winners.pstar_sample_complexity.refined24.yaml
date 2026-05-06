@@ -1,0 +1,57 @@
+methods:
+  MultiHeadTriangularTDRE:
+    hyperparams:
+      learning_rate: 0.0005900822658897279
+      num_epochs: 292
+      hidden_dim: 64
+      head_dim: 10
+      num_shared_layers: 1
+      num_waypoints: 10
+      vertex: 0.34531027727840424
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 0.903781
+      training_trial_id: 39
+      training_seed: 1729
+      holdout_score: 0.903781
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  TriangularCTSM_V1:
+    hyperparams:
+      n_epochs: 1230
+      lr: 0.00042313251942218864
+      batch_size: 128
+      sigma: 1.1240021777293092
+      vertex: 0.35209999531058384
+      eps: 0.0017710342829498561
+      integration_steps: 1864
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 5.930741
+      training_trial_id: 177
+      training_seed: 1729
+      holdout_score: 5.930741
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  TriangularVFM_V1:
+    hyperparams:
+      n_epochs: 1219
+      lr: 0.0017087920567769766
+      batch_size: 256
+      sigma: 2.1802774942279344
+      vertex: 0.4869341115013749
+      gamma_min: 0.013385471962600265
+      eps: 0.0013156093894859482
+      integration_steps: 1034
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 1.181523
+      training_trial_id: 18
+      training_seed: 1729
+      holdout_score: 1.181523
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+provenance:
+  generated_at: '2026-05-05T00:00:00Z'
+  workflow_version: v1
+  source: clear_winners.py

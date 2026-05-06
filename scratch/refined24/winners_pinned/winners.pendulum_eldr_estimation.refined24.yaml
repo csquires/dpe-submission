@@ -1,0 +1,69 @@
+methods:
+  MultiHeadTDRE:
+    hyperparams:
+      learning_rate: 0.005911344279462825
+      num_epochs: 199
+      hidden_dim: 128
+      head_dim: 10
+      num_shared_layers: 2
+      num_waypoints: 5
+      batch_size: 4096
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 5.773147
+      training_trial_id: 95
+      training_seed: 1729
+      holdout_score: 5.773147
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  MultiHeadTriangularTDRE:
+    hyperparams:
+      learning_rate: 0.004708598260871802
+      num_epochs: 632
+      hidden_dim: 128
+      head_dim: 40
+      num_shared_layers: 2
+      num_waypoints: 5
+      vertex: 0.5822985134908336
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 5.973416
+      training_trial_id: 8
+      training_seed: 1729
+      holdout_score: 5.973416
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  TSM:
+    hyperparams:
+      n_epochs: 1367
+      lr: 0.00048458554143078687
+      batch_size: 64
+      eps: 1.687538539320584e-05
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 6.422818
+      training_trial_id: 193
+      training_seed: 1729
+      holdout_score: 6.422818
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  TriangularVFM_V2:
+    hyperparams:
+      n_epochs: 804
+      lr: 0.0006984066440630359
+      batch_size: 128
+      k: 10
+      eps: 0.003247761999201006
+      integration_steps: 1070
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 8.297597
+      training_trial_id: 50
+      training_seed: 1729
+      holdout_score: 8.297597
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+provenance:
+  generated_at: '2026-05-05T00:00:00Z'
+  workflow_version: v1
+  source: clear_winners.py

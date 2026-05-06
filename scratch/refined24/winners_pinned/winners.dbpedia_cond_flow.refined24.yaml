@@ -1,0 +1,36 @@
+methods:
+  BDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.0004427837109640731
+      num_epochs: 398
+      batch_size: 16384
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 2.059264
+      training_trial_id: 92
+      training_seed: 1729
+      holdout_score: 2.059264
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  TriangularFMDRE:
+    hyperparams:
+      n_epochs: 745
+      lr: 0.0013476627282510906
+      batch_size: 512
+      eps: 0.005747624776346856
+      integration_steps: 1772
+      hidden_dim: 512
+      score_weight: 0.25263306606342945
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 3.17524
+      training_trial_id: 9
+      training_seed: 1729
+      holdout_score: 3.17524
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+provenance:
+  generated_at: '2026-05-05T00:00:00Z'
+  workflow_version: v1
+  source: clear_winners.py

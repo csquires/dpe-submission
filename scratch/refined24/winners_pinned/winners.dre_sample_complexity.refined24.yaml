@@ -1,0 +1,35 @@
+methods:
+  TSM:
+    hyperparams:
+      n_epochs: 1333
+      lr: 0.0005686317137246282
+      batch_size: 256
+      eps: 1.998030136460194e-06
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 4.670691
+      training_trial_id: 167
+      training_seed: 1729
+      holdout_score: 4.670691
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+  VFM:
+    hyperparams:
+      n_epochs: 939
+      lr: 0.0021268296005499997
+      batch_size: 128
+      k: 10
+      eps: 0.0030379740522000548
+      integration_steps: 2164
+    score:
+      training_stage: hardcoded_clear_winner
+      training_score: 2.861631
+      training_trial_id: 8
+      training_seed: 1729
+      holdout_score: 2.861631
+      holdout_seed: 4096
+      source_summary: clear-winner gate (gap, spread, no extrema)
+provenance:
+  generated_at: '2026-05-05T00:00:00Z'
+  workflow_version: v1
+  source: clear_winners.py
