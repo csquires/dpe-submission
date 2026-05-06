@@ -9,7 +9,7 @@
 #
 # what it does, in order:
 #   1. (re)builds narrowed yamls from jsons/<exp>_combined_summary.json with top-5 trials.
-#      output goes to recalibrated_specs/<exp>.yaml.refined24 (does not touch
+#      output goes to recalibrated_specs/<exp>_refined24.yaml (does not touch
 #      the active yaml yet).
 #   2. backs up the active recalibrated_specs/<exp>.yaml -> <exp>.yaml.before_refined24.bak
 #      and swaps in the refined24 version.
@@ -33,12 +33,15 @@ PYTHON="/home/aviamala/miniconda3/envs/fac/bin/python"
 SKIP_PAIRS_FILE="${WORKDIR}/scratch/refined24/skip_pairs.json"
 
 # 0. detect clear winners & emit skip-pairs.json + winners.<exp>.refined24.yaml
-"$PYTHON" -m scratch.refined24.clear_winners
+# tier-2 cutoff (gap>=2%, spread<=12%); override via GAP_THR / SPREAD_THR env.
+"$PYTHON" -m scratch.refined24.clear_winners \
+    --gap-thr "${GAP_THR:-0.02}" \
+    --spread-thr "${SPREAD_THR:-0.12}"
 
-# 1. (re)build narrowed yamls
+# 1. (re)build narrowed yamls (output: recalibrated_specs/<exp>_refined24.yaml)
 "$PYTHON" -m scratch.refined24.build_specs \
     --experiments "$EXPS" \
-    --suffix .refined24
+    --suffix _refined24
 
 # 2. swap in refined24 yaml; ensure revert on exit
 declare -a SWAPS=()
@@ -55,9 +58,9 @@ trap restore_swaps EXIT
 
 for exp in $(echo "$EXPS" | tr , ' '); do
     active="${SPEC_DIR}/${exp}.yaml"
-    refined="${SPEC_DIR}/${exp}.yaml.refined24"
+    refined="${SPEC_DIR}/${exp}_refined24.yaml"
     if [[ ! -f "$refined" ]]; then
-        echo "ERROR: missing $refined — build_specs step failed." >&2
+        echo "ERROR: missing $refined -- build_specs step failed." >&2
         exit 2
     fi
     if [[ -f "$active" ]]; then
