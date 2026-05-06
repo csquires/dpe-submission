@@ -1,0 +1,718 @@
+provenance:
+  derived_at: '2026-05-05'
+  rule: narrowed from top-5 of model_selection_combined_summary.json via narrow_spec;
+    baseline overlay model_selection.yaml; refined24 mini-campaign
+workflow_version: v1
+methods:
+  BDRE:
+    latent_dim:
+    - choice
+    - - 256
+    learning_rate:
+    - log_uniform
+    - 0.008666086483479484
+    - 0.009768560909275073
+    num_epochs:
+    - log_uniform_int
+    - 365
+    - 466
+    n_hidden_layers:
+    - choice
+    - - 1
+  CTSM:
+    n_epochs:
+    - log_uniform_int
+    - 950
+    - 1499
+    lr:
+    - log_uniform
+    - 0.0017931278208056253
+    - 0.002645418499562654
+    batch_size:
+    - choice
+    - - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.6323942811577623
+    - 1.7636109781064184
+    eps:
+    - log_uniform
+    - 0.0003593527778356088
+    - 0.0013635673036295377
+    integration_steps:
+    - uniform_int
+    - 300
+    - 2600
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    time_dist:
+    - choice
+    - - uniform
+      - beta_2_2
+      - beta_5_5
+    activation:
+    - choice
+    - - elu
+      - gelu
+      - silu
+    n_hidden_layers:
+    - choice
+    - - 2
+  FMDRE:
+    n_epochs:
+    - log_uniform_int
+    - 954
+    - 1304
+    lr:
+    - log_uniform
+    - 0.0009425438728573249
+    - 0.0028052431764758958
+    batch_size:
+    - choice
+    - - 128
+      - 256
+      - 512
+    eps:
+    - log_uniform
+    - 0.0028449676355570596
+    - 0.04028403383179299
+    integration_steps:
+    - uniform_int
+    - 1039
+    - 2412
+    hidden_dim:
+    - choice
+    - - 128
+      - 256
+    score_weight:
+    - log_uniform
+    - 1.1054615353182902
+    - 4.227499509375262
+    n_hidden_layers:
+    - choice
+    - - 2
+  FMDRE_S2:
+    n_epochs:
+    - log_uniform_int
+    - 749
+    - 1195
+    lr:
+    - log_uniform
+    - 0.001383512508985165
+    - 0.0019513643827065489
+    batch_size:
+    - choice
+    - - 256
+      - 512
+    eps:
+    - log_uniform
+    - 0.013972718105746476
+    - 0.031190947398705534
+    integration_steps:
+    - uniform_int
+    - 641
+    - 1507
+    hidden_dim:
+    - choice
+    - - 256
+    score_weight:
+    - log_uniform
+    - 0.1516368069558661
+    - 0.3861378338816515
+    p_uncond:
+    - uniform
+    - 0.22073059554464403
+    - 0.3765024593914133
+    n_hidden_layers:
+    - choice
+    - - 2
+  MDRE_15:
+    latent_dim:
+    - choice
+    - - 128
+    learning_rate:
+    - log_uniform
+    - 0.006121037128906787
+    - 0.008045868045235315
+    num_epochs:
+    - log_uniform_int
+    - 322
+    - 470
+    num_waypoints:
+    - choice
+    - - 10
+      - 15
+    n_hidden_layers:
+    - choice
+    - - 1
+  MultiHeadTDRE:
+    learning_rate:
+    - log_uniform
+    - 0.0005511841778028433
+    - 0.0018539398117363667
+    num_epochs:
+    - log_uniform_int
+    - 262
+    - 937
+    hidden_dim:
+    - choice
+    - - 32
+      - 128
+    head_dim:
+    - choice
+    - - 20
+      - 40
+    num_shared_layers:
+    - choice
+    - - 1
+      - 2
+    num_waypoints:
+    - choice
+    - - 10
+      - 15
+    n_hidden_layers:
+    - choice
+    - - 2
+  MultiHeadTriangularTDRE:
+    learning_rate:
+    - log_uniform
+    - 0.0019966593834451333
+    - 0.004847496138002278
+    num_epochs:
+    - log_uniform_int
+    - 338
+    - 623
+    hidden_dim:
+    - choice
+    - - 16
+      - 32
+      - 64
+    head_dim:
+    - choice
+    - - 10
+      - 20
+      - 40
+    num_shared_layers:
+    - choice
+    - - 1
+    num_waypoints:
+    - choice
+    - - 10
+      - 15
+    vertex:
+    - uniform
+    - 0.2663946340321638
+    - 0.43526539388047514
+    n_hidden_layers:
+    - choice
+    - - 2
+  TSM:
+    n_epochs:
+    - log_uniform_int
+    - 1070
+    - 1467
+    lr:
+    - log_uniform
+    - 0.0023509302806623993
+    - 0.002932057736402047
+    batch_size:
+    - choice
+    - - 256
+    eps:
+    - log_uniform
+    - 6.141861767898484e-06
+    - 7.651749893593526e-05
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularCTSM_V1:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    vertex:
+    - uniform
+    - 0.2
+    - 0.8
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.003
+    integration_steps:
+    - uniform_int
+    - 300
+    - 2600
+    inner_eps:
+    - choice
+    - - 0.0
+      - 0.02
+      - 0.05
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    time_dist:
+    - choice
+    - - uniform
+      - beta_2_2
+      - beta_5_5
+    activation:
+    - choice
+    - - elu
+      - gelu
+      - silu
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularCTSM_V2:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    eps:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    integration_steps:
+    - uniform_int
+    - 300
+    - 2600
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    time_dist:
+    - choice
+    - - uniform
+      - beta_2_2
+      - beta_5_5
+    activation:
+    - choice
+    - - elu
+      - gelu
+      - silu
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularCTSM_V3:
+    n_epochs:
+    - log_uniform_int
+    - 750
+    - 1500
+    lr:
+    - log_uniform
+    - 0.0003
+    - 0.003
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    sigma:
+    - log_uniform
+    - 0.3
+    - 3.0
+    gamma_schedule:
+    - choice
+    - - sqrt
+      - linear-stiff
+    k:
+    - choice
+    - - 12
+      - 24
+      - 48
+    t2_max:
+    - uniform
+    - 0.6
+    - 0.9
+    eps:
+    - log_uniform
+    - 0.001
+    - 0.003
+    path_height:
+    - uniform
+    - 1.0
+    - 2.0
+    integration_steps:
+    - uniform_int
+    - 300
+    - 2600
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    time_dist:
+    - choice
+    - - uniform
+      - beta_2_2
+      - beta_5_5
+    activation:
+    - choice
+    - - elu
+      - gelu
+      - silu
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularFMDRE:
+    n_epochs:
+    - log_uniform_int
+    - 938
+    - 1298
+    lr:
+    - log_uniform
+    - 0.0006142026432091795
+    - 0.0010228120156691744
+    batch_size:
+    - choice
+    - - 128
+      - 512
+    eps:
+    - log_uniform
+    - 0.031345326469410996
+    - 0.03982340761773779
+    integration_steps:
+    - uniform_int
+    - 426
+    - 1160
+    hidden_dim:
+    - choice
+    - - 256
+    score_weight:
+    - log_uniform
+    - 0.31313243971331267
+    - 0.6075617650165901
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularMDRE:
+    latent_dim:
+    - choice
+    - - 128
+      - 256
+    learning_rate:
+    - log_uniform
+    - 0.006426557209519684
+    - 0.007954450886290333
+    num_epochs:
+    - log_uniform_int
+    - 356
+    - 455
+    midpoint_oversample:
+    - choice
+    - - 3
+      - 7
+    gamma_power:
+    - uniform
+    - 4.041100629658847
+    - 4.418390614218982
+    num_waypoints:
+    - choice
+    - - 5
+      - 10
+      - 15
+    vertex:
+    - uniform
+    - 0.306874306464607
+    - 0.557044251870235
+    n_hidden_layers:
+    - choice
+    - - 1
+  TriangularTSM:
+    n_epochs:
+    - log_uniform_int
+    - 1305
+    - 1347
+    lr:
+    - log_uniform
+    - 0.002162616962451081
+    - 0.002509671538652597
+    batch_size:
+    - choice
+    - - 256
+    hidden_dim:
+    - choice
+    - - 128
+    eps:
+    - log_uniform
+    - 5.533199091078102e-05
+    - 0.000527189925375885
+    vertex:
+    - uniform
+    - 0.21777291054913497
+    - 0.47161383511199584
+    peak_max:
+    - uniform
+    - 0.5503181294550455
+    - 0.7956785486607769
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularVFM_V1:
+    n_epochs:
+    - log_uniform_int
+    - 1031
+    - 1306
+    lr:
+    - log_uniform
+    - 0.0012312734203687335
+    - 0.002403619350253052
+    batch_size:
+    - choice
+    - - 256
+    sigma:
+    - log_uniform
+    - 1.91288913192125
+    - 5.0
+    vertex:
+    - uniform
+    - 0.25861361152899764
+    - 0.3110384197985392
+    gamma_min:
+    - log_uniform
+    - 0.0166732834125344
+    - 0.06114596399782698
+    eps:
+    - log_uniform
+    - 0.0023876757962266086
+    - 0.002944478774843085
+    integration_steps:
+    - uniform_int
+    - 1097
+    - 2117
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    n_hutch_samples:
+    - choice
+    - - 1
+      - 4
+      - 16
+    activation:
+    - choice
+    - - gelu
+      - elu
+      - silu
+    inner_eps:
+    - choice
+    - - 0.0
+      - 0.05
+      - 0.1
+      - 0.2
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularVFM_V2:
+    n_epochs:
+    - log_uniform_int
+    - 940
+    - 1422
+    lr:
+    - log_uniform
+    - 0.0012377406796632083
+    - 0.0017141910104163077
+    batch_size:
+    - choice
+    - - 64
+      - 128
+      - 256
+    k:
+    - choice
+    - - 10
+      - 20
+      - 40
+    eps:
+    - log_uniform
+    - 0.001175402055228879
+    - 0.0018806705570268434
+    integration_steps:
+    - uniform_int
+    - 351
+    - 1534
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    n_hutch_samples:
+    - choice
+    - - 1
+      - 4
+      - 16
+    activation:
+    - choice
+    - - gelu
+      - elu
+      - silu
+    n_hidden_layers:
+    - choice
+    - - 2
+  TriangularVFM_V3:
+    n_epochs:
+    - log_uniform_int
+    - 1036
+    - 1449
+    lr:
+    - log_uniform
+    - 0.0018738692901177187
+    - 0.002435044491608156
+    batch_size:
+    - choice
+    - - 256
+    k:
+    - choice
+    - - 10
+      - 20
+    gamma_schedule:
+    - choice
+    - - linear-stiff
+    t2_max:
+    - uniform
+    - 0.6067769728969131
+    - 0.8202495109674309
+    eps:
+    - log_uniform
+    - 0.0015131329792513366
+    - 0.003747847467397766
+    path_height:
+    - uniform
+    - 1.1861503723231974
+    - 3.0
+    integration_steps:
+    - uniform_int
+    - 1342
+    - 4000
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    activation:
+    - choice
+    - - gelu
+      - elu
+      - silu
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    n_hutch_samples:
+    - choice
+    - - 1
+      - 4
+      - 16
+    n_hidden_layers:
+    - choice
+    - - 2
+  VFM:
+    n_epochs:
+    - log_uniform_int
+    - 1091
+    - 1259
+    lr:
+    - log_uniform
+    - 0.0019800395738635962
+    - 0.002505208633296151
+    batch_size:
+    - choice
+    - - 256
+    k:
+    - choice
+    - - 10
+    eps:
+    - log_uniform
+    - 0.0013188357615317751
+    - 0.0015916235593521624
+    integration_steps:
+    - uniform_int
+    - 956
+    - 1552
+    ema_decay:
+    - choice
+    - - null
+      - 0.999
+      - 0.9999
+    grad_clip_norm:
+    - choice
+    - - null
+      - 1.0
+      - 5.0
+    n_hutch_samples:
+    - choice
+    - - 1
+      - 4
+      - 16
+    activation:
+    - choice
+    - - gelu
+      - elu
+      - silu
+    n_hidden_layers:
+    - choice
+    - - 2
