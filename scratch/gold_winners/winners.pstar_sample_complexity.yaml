@@ -10,6 +10,7 @@ methods:
       hidden_dim: 256
       score_weight: 0.2519269780611382
       p_uncond: 0.3765024593914133
+      div_method: exact
     score:
       mae: 12.286929
       donor_eval: 200broad_holdout
@@ -118,6 +119,7 @@ methods:
       hidden_dim: 128
       score_weight: 2.248208963101519
       n_hidden_layers: 3
+      div_method: exact
     score:
       mae: 1.045622
       donor_eval: r24_holdout
@@ -180,6 +182,7 @@ methods:
       n_hutch_samples: 4
       inner_eps: 0.05
       n_hidden_layers: 4
+      div_method: exact
     score:
       mae: 0.199969
       donor_eval: r24_holdout
@@ -202,6 +205,7 @@ methods:
       n_hutch_samples: 16
       n_hidden_layers: 4
       vertex: 0.25005463197671507
+      div_method: exact
     score:
       mae: 21.447841
       donor_eval: r24_holdout
@@ -222,6 +226,7 @@ methods:
       eps: 0.002031123823164733
       path_height: 1.9665804675832872
       integration_steps: 1049
+      div_method: exact
     score:
       mae: 1.695615
       eval: 200broad_holdout
@@ -230,3 +235,4 @@ methods:
 provenance:
   rules:
   - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)
+  - switched div_method to exact for FMDRE-family + TriVFM variants on 2026-05-07T03:48:03Z

@@ -31,6 +31,7 @@ methods:
       integration_steps: 1624
       hidden_dim: 512
       score_weight: 0.12299915463228948
+      div_method: exact
     score:
       mae: 3.591616
       eval: 200broad_holdout
@@ -46,6 +47,7 @@ methods:
       hidden_dim: 256
       score_weight: 0.35532287972205295
       p_uncond: 0.26692262778158593
+      div_method: exact
     score:
       mae: 4.23014
       eval: 200broad_holdout
@@ -185,6 +187,7 @@ methods:
       integration_steps: 2000
       hidden_dim: 256
       score_weight: 1.0
+      div_method: exact
     score:
       mae: 2.640329599380493
       eval: sweep_4cell
@@ -240,6 +243,7 @@ methods:
       vertex: 0.2
       gamma_min: 0.1
       inner_eps: 0.0
+      div_method: exact
     score:
       mae: 2.5472092032432556
       eval: sweep_4cell
@@ -265,6 +269,7 @@ methods:
       n_hutch_samples: 4
       activation: elu
       k: 40
+      div_method: exact
     score:
       mae: 3.0979230999946594
       eval: sweep_4cell
@@ -290,6 +295,7 @@ methods:
       gamma_schedule: linear-stiff
       t2_max: 0.6
       path_height: 2.0
+      div_method: exact
     score:
       mae: 2.688471555709839
       eval: sweep_4cell
@@ -321,3 +327,4 @@ provenance:
   description: gold-standard hyperparameter set per (experiment, method)
   rules:
   - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)
+  - switched div_method to exact for FMDRE-family + TriVFM variants on 2026-05-07T03:48:03Z

@@ -32,6 +32,7 @@ methods:
       integration_steps: 1290
       hidden_dim: 256
       score_weight: 0.25803942174140476
+      div_method: exact
     score:
       mae: 0.976284
       eval: 200broad_holdout
@@ -47,6 +48,7 @@ methods:
       hidden_dim: 256
       score_weight: 0.2519269780611382
       p_uncond: 0.3765024593914133
+      div_method: exact
     score:
       mae: 12.286929
       donor_eval: 200broad_holdout
@@ -109,3 +111,4 @@ provenance:
   description: gold-standard hyperparameter set per (experiment, method)
   rules:
   - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)
+  - switched div_method to exact for FMDRE-family + TriVFM variants on 2026-05-07T03:48:03Z
