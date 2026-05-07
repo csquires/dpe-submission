@@ -118,9 +118,15 @@ def sample_time_and_iw(
             f"got {time_dist!r}"
         )
 
-    # sample from Beta(a, b) on [0, 1]
-    dist = Beta(torch.tensor(float(a)), torch.tensor(float(b)))
-    tau_unclamped = dist.sample((batch_size,)).to(device)  # [B]
+    # sample from Beta(a, b) on [0, 1]; instantiate concentration tensors on
+    # `device` so subsequent dist.log_prob(tau) does not cross the cpu/cuda
+    # boundary (was: cpu Beta + cuda tau -> RuntimeError on the dirichlet
+    # internal xlogy when log_prob received a cuda input).
+    dist = Beta(
+        torch.tensor(float(a), device=device),
+        torch.tensor(float(b), device=device),
+    )
+    tau_unclamped = dist.sample((batch_size,))  # [B], already on device
 
     # clamp to [eps, 1-eps] and reshape
     tau = torch.clamp(tau_unclamped, eps, 1.0 - eps).unsqueeze(-1)  # [B, 1]
