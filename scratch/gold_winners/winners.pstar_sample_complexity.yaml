@@ -1,0 +1,218 @@
+experiment: pstar_sample_complexity
+methods:
+  MultiHeadTriangularTDRE:
+    hyperparams:
+      learning_rate: 0.0093593140750269
+      num_epochs: 509
+      hidden_dim: 16
+      head_dim: 20
+      num_shared_layers: 1
+      num_waypoints: 10
+      vertex: 0.35230985576467494
+      n_hidden_layers: 2
+    score:
+      mae: 9.162745
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: 0.0
+      source: donor:model_selection/r24/MultiHeadTriangularTDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: mnist_cond_flow
+      second_donor_pen: 0.1816280714022535
+      gap_to_second: 0.1816280714022535
+  TriangularCTSM_V1:
+    hyperparams:
+      n_epochs: 840
+      lr: 0.00036428361743270053
+      batch_size: 256
+      sigma: 1.1709758518617799
+      vertex: 0.569123626994113
+      eps: 0.002188000181168542
+      integration_steps: 1982
+      inner_eps: 0.0
+      ema_decay: null
+      grad_clip_norm: null
+      time_dist: beta_2_2
+      n_hidden_layers: 3
+    score:
+      mae: 1.59321
+      donor_eval: r24_holdout
+      donor_experiment: smodice_eldr_estimation
+      transfer_penalty: 0.2090153658708076
+      source: donor:smodice_eldr_estimation/r24/TriangularCTSM_V1
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: elbo_estimation
+      second_donor_pen: 0.3201578015293533
+      gap_to_second: 0.1111424356585457
+  TriangularCTSM_V2:
+    hyperparams:
+      n_epochs: 1175
+      lr: 0.00043274845378258914
+      batch_size: 256
+      sigma: 0.6879774374114728
+      eps: 0.0014766142872909586
+      integration_steps: 1905
+      ema_decay: null
+      grad_clip_norm: null
+      time_dist: beta_2_2
+      n_hidden_layers: 3
+      vertex: 0.7453406978669361
+    score:
+      mae: 7.623066
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: 0.0
+      source: donor:mnist_cond_flow/r24/TriangularCTSM_V2
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: smodice_eldr_estimation
+      second_donor_pen: 0.1323194551363675
+      gap_to_second: 0.1323194551363675
+  TriangularCTSM_V3:
+    hyperparams:
+      n_epochs: 1201
+      lr: 0.002174645058328443
+      batch_size: 256
+      sigma: 1.331058777086126
+      gamma_schedule: sqrt
+      k: 24
+      t2_max: 0.7778236290084912
+      eps: 0.0016312558218682834
+      path_height: 1.5667824126034782
+      integration_steps: 773
+      ema_decay: null
+      grad_clip_norm: null
+      time_dist: beta_2_2
+      n_hidden_layers: 3
+    score:
+      mae: 0.227614
+      donor_eval: r24_holdout
+      donor_experiment: elbo_estimation
+      transfer_penalty: 0.0390826884673427
+      source: donor:elbo_estimation/r24/TriangularCTSM_V3
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: mnist_cond_flow
+      second_donor_pen: 0.0888380809123627
+      gap_to_second: 0.04975539244502
+  TriangularFMDRE:
+    hyperparams:
+      n_epochs: 1347
+      lr: 0.0006876544699406409
+      batch_size: 128
+      eps: 0.03534988968260309
+      integration_steps: 1774
+      hidden_dim: 128
+      score_weight: 2.248208963101519
+      n_hidden_layers: 3
+    score:
+      mae: 1.045622
+      donor_eval: r24_holdout
+      donor_experiment: smodice_eldr_estimation
+      transfer_penalty: 0.0
+      source: donor:smodice_eldr_estimation/r24/TriangularFMDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: elbo_estimation
+      second_donor_pen: 0.0922754966341248
+      gap_to_second: 0.0922754966341248
+  TriangularMDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.007626207694466331
+      num_epochs: 235
+      midpoint_oversample: 3
+      gamma_power: 3.5496547578322377
+      num_waypoints: 10
+      vertex: 0.6411928955859685
+      n_hidden_layers: 3
+    score:
+      mae: 3.718233
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: 0.0046849534137343
+      source: donor:mnist_cond_flow/r24/TriangularMDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: smodice_eldr_estimation
+      second_donor_pen: 0.0046849534137343
+      gap_to_second: 0.0
+  TriangularTSM:
+    hyperparams:
+      n_epochs: 1324
+      lr: 0.002179121071306526
+      batch_size: 256
+      hidden_dim: 128
+      eps: 8.098068719269202e-05
+      vertex: 0.4096954265301701
+      peak_max: 0.6810563427859988
+      n_hidden_layers: 3
+    score:
+      mae: 17.296805
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: 0.0
+      source: donor:model_selection/r24/TriangularTSM
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: elbo_estimation
+      second_donor_pen: 0.2896489390321943
+      gap_to_second: 0.2896489390321943
+  TriangularVFM_V1:
+    hyperparams:
+      n_epochs: 1247
+      lr: 0.000716070451178845
+      batch_size: 256
+      sigma: 1.2356987558133403
+      vertex: 0.5128864430863109
+      gamma_min: 0.014145812280129235
+      eps: 0.0017246343642694404
+      integration_steps: 1155
+      ema_decay: null
+      grad_clip_norm: 5.0
+      n_hutch_samples: 4
+      inner_eps: 0.05
+      n_hidden_layers: 4
+    score:
+      mae: 0.199969
+      donor_eval: r24_holdout
+      donor_experiment: elbo_estimation
+      transfer_penalty: 0.0
+      source: donor:elbo_estimation/r24/TriangularVFM_V1
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: smodice_eldr_estimation
+      second_donor_pen: 0.0864587485812802
+      gap_to_second: 0.0864587485812802
+  TriangularVFM_V2:
+    hyperparams:
+      n_epochs: 977
+      lr: 0.001670021175374017
+      batch_size: 256
+      k: 20
+      eps: 0.0014350578871667472
+      integration_steps: 1340
+      ema_decay: null
+      grad_clip_norm: 1.0
+      n_hutch_samples: 16
+      n_hidden_layers: 4
+      vertex: 0.25005463197671507
+    score:
+      mae: 21.447841
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: 0.0571756301815706
+      source: donor:model_selection/r24/TriangularVFM_V2
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: mnist_cond_flow
+      second_donor_pen: 0.3071493629018973
+      gap_to_second: 0.24997373272032672
+provenance:
+  generated_at: '2026-05-07T02:13:39Z'
+  description: gold-standard hyperparameter set per (experiment, method).
+  rules:
+  - transferred entries (marked transferred:true) populated from scratch/refined24/donor_assignments_long.csv on 2026-05-07T02:13:39Z
+  mae_comparability: ''

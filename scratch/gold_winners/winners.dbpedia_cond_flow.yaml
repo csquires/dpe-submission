@@ -63,6 +63,28 @@ methods:
       eval: 200broad_holdout
       source: summary/MDRE_15
       trial_id: 166
+  MultiHeadTriangularTDRE:
+    hyperparams:
+      learning_rate: 0.019981095655516836
+      num_epochs: 374
+      hidden_dim: 16
+      head_dim: 40
+      num_shared_layers: 3
+      num_waypoints: 5
+      vertex: 0.7487052848536593
+      batch_size: 16384
+      n_hidden_layers: 3
+    score:
+      mae: 4.050103
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: 0.0
+      source: donor:mnist_cond_flow/r24/MultiHeadTriangularTDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: model_selection
+      second_donor_pen: 0.0
+      gap_to_second: 0.0
   TSM:
     hyperparams:
       n_epochs: 884
@@ -74,12 +96,161 @@ methods:
       eval: 200broad_holdout
       source: rank200_noDRE/TSM
       trial_id: 129
+  TriangularCTSM_V1:
+    hyperparams:
+      n_epochs: 1130
+      lr: 0.0005798013600962388
+      batch_size: 256
+      sigma: 2.5888220300811473
+      vertex: 0.44728584463936955
+      eps: 0.0023058295227169337
+      integration_steps: 1741
+      inner_eps: 0.02
+      ema_decay: null
+      grad_clip_norm: 5.0
+      time_dist: uniform
+      n_hidden_layers: 3
+    score:
+      mae: 7.215237
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: 0.0
+      source: donor:mnist_cond_flow/r24/TriangularCTSM_V1
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: smodice_eldr_estimation
+      second_donor_pen: 0.0
+      gap_to_second: 0.0
+  TriangularCTSM_V2:
+    hyperparams:
+      n_epochs: 1175
+      lr: 0.00043274845378258914
+      batch_size: 256
+      sigma: 0.6879774374114728
+      eps: 0.0014766142872909586
+      integration_steps: 1905
+      ema_decay: null
+      grad_clip_norm: null
+      time_dist: beta_2_2
+      n_hidden_layers: 3
+      vertex: 0.7453406978669361
+    score:
+      mae: 7.623066
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: 0.0538240135118419
+      source: donor:mnist_cond_flow/r24/TriangularCTSM_V2
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: elbo_estimation
+      second_donor_pen: 0.10547065600664
+      gap_to_second: 0.051646642494798105
+  TriangularCTSM_V3:
+    hyperparams:
+      n_epochs: 1201
+      lr: 0.002174645058328443
+      batch_size: 256
+      sigma: 1.331058777086126
+      gamma_schedule: sqrt
+      k: 24
+      t2_max: 0.7778236290084912
+      eps: 0.0016312558218682834
+      path_height: 1.5667824126034782
+      integration_steps: 773
+      ema_decay: null
+      grad_clip_norm: null
+      time_dist: beta_2_2
+      n_hidden_layers: 3
+    score:
+      mae: 0.227614
+      donor_eval: r24_holdout
+      donor_experiment: elbo_estimation
+      transfer_penalty: 0.1682087609988825
+      source: donor:elbo_estimation/r24/TriangularCTSM_V3
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: mnist_cond_flow
+      second_donor_pen: 0.1682087609988825
+      gap_to_second: 0.0
+  TriangularFMDRE:
+    hyperparams:
+      n_epochs: 1310
+      lr: 0.0010280905401954346
+      batch_size: 512
+      eps: 0.0315565483495961
+      integration_steps: 1419
+      hidden_dim: 256
+      score_weight: 0.17531034666297474
+      n_hidden_layers: 3
+    score:
+      mae: 0.138944
+      donor_eval: r24_holdout
+      donor_experiment: elbo_estimation
+      transfer_penalty: 0.1920739849586172
+      source: donor:elbo_estimation/r24/TriangularFMDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: model_selection
+      second_donor_pen: 0.232222131240473
+      gap_to_second: 0.04014814628185581
+  TriangularVFM_V1:
+    hyperparams:
+      n_epochs: 1161
+      lr: 0.0012967320183990255
+      batch_size: 256
+      sigma: 2.2659942835152873
+      vertex: 0.2659961605093048
+      gamma_min: 0.018323796779535915
+      eps: 0.002795453335083157
+      integration_steps: 1346
+      ema_decay: null
+      grad_clip_norm: 5.0
+      n_hutch_samples: 1
+      inner_eps: 0.1
+      n_hidden_layers: 3
+    score:
+      mae: 16.557212
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: 0.0143009652358323
+      source: donor:model_selection/r24/TriangularVFM_V1
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: smodice_eldr_estimation
+      second_donor_pen: 0.074497958452359
+      gap_to_second: 0.060196993216526704
+  TriangularVFM_V2:
+    hyperparams:
+      n_epochs: 977
+      lr: 0.001670021175374017
+      batch_size: 256
+      k: 20
+      eps: 0.0014350578871667472
+      integration_steps: 1340
+      ema_decay: null
+      grad_clip_norm: 1.0
+      n_hutch_samples: 16
+      n_hidden_layers: 4
+      vertex: 0.25005463197671507
+    score:
+      mae: 21.447841
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: 0.0009222106809494
+      source: donor:model_selection/r24/TriangularVFM_V2
+      transferred: true
+      transferred_at: '2026-05-07T02:13:39Z'
+      second_donor: elbo_estimation
+      second_donor_pen: 0.0183986833723985
+      gap_to_second: 0.0174764726914491
 provenance:
-  generated_at: '2026-05-07T02:01:46Z'
+  generated_at: '2026-05-07T02:10:13Z'
   description: gold-standard hyperparameter set per (experiment, method).
   rules:
   - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
   - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - 'triangular methods using integration_steps: filtered to <2000'
-  - 'FMDRE/FMDRE_S2: additionally filtered to integration_steps<1750'
+  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
+  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
+  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
+  - transferred entries (marked transferred:true) populated from scratch/refined24/donor_assignments_long.csv on 2026-05-07T02:13:39Z
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

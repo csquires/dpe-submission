@@ -176,6 +176,21 @@ methods:
       eval: r24_holdout
       source: r24/TriangularFMDRE
       trial_id: 6
+  TriangularTSM:
+    hyperparams:
+      n_epochs: 1250
+      lr: 0.0008587756521519505
+      batch_size: 256
+      hidden_dim: 128
+      eps: 0.00022832746592415796
+      vertex: 0.44658741549018866
+      peak_max: 0.9599844548722224
+      n_hidden_layers: 4
+    score:
+      mae: 0.654888
+      eval: r24_holdout
+      source: r24/TriangularTSM
+      trial_id: 4
   TriangularVFM_V1:
     hyperparams:
       n_epochs: 1167
@@ -248,11 +263,12 @@ methods:
       source: rank200/VFM
       trial_id: 31
 provenance:
-  generated_at: '2026-05-07T02:01:46Z'
+  generated_at: '2026-05-07T02:10:13Z'
   description: gold-standard hyperparameter set per (experiment, method).
   rules:
   - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
   - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - 'triangular methods using integration_steps: filtered to <2000'
-  - 'FMDRE/FMDRE_S2: additionally filtered to integration_steps<1750'
+  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
+  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
+  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
