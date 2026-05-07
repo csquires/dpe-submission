@@ -54,8 +54,8 @@ methods:
       transfer_penalty: null
       source: donor:model_selection/rank200_noDRE/FMDRE_S2
       transferred: true
-      transferred_at: '2026-05-07T02:24:00Z'
-      donation_reason: 'manual: closest structural sibling (KL-controlled / sample-complexity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: sample-complexity sibling'
   MDRE_15:
     hyperparams:
       latent_dim: 256
@@ -105,16 +105,7 @@ methods:
       source: summary/VFM
       trial_id: 4
 provenance:
-  generated_at: '2026-05-07T02:10:13Z'
-  description: gold-standard hyperparameter set per (experiment, method).
+  generated_at: '2026-05-07T02:32:22Z'
+  description: gold-standard hyperparameter set per (experiment, method)
   rules:
-  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
-  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
-  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
-  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
-  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
-  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
-  - 'on 2026-05-07T02:24:00Z: removed all triangular methods (per user, this experiment is non-tri-only by design)'
-  - 'on 2026-05-07T02:24:00Z: gap fills for FMDRE_S2 and TriangularVFM_V3 from structural siblings'
-  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
+  - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)

@@ -106,23 +106,29 @@ methods:
       trial_id: 11
   TriangularCTSM_V1:
     hyperparams:
-      n_epochs: 840
-      lr: 0.00036428361743270053
-      batch_size: 256
-      sigma: 1.1709758518617799
-      vertex: 0.569123626994113
-      eps: 0.002188000181168542
-      integration_steps: 1982
-      inner_eps: 0.0
+      n_epochs: 800
+      lr: 0.0004
+      batch_size: 64
+      sigma: 0.5
+      eps: 0.001
+      integration_steps: 600
       ema_decay: null
       grad_clip_norm: null
-      time_dist: beta_2_2
-      n_hidden_layers: 3
+      time_dist: uniform
+      activation: elu
+      vertex: 0.8
+      inner_eps: 0.05
     score:
-      mae: 1.59321
-      eval: r24_holdout
-      source: r24/TriangularCTSM_V1
-      trial_id: 1
+      mae: 0.9290437400341034
+      eval: sweep_4cell
+      source: variant_sweep/anchor0
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 1.59321
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 0
+      sweep_4cell_unique:
+        vertex: 0.8
+        inner_eps: 0.05
   TriangularCTSM_V2:
     hyperparams:
       n_epochs: 1196
@@ -193,8 +199,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularMDRE
       transferred: true
-      transferred_at: '2026-05-07T02:19:50Z'
-      donation_reason: 'manual: TriangularMDRE gap fill from mnist_cond_flow'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: gap fill from mnist_cond_flow'
   TriangularTSM:
     hyperparams:
       n_epochs: 1250
@@ -215,21 +221,23 @@ methods:
       n_epochs: 1167
       lr: 0.0012621963750624613
       batch_size: 256
-      sigma: 0.6064328333076221
-      vertex: 0.3081870300130339
-      gamma_min: 0.03611291873950996
       eps: 0.0038318297891703763
       integration_steps: 911
       ema_decay: null
       grad_clip_norm: 1.0
       n_hutch_samples: 4
-      inner_eps: 0.0
       n_hidden_layers: 3
+      sigma: 0.5
+      vertex: 0.8
+      gamma_min: 0.1
+      inner_eps: 0.0
     score:
-      mae: 1.193583
-      eval: r24_holdout
-      source: r24/TriangularVFM_V1
-      trial_id: 47
+      mae: 0.6562102138996124
+      eval: sweep_4cell
+      source: fair_tri_probe/C2_r24_common_plus_sweep_unique_smodice_specific
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 1.193583
+      replaced_at: '2026-05-07T02:32:22Z'
   TriangularVFM_V2:
     hyperparams:
       n_epochs: 865
@@ -282,14 +290,7 @@ methods:
       source: rank200/VFM
       trial_id: 31
 provenance:
-  generated_at: '2026-05-07T02:10:13Z'
-  description: gold-standard hyperparameter set per (experiment, method).
+  generated_at: '2026-05-07T02:32:22Z'
+  description: gold-standard hyperparameter set per (experiment, method)
   rules:
-  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
-  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
-  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
-  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
-  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
-  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
-  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
+  - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)

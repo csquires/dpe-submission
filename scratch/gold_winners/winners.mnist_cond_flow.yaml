@@ -103,62 +103,79 @@ methods:
       trial_id: 43
   TriangularCTSM_V1:
     hyperparams:
-      n_epochs: 1130
-      lr: 0.0005798013600962388
+      n_epochs: 1500
+      lr: 0.003
       batch_size: 256
-      sigma: 2.5888220300811473
-      vertex: 0.44728584463936955
-      eps: 0.0023058295227169337
-      integration_steps: 1741
-      inner_eps: 0.02
-      ema_decay: null
-      grad_clip_norm: 5.0
-      time_dist: uniform
-      n_hidden_layers: 3
-    score:
-      mae: 7.215237
-      eval: r24_holdout
-      source: r24/TriangularCTSM_V1
-      trial_id: 19
-  TriangularCTSM_V2:
-    hyperparams:
-      n_epochs: 1175
-      lr: 0.00043274845378258914
-      batch_size: 256
-      sigma: 0.6879774374114728
-      eps: 0.0014766142872909586
-      integration_steps: 1905
-      ema_decay: null
-      grad_clip_norm: null
-      time_dist: beta_2_2
-      n_hidden_layers: 3
-      vertex: 0.7453406978669361
-    score:
-      mae: 7.623066
-      eval: r24_holdout
-      source: r24/TriangularCTSM_V2
-      trial_id: 22
-  TriangularCTSM_V3:
-    hyperparams:
-      n_epochs: 1212
-      lr: 0.001176269243648994
-      batch_size: 256
-      sigma: 0.49480224949160156
-      gamma_schedule: linear-stiff
-      k: 12
-      t2_max: 0.8768558306350689
-      eps: 0.0021057178700611507
-      path_height: 1.086503084296682
-      integration_steps: 1483
+      sigma: 2.0
+      eps: 0.003
+      integration_steps: 2400
       ema_decay: null
       grad_clip_norm: 1.0
       time_dist: uniform
-      n_hidden_layers: 4
+      activation: gelu
+      vertex: 0.2
+      inner_eps: 0.05
     score:
-      mae: 5.285832
-      eval: r24_holdout
-      source: r24/TriangularCTSM_V3
-      trial_id: 15
+      mae: 2.9983309507369995
+      eval: sweep_4cell
+      source: variant_sweep/anchor2
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 7.215237
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 2
+      sweep_4cell_unique:
+        vertex: 0.2
+        inner_eps: 0.05
+  TriangularCTSM_V2:
+    hyperparams:
+      n_epochs: 1500
+      lr: 0.003
+      batch_size: 256
+      sigma: 2.0
+      eps: 0.003
+      integration_steps: 2400
+      ema_decay: null
+      grad_clip_norm: 1.0
+      time_dist: uniform
+      activation: gelu
+    score:
+      mae: 3.412106841802597
+      eval: sweep_4cell
+      source: variant_sweep/anchor2
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 7.623066
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 2
+      sweep_4cell_unique: {}
+  TriangularCTSM_V3:
+    hyperparams:
+      n_epochs: 1500
+      lr: 0.003
+      batch_size: 256
+      sigma: 2.0
+      eps: 0.003
+      integration_steps: 2400
+      ema_decay: null
+      grad_clip_norm: 1.0
+      time_dist: uniform
+      activation: gelu
+      gamma_schedule: sqrt
+      k: 12
+      t2_max: 0.6
+      path_height: 2.0
+    score:
+      mae: 2.6103382408618927
+      eval: sweep_4cell
+      source: variant_sweep/anchor2
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 5.285832
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 2
+      sweep_4cell_unique:
+        gamma_schedule: sqrt
+        k: 12
+        t2_max: 0.6
+        path_height: 2.0
   TriangularFMDRE:
     hyperparams:
       n_epochs: 1000
@@ -206,66 +223,86 @@ methods:
       transfer_penalty: null
       source: donor:model_selection/r24/TriangularTSM
       transferred: true
-      transferred_at: '2026-05-07T02:19:50Z'
-      donation_reason: 'manual: TriangularTSM gap fill from model_selection'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: gap fill from model_selection'
   TriangularVFM_V1:
     hyperparams:
-      n_epochs: 1051
-      lr: 0.0010505241358035615
+      n_epochs: 800
+      lr: 0.0006
       batch_size: 64
-      sigma: 1.2552906538174717
-      vertex: 0.268659026263047
-      gamma_min: 0.0235727914104122
-      eps: 0.00240037254574775
-      integration_steps: 1607
+      eps: 0.001
+      integration_steps: 600
       ema_decay: null
-      grad_clip_norm: 1.0
+      grad_clip_norm: null
       n_hutch_samples: 1
+      activation: gelu
+      sigma: 2.0
+      vertex: 0.2
+      gamma_min: 0.1
       inner_eps: 0.0
-      n_hidden_layers: 4
     score:
-      mae: 4.880475
-      eval: r24_holdout
-      source: r24/TriangularVFM_V1
-      trial_id: 16
+      mae: 2.5472092032432556
+      eval: sweep_4cell
+      source: variant_sweep/anchor0
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 4.880475
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 0
+      sweep_4cell_unique:
+        sigma: 2.0
+        vertex: 0.2
+        gamma_min: 0.1
+        inner_eps: 0.0
   TriangularVFM_V2:
     hyperparams:
-      n_epochs: 909
-      lr: 0.0006800927362610657
+      n_epochs: 1500
+      lr: 0.003
       batch_size: 256
-      k: 10
-      eps: 0.002401248797668876
-      integration_steps: 1785
+      eps: 0.005
+      integration_steps: 2400
       ema_decay: null
       grad_clip_norm: 1.0
       n_hutch_samples: 4
-      n_hidden_layers: 3
-      vertex: 0.7221620427114139
+      activation: elu
+      k: 40
     score:
-      mae: 5.933799
-      eval: r24_holdout
-      source: r24/TriangularVFM_V2
-      trial_id: 6
+      mae: 3.0979230999946594
+      eval: sweep_4cell
+      source: variant_sweep/anchor2
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 5.933799
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 2
+      sweep_4cell_unique:
+        k: 40
   TriangularVFM_V3:
     hyperparams:
-      n_epochs: 979
-      lr: 0.0012618618728629954
+      n_epochs: 1500
+      lr: 0.003
       batch_size: 256
-      k: 20
-      gamma_schedule: linear-stiff
-      t2_max: 0.749186057187202
-      eps: 0.0029385177561768376
-      path_height: 1.6991276384455438
-      integration_steps: 1532
+      eps: 0.005
+      integration_steps: 2400
       ema_decay: null
       grad_clip_norm: 1.0
-      n_hutch_samples: 1
-      n_hidden_layers: 4
+      n_hutch_samples: 4
+      activation: elu
+      k: 40
+      gamma_schedule: linear-stiff
+      t2_max: 0.6
+      path_height: 2.0
     score:
-      mae: 5.515871
-      eval: r24_holdout
-      source: r24/TriangularVFM_V3
-      trial_id: 1
+      mae: 2.688471555709839
+      eval: sweep_4cell
+      source: variant_sweep/anchor2
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 5.515871
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 2
+      sweep_4cell_unique:
+        k: 40
+        gamma_schedule: linear-stiff
+        t2_max: 0.6
+        path_height: 2.0
   VFM:
     hyperparams:
       n_epochs: 1204
@@ -280,14 +317,7 @@ methods:
       source: summary/VFM
       trial_id: 32
 provenance:
-  generated_at: '2026-05-07T02:10:13Z'
-  description: gold-standard hyperparameter set per (experiment, method).
+  generated_at: '2026-05-07T02:32:22Z'
+  description: gold-standard hyperparameter set per (experiment, method)
   rules:
-  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
-  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
-  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
-  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
-  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
-  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
-  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
+  - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)

@@ -97,10 +97,8 @@ methods:
       transfer_penalty: 3.529932594539015
       source: donor:elbo_estimation/r24/MultiHeadTriangularTDRE
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: mnist_cond_flow
-      second_donor_pen: 4.471038501085342
-      gap_to_second: 0.9411059065463272
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TSM:
     hyperparams:
       n_epochs: 1145
@@ -134,10 +132,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:mnist_cond_flow/r24/TriangularCTSM_V1
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: smodice_eldr_estimation
-      second_donor_pen: 0.0
-      gap_to_second: 0.0
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularCTSM_V2:
     hyperparams:
       n_epochs: 1097
@@ -158,10 +154,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:elbo_estimation/r24/TriangularCTSM_V2
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: mnist_cond_flow
-      second_donor_pen: 0.0771211257014126
-      gap_to_second: 0.0771211257014126
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularCTSM_V3:
     hyperparams:
       n_epochs: 1212
@@ -185,10 +179,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:mnist_cond_flow/r24/TriangularCTSM_V3
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: elbo_estimation
-      second_donor_pen: 0.4779576636043565
-      gap_to_second: 0.4779576636043565
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularFMDRE:
     hyperparams:
       n_epochs: 999
@@ -206,10 +198,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:model_selection/r24/TriangularFMDRE
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: elbo_estimation
-      second_donor_pen: 0.0588563758389262
-      gap_to_second: 0.0588563758389262
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularMDRE:
     hyperparams:
       latent_dim: 128
@@ -227,10 +217,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:mnist_cond_flow/r24/TriangularMDRE
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: model_selection
-      second_donor_pen: 0.0
-      gap_to_second: 0.0
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularTSM:
     hyperparams:
       n_epochs: 1324
@@ -248,10 +236,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:model_selection/r24/TriangularTSM
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: smodice_eldr_estimation
-      second_donor_pen: 0.0
-      gap_to_second: 0.0
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularVFM_V1:
     hyperparams:
       n_epochs: 1167
@@ -274,10 +260,8 @@ methods:
       transfer_penalty: 0.0871427005398888
       source: donor:smodice_eldr_estimation/r24/TriangularVFM_V1
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: model_selection
-      second_donor_pen: 0.3748047356737647
-      gap_to_second: 0.2876620351338759
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularVFM_V2:
     hyperparams:
       n_epochs: 1052
@@ -298,10 +282,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:elbo_estimation/r24/TriangularVFM_V2
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: smodice_eldr_estimation
-      second_donor_pen: 0.0
-      gap_to_second: 0.0
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   TriangularVFM_V3:
     hyperparams:
       n_epochs: 1119
@@ -324,10 +306,8 @@ methods:
       transfer_penalty: 0.0
       source: donor:elbo_estimation/r24/TriangularVFM_V3
       transferred: true
-      transferred_at: '2026-05-07T02:13:39Z'
-      second_donor: smodice_eldr_estimation
-      second_donor_pen: 0.2904541441267823
-      gap_to_second: 0.2904541441267823
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: donor_assignments_long.csv
   VFM:
     hyperparams:
       n_epochs: 1392
@@ -343,15 +323,7 @@ methods:
       source: rank200/VFM
       trial_id: 48
 provenance:
-  generated_at: '2026-05-07T02:10:13Z'
-  description: gold-standard hyperparameter set per (experiment, method).
+  generated_at: '2026-05-07T02:32:22Z'
+  description: gold-standard hyperparameter set per (experiment, method)
   rules:
-  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
-  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
-  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
-  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
-  - transferred entries (marked transferred:true) populated from scratch/refined24/donor_assignments_long.csv on 2026-05-07T02:13:39Z
-  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
-  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
-  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
+  - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)

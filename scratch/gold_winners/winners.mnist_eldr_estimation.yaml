@@ -12,8 +12,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/summary/BDRE
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   CTSM:
     hyperparams:
       n_epochs: 1082
@@ -68,8 +68,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/rank200/MDRE_15
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   MultiHeadTDRE:
     hyperparams:
       learning_rate: 0.009296734379221017
@@ -99,8 +99,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/MultiHeadTriangularTDRE
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   TSM:
     hyperparams:
       n_epochs: 794
@@ -133,8 +133,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularCTSM_V1
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   TriangularCTSM_V2:
     hyperparams:
       n_epochs: 1175
@@ -155,8 +155,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularCTSM_V2
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   TriangularCTSM_V3:
     hyperparams:
       n_epochs: 1212
@@ -180,8 +180,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularCTSM_V3
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   TriangularFMDRE:
     hyperparams:
       n_epochs: 1000
@@ -198,8 +198,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/variant_sweep/anchor1
       transferred: true
-      transferred_at: '2026-05-07T02:19:50Z'
-      donation_reason: 'manual: TriangularFMDRE gap fill from mnist_cond_flow'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: gap fill from mnist_cond_flow'
   TriangularMDRE:
     hyperparams:
       latent_dim: 128
@@ -217,8 +217,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularMDRE
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   TriangularTSM:
     hyperparams:
       n_epochs: 1250
@@ -236,8 +236,8 @@ methods:
       transfer_penalty: null
       source: donor:smodice_eldr_estimation/r24/TriangularTSM
       transferred: true
-      transferred_at: '2026-05-07T02:19:50Z'
-      donation_reason: 'manual: TriangularTSM gap fill from smodice_eldr_estimation'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: gap fill from smodice_eldr_estimation'
   TriangularVFM_V1:
     hyperparams:
       n_epochs: 1051
@@ -260,8 +260,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularVFM_V1
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   TriangularVFM_V2:
     hyperparams:
       n_epochs: 909
@@ -282,8 +282,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularVFM_V2
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   TriangularVFM_V3:
     hyperparams:
       n_epochs: 979
@@ -306,8 +306,8 @@ methods:
       transfer_penalty: null
       source: donor:mnist_cond_flow/r24/TriangularVFM_V3
       transferred: true
-      transferred_at: '2026-05-07T02:15:40Z'
-      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+      transferred_at: '2026-05-07T02:32:22Z'
+      donation_reason: 'manual: structural similarity'
   VFM:
     hyperparams:
       n_epochs: 789
@@ -322,15 +322,7 @@ methods:
       source: var200_noDRE/VFM
       trial_id: 48
 provenance:
-  generated_at: '2026-05-07T02:10:13Z'
-  description: gold-standard hyperparameter set per (experiment, method).
+  generated_at: '2026-05-07T02:32:22Z'
+  description: gold-standard hyperparameter set per (experiment, method)
   rules:
-  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
-  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
-  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
-  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
-  - manual donor transfer from mnist_cond_flow on 2026-05-07T02:15:40Z (structural similarity)
-  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
-  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
-  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
+  - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)

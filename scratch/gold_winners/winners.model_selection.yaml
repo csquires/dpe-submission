@@ -209,24 +209,32 @@ methods:
       trial_id: 1
   TriangularVFM_V1:
     hyperparams:
-      n_epochs: 1161
-      lr: 0.0012967320183990255
+      n_epochs: 1500
+      lr: 0.003
       batch_size: 256
-      sigma: 2.2659942835152873
-      vertex: 0.2659961605093048
-      gamma_min: 0.018323796779535915
-      eps: 0.002795453335083157
-      integration_steps: 1346
+      eps: 0.005
+      integration_steps: 2400
       ema_decay: null
-      grad_clip_norm: 5.0
-      n_hutch_samples: 1
-      inner_eps: 0.1
-      n_hidden_layers: 3
+      grad_clip_norm: 1.0
+      n_hutch_samples: 4
+      activation: elu
+      sigma: 2.0
+      vertex: 0.2
+      gamma_min: 0.1
+      inner_eps: 0.05
     score:
-      mae: 16.557212
-      eval: r24_holdout
-      source: r24/TriangularVFM_V1
-      trial_id: 3
+      mae: 11.569049924612045
+      eval: sweep_4cell
+      source: variant_sweep/anchor2
+      replaced_from_eval: r24_holdout
+      replaced_from_mae: 16.557212
+      replaced_at: '2026-05-07T02:32:22Z'
+      sweep_4cell_anchor: 2
+      sweep_4cell_unique:
+        sigma: 2.0
+        vertex: 0.2
+        gamma_min: 0.1
+        inner_eps: 0.05
   TriangularVFM_V2:
     hyperparams:
       n_epochs: 977
@@ -261,8 +269,6 @@ methods:
       eval: 200broad_holdout
       source: rank200/TriangularVFM_V3
       trial_id: 30
-      replaced_donor_at: '2026-05-07T02:25:58Z'
-      replaced_donor_note: replaced donor entry (donor:elbo_estimation/r24/TriangularVFM_V3) with native trial after exhaustive search with i_steps<2200
   VFM:
     hyperparams:
       n_epochs: 1259
@@ -277,16 +283,7 @@ methods:
       source: rank200/VFM
       trial_id: 18
 provenance:
-  generated_at: '2026-05-07T02:10:13Z'
-  description: gold-standard hyperparameter set per (experiment, method).
+  generated_at: '2026-05-07T02:32:22Z'
+  description: gold-standard hyperparameter set per (experiment, method)
   rules:
-  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
-  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
-  - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
-  - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
-  - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
-  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
-  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
-  - 'on 2026-05-07T02:24:00Z: gap fills for FMDRE_S2 and TriangularVFM_V3 from structural siblings'
-  - 'on 2026-05-07T02:25:58Z: re-checked sources at i_steps<2200; replaced donor entries with native trials where found'
-  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
+  - gold yaml rebuilt 2026-05-07T02:32:22Z (incremental edits no longer apply)
