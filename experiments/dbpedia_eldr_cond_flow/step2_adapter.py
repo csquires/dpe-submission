@@ -95,15 +95,15 @@ _SLOW = {"VFM", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
 
 def walltime_per_cell_seconds(method: str, config: dict) -> int:
     # dbpedia is dim=64 (vs 14 for mnist) -> roughly 2-3x mnist times
-    if method in _FAST: return 120
-    if method in _MEDIUM: return 240
-    if method in _SLOW: return 480
-    return 240
+    if method in _FAST: return 60
+    if method in _MEDIUM: return 120
+    if method in _SLOW: return 180
+    return 120
 
 
 def resources_for_method(method: str) -> str:
     if method in _SLOW:
-        return "--gpus=1 --cpus-per-task=4 --mem=32G"
+        return "--gpus=1 --cpus-per-task=4 --mem=16G"
     return "--gpus=1 --cpus-per-task=2 --mem=16G"
 
 
