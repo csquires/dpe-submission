@@ -124,6 +124,13 @@ def main() -> None:
             f.create_dataset(ds_name, data=arr)
         print(f"[{method}] {summary}; wrote {ds_name} shape={arr.shape} -> {out_path}")
 
+    # optional adapter post-step (e.g. eig_estimation appends 'true_eigs_arr').
+    if hasattr(adapter, "gather_postprocess"):
+        try:
+            adapter.gather_postprocess(config, str(out_path))
+        except Exception as e:
+            print(f"[gather_postprocess] failed: {e}")
+
 
 if __name__ == "__main__":
     main()

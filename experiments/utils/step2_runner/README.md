@@ -49,10 +49,39 @@ gather_dataset_name(method, config) -> str   # default: 'est_ldrs_arr_<method>'
 gather_output_path(config) -> str            # default: experiments/<exp>/raw_results/results.h5
 ```
 
-reference adapters:
-- `experiments/model_selection/step2_adapter.py`     — Pattern A, 70 cells, kl_idx bucket
-- `experiments/elbo_estimation/step2_adapter.py`     — Pattern C, 24000 cells, no bucket, scalar output
-- `experiments/smodice_eldr_estimation/step2_adapter.py` — Pattern C, (k1,k2,seed) tuple cells flattened to int
+## canonical winners path
+
+all winners yamls live at `scratch/gold_winners/winners.<exp>.yaml`. see
+`scratch/gold_winners/README.md` for the gold-set selection rules and per-method
+score schema.
+
+most experiments share the same short name as the directory (`model_selection`,
+`elbo_estimation`, etc.) but a few experiment dirs have an `_eldr` suffix that
+the winners filename omits — see the `winners.yaml` column below.
+
+## per-experiment status (11 experiments, all ported)
+
+| experiment dir | cell axis | n_cells | bucket axis | output ds name | gather output | winners.yaml |
+|---|---|---|---|---|---|---|
+| model_selection | row idx | 70 | `kl_idx_<n>` | `est_ldrs_arr_<m>` | `results.h5` | `winners.model_selection.yaml` |
+| elbo_estimation | design row | 24000 | none | `est_eigs_arr_<m>` | `results_d=D,nsamples=N.h5` | `winners.elbo_estimation.yaml` |
+| eig_estimation | design row | 6000 | none | `est_eigs_arr_<m>` | `results_d=D,nsamples=N.h5` | `winners.eig_estimation.yaml` (+ `true_eigs_arr` post-step via `gather_postprocess`) |
+| smodice_eldr_estimation | flat (k1,k2,seed) | 480 | `k1_idx_<n>` | `est_ldrs_<m>` | `<encoding>/<sigma>/results_all_cells.h5` | `winners.smodice_eldr_estimation.yaml` |
+| pendulum_eldr_estimation | flat (k1,k2,seed) | 160 | `k1_idx_<n>` | `est_ldrs_<m>` | `results_all_cells.h5` | `winners.pendulum_eldr_estimation.yaml` |
+| mnist_eldr_estimation | flat (alpha,pair) | 160 | `alpha_idx_<n>` | `est_ldrs_<m>` | `results_all_cells.h5` | `winners.mnist_eldr_estimation.yaml` |
+| **mnist_eldr_cond_flow** | flat (alpha,pair) | 160 | `alpha_idx_<n>` | `est_ldrs_<m>` | `results_all_cells.h5` | `winners.mnist_cond_flow.yaml` (no `_eldr` in filename) |
+| **dbpedia_eldr_cond_flow** | flat (alpha,pair) | 160 | `alpha_idx_<n>` | `est_ldrs_<m>` | `results_all_cells.h5` | `winners.dbpedia_cond_flow.yaml` (no `_eldr` in filename) |
+| plugin_dre | row idx | 4 | `kl_idx_<n>` | `est_ldrs_grid_<m>` | `raw_results.h5` | `winners.plugin_dre.yaml` |
+| dre_sample_complexity | flat (row,ntrain_idx) | 420 | `kl_idx_<n>` | `est_ldrs_arr_<m>` | `results.h5` | `winners.dre_sample_complexity.yaml` |
+| pstar_sample_complexity | flat (instance,pstar_idx) | 80 | `pstar_idx_<n>` | `est_ldrs_arr_<m>` | `results_all_cells.h5` | `winners.pstar_sample_complexity.yaml` (triangular methods only) |
+
+quirks worth knowing for each:
+
+- **smodice / mnist_eldr_cond_flow / dbpedia_eldr_cond_flow / pstar_sample_complexity**: the original step2 wrote one h5 per cell with multiple method datasets inside; this runner emits a single combined h5 instead. step3/4 may need a small slicing update for these.
+- **pstar_sample_complexity**: no v2 winners yaml exists (no non-triangular HPO data in 200broad); pass a custom `--winners` if you have one, or add per-bucket overrides for triangular methods to a hand-written yaml.
+- **plugin_dre / dre_sample_complexity**: builders take an extra `config` kwarg (`build_X(input_dim, device, config, **hp)`) — passed through automatically by these adapters.
+- **eig_estimation**: writes a `true_eigs_arr` post-step via `adapter.gather_postprocess(config, out_path)` — a deterministic function of dataset (`Sigma_pi`, `design`). gather.py invokes it automatically if defined.
+- **model_selection**: `experiments/model_selection/hpo_search_spaces.py` is broken (stale TDRE_5 reference); this adapter bypasses it and uses METHOD_SPECS directly. all other experiments use their own SEARCH_SPACES module which imports cleanly.
 
 ## winners.yaml schema
 
@@ -85,7 +114,7 @@ export DPE_CKPT_ROOT=/scratch/$USER/ckpt/dpe-submission
 # 1. dispatch: emit queue (one line per (method, cell_chunk))
 python -m experiments.utils.step2_runner.dispatch \
     --experiment model_selection \
-    --winners scratch/200broad/winners_pinned/winners.model_selection.uniform_200broad.yaml \
+    --winners scratch/gold_winners/winners.model_selection.yaml \
     --max-cells-per-job 20 \
     [--methods CTSM,VFM,FMDRE]   # optional whitelist; default = all in yaml
 
@@ -111,7 +140,7 @@ roughly doubles vs single-drain when both partitions have headroom.
 # dispatch the same way (queue is sorted: gpu-only at front, cpu-eligible at back)
 python -m experiments.utils.step2_runner.dispatch \
     --experiment model_selection \
-    --winners scratch/200broad/winners_pinned/winners.model_selection.uniform_200broad.yaml \
+    --winners scratch/gold_winners/winners.model_selection.yaml \
     --max-cells-per-job 20
 
 # submit BOTH drains via the wrapper
