@@ -99,7 +99,7 @@ def cpu_eligible_methods() -> set[str]:
 WALLTIME_CAPS_PREEMPT = {
     "TSM":                       "0:05:00",  # observed 4-cell 15s
     "CTSM":                      "0:05:00",
-    "VFM":                       "1:45:00",  # bumped from 1:15 — hit timeouts at 1:15
+    "VFM":                       "0:30:00",  # refined24 user knock-down 2026-05-06 (was 1:45)
     "BDRE":                      "0:05:00",
     "MDRE":                      "0:05:00",
     "MDRE_15":                   "0:05:00",
@@ -107,18 +107,18 @@ WALLTIME_CAPS_PREEMPT = {
     "MHTTDRE":                   "0:30:00",  # bumped from 0:05 — frequent silent failures, more headroom
     "MultiHeadTriangularTDRE":   "0:30:00",  # bumped from 0:05
     "TriangularMDRE":            "0:05:00",
-    "FMDRE":                     "1:45:00",  # int_steps capped at 3000; 3 flow integrations -> 1.5x VFM cap
-    "FMDRE_S2":                  "1:45:00",
-    "TriangularFMDRE":           "1:45:00",
+    "FMDRE":                     "0:30:00",  # refined24 user knock-down 2026-05-06 (was 1:45)
+    "FMDRE_S2":                  "0:30:00",  # refined24 user knock-down 2026-05-06 (was 1:45)
+    "TriangularFMDRE":           "0:30:00",  # refined24 user knock-down 2026-05-06 (was 1:45)
     "TriangularTSM":             "0:10:00",
     "TriangularCTSM_V1":         "0:05:00",  # historical 4-cell 10s
     "TriangularCTSM":            "0:05:00",  # legacy alias for V1
     "TriangularCTSM_V2":         "0:05:00",
     "TriangularCTSM_V3":         "0:10:00",  # heavier 2D path
-    "TriangularVFM_V1":          "1:45:00",  # bumped from 1:15 — observed timeouts
-    "TriangularVFM":             "1:45:00",  # legacy alias for V1
-    "TriangularVFM_V2":          "1:45:00",  # bumped from 1:15
-    "TriangularVFM_V3":          "1:45:00",  # bumped from 1:15
+    "TriangularVFM_V1":          "0:30:00",  # refined24 user knock-down 2026-05-06 (was 1:45)
+    "TriangularVFM":             "0:30:00",  # legacy alias for V1
+    "TriangularVFM_V2":          "0:30:00",  # refined24 user knock-down 2026-05-06 (was 1:45)
+    "TriangularVFM_V3":          "0:30:00",  # refined24: 24-trial budget; user knock-down 2026-05-06
     "TabularPluginDRE":          "0:05:00",
     "SmoothedTabularPluginDRE":  "0:05:00",
 }
@@ -160,9 +160,9 @@ WALLTIME_CAPS_CPU = {
     "TriangularVFM_V1":          "0:30:00",
     "TriangularVFM_V2":          "0:30:00",
     "TriangularVFM_V3":          "0:30:00",
-    "FMDRE":                     "0:35:00",
-    "FMDRE_S2":                  "0:35:00",
-    "TriangularFMDRE":           "0:35:00",
+    "FMDRE":                     "0:30:00",  # was 0:35; user knock-down to 30m cap
+    "FMDRE_S2":                  "0:30:00",  # was 0:35; user knock-down to 30m cap
+    "TriangularFMDRE":           "0:30:00",  # was 0:35; user knock-down to 30m cap
 }
 
 CPU_STARTUP_BUFFER_SECONDS = 60        # conda activate + python import + cell preload
