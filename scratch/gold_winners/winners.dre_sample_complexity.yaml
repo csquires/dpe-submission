@@ -37,6 +37,25 @@ methods:
       eval: 200broad_holdout
       source: summary/FMDRE
       trial_id: 35
+  FMDRE_S2:
+    hyperparams:
+      n_epochs: 1009
+      lr: 0.0015295561839809503
+      batch_size: 512
+      eps: 0.016185996145695002
+      integration_steps: 641
+      hidden_dim: 256
+      score_weight: 0.2519269780611382
+      p_uncond: 0.3765024593914133
+    score:
+      mae: 12.286929
+      donor_eval: 200broad_holdout
+      donor_experiment: model_selection
+      transfer_penalty: null
+      source: donor:model_selection/rank200_noDRE/FMDRE_S2
+      transferred: true
+      transferred_at: '2026-05-07T02:24:00Z'
+      donation_reason: 'manual: closest structural sibling (KL-controlled / sample-complexity)'
   MDRE_15:
     hyperparams:
       latent_dim: 256
@@ -72,62 +91,6 @@ methods:
       eval: 200broad_holdout
       source: summary/TSM
       trial_id: 167
-  TriangularFMDRE:
-    hyperparams:
-      n_epochs: 1000
-      lr: 0.0012
-      batch_size: 256
-      eps: 0.01
-      integration_steps: 2000
-      hidden_dim: 256
-      score_weight: 1.0
-    score:
-      mae: 2.640329599380493
-      donor_eval: sweep_4cell
-      donor_experiment: mnist_cond_flow
-      transfer_penalty: null
-      source: donor:mnist_cond_flow/variant_sweep/anchor1
-      transferred: true
-      transferred_at: '2026-05-07T02:19:50Z'
-      donation_reason: 'manual: TriangularFMDRE gap fill from mnist_cond_flow'
-  TriangularMDRE:
-    hyperparams:
-      latent_dim: 128
-      learning_rate: 0.007626207694466331
-      num_epochs: 235
-      midpoint_oversample: 3
-      gamma_power: 3.5496547578322377
-      num_waypoints: 10
-      vertex: 0.6411928955859685
-      n_hidden_layers: 3
-    score:
-      mae: 3.718233
-      donor_eval: r24_holdout
-      donor_experiment: mnist_cond_flow
-      transfer_penalty: null
-      source: donor:mnist_cond_flow/r24/TriangularMDRE
-      transferred: true
-      transferred_at: '2026-05-07T02:19:50Z'
-      donation_reason: 'manual: TriangularMDRE gap fill from mnist_cond_flow'
-  TriangularTSM:
-    hyperparams:
-      n_epochs: 1324
-      lr: 0.002179121071306526
-      batch_size: 256
-      hidden_dim: 128
-      eps: 8.098068719269202e-05
-      vertex: 0.4096954265301701
-      peak_max: 0.6810563427859988
-      n_hidden_layers: 3
-    score:
-      mae: 17.296805
-      donor_eval: r24_holdout
-      donor_experiment: model_selection
-      transfer_penalty: null
-      source: donor:model_selection/r24/TriangularTSM
-      transferred: true
-      transferred_at: '2026-05-07T02:19:50Z'
-      donation_reason: 'manual: TriangularTSM gap fill from model_selection'
   VFM:
     hyperparams:
       n_epochs: 939
@@ -152,4 +115,6 @@ provenance:
   - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
   - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
   - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
+  - 'on 2026-05-07T02:24:00Z: removed all triangular methods (per user, this experiment is non-tri-only by design)'
+  - 'on 2026-05-07T02:24:00Z: gap fills for FMDRE_S2 and TriangularVFM_V3 from structural siblings'
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

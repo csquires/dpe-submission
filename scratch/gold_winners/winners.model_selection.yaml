@@ -245,6 +245,30 @@ methods:
       eval: r24_holdout
       source: r24/TriangularVFM_V2
       trial_id: 0
+  TriangularVFM_V3:
+    hyperparams:
+      n_epochs: 1119
+      lr: 0.0005596730477003431
+      batch_size: 256
+      k: 20
+      gamma_schedule: linear-stiff
+      t2_max: 0.762937422001735
+      eps: 0.0028412065289669893
+      path_height: 1.742714889413896
+      integration_steps: 914
+      ema_decay: null
+      grad_clip_norm: null
+      n_hutch_samples: 16
+      n_hidden_layers: 4
+    score:
+      mae: 0.269031
+      donor_eval: r24_holdout
+      donor_experiment: elbo_estimation
+      transfer_penalty: null
+      source: donor:elbo_estimation/r24/TriangularVFM_V3
+      transferred: true
+      transferred_at: '2026-05-07T02:24:00Z'
+      donation_reason: "manual: fallback \u2014 own trial has i_steps=3785 above 2000 cap"
   VFM:
     hyperparams:
       n_epochs: 1259
@@ -269,4 +293,5 @@ provenance:
   - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
   - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
   - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
+  - 'on 2026-05-07T02:24:00Z: gap fills for FMDRE_S2 and TriangularVFM_V3 from structural siblings'
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

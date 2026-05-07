@@ -296,6 +296,30 @@ methods:
       second_donor: elbo_estimation
       second_donor_pen: 0.0183986833723985
       gap_to_second: 0.0174764726914491
+  TriangularVFM_V3:
+    hyperparams:
+      n_epochs: 979
+      lr: 0.0012618618728629954
+      batch_size: 256
+      k: 20
+      gamma_schedule: linear-stiff
+      t2_max: 0.749186057187202
+      eps: 0.0029385177561768376
+      path_height: 1.6991276384455438
+      integration_steps: 1532
+      ema_decay: null
+      grad_clip_norm: 1.0
+      n_hutch_samples: 1
+      n_hidden_layers: 4
+    score:
+      mae: 5.515871
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularVFM_V3
+      transferred: true
+      transferred_at: '2026-05-07T02:24:00Z'
+      donation_reason: 'manual: cond_flow sibling'
   VFM:
     hyperparams:
       n_epochs: 1204
@@ -325,4 +349,5 @@ provenance:
   - transferred entries (marked transferred:true) populated from scratch/refined24/donor_assignments_long.csv on 2026-05-07T02:13:39Z
   - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
   - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
+  - 'on 2026-05-07T02:24:00Z: gap fills for FMDRE_S2 and TriangularVFM_V3 from structural siblings'
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
