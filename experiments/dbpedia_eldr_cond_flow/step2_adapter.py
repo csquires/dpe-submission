@@ -65,10 +65,17 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
     torch.manual_seed(seed_val)
     np.random.seed(seed_val)
 
-    estimator = builder(
-        input_dim=_input_dim(config), device=device,
-        num_waypoints=config["num_waypoints"], **hp,
-    )
+    # merge kwargs into a single dict so hp can override config defaults
+    # (avoids "got multiple values for keyword argument" when hp contains
+    # num_waypoints, as it does for waypoint-based methods like MDRE_15,
+    # MultiHeadTDRE, MultiHeadTriangularTDRE, TriangularMDRE).
+    builder_kwargs = {
+        "input_dim": _input_dim(config),
+        "device": device,
+        "num_waypoints": config["num_waypoints"],
+        **hp,
+    }
+    estimator = builder(**builder_kwargs)
 
     with h5py.File(data_path, "r") as f:
         pstar = torch.from_numpy(f["pstar_samples"][()]).to(device)
