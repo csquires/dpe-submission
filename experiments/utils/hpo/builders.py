@@ -71,17 +71,20 @@ def build_VFM(input_dim: int, device: str | torch.device, num_waypoints: int, **
 
 
 def build_FMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> FMDRE:
-    """return FMDRE estimator initialized from flat_hp dict."""
+    """return FMDRE estimator initialized from flat_hp dict. defaults to exact divergence."""
+    flat_hp.setdefault("div_method", "exact")
     return FMDRE(input_dim=input_dim, device=device, **flat_hp)
 
 
 def build_FMDRE_S2(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> FMDRE_S2:
-    """return FMDRE_S2 estimator initialized from flat_hp dict."""
+    """return FMDRE_S2 estimator initialized from flat_hp dict. defaults to exact divergence."""
+    flat_hp.setdefault("div_method", "exact")
     return FMDRE_S2(input_dim=input_dim, device=device, **flat_hp)
 
 
 def build_TriangularFMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularFMDRE:
-    """return TriangularFMDRE estimator initialized from flat_hp dict."""
+    """return TriangularFMDRE estimator initialized from flat_hp dict. defaults to exact divergence."""
+    flat_hp.setdefault("div_method", "exact")
     return TriangularFMDRE(input_dim=input_dim, device=device, **flat_hp)
 
 
@@ -236,6 +239,7 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         ema_decay=flat_hp.get("ema_decay"),
         grad_clip_norm=flat_hp.get("grad_clip_norm"),
         activation=flat_hp.get("activation", "gelu"),
+        div_method=flat_hp.get("div_method", "exact"),
         device=device
     )
 
@@ -259,6 +263,7 @@ def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypo
         ema_decay=flat_hp.get("ema_decay"),
         grad_clip_norm=flat_hp.get("grad_clip_norm"),
         activation=flat_hp.get("activation", "gelu"),
+        div_method=flat_hp.get("div_method", "exact"),
         device=device
     )
 
@@ -285,6 +290,7 @@ def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypo
         ema_decay=flat_hp.get("ema_decay"),
         grad_clip_norm=flat_hp.get("grad_clip_norm"),
         activation=flat_hp.get("activation", "gelu"),
+        div_method=flat_hp.get("div_method", "exact"),
         device=device
     )
 
