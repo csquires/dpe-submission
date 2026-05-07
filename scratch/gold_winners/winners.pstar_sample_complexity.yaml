@@ -212,28 +212,22 @@ methods:
       gap_to_second: 0.24997373272032672
   TriangularVFM_V3:
     hyperparams:
-      n_epochs: 885
-      lr: 0.0010626132118344584
-      batch_size: 64
-      k: 10
+      n_epochs: 835
+      lr: 0.0005872805397391068
+      batch_size: 256
+      k: 20
       gamma_schedule: linear-stiff
-      t2_max: 0.8362827015745187
-      eps: 0.004313808678126258
-      path_height: 1.7617216433331855
-      integration_steps: 1630
-      ema_decay: null
-      grad_clip_norm: 5.0
-      n_hutch_samples: 1
-      n_hidden_layers: 4
+      t2_max: 0.6481487400424616
+      eps: 0.002031123823164733
+      path_height: 1.9665804675832872
+      integration_steps: 1049
     score:
-      mae: 1.320535
-      donor_eval: r24_holdout
-      donor_experiment: smodice_eldr_estimation
-      transfer_penalty: null
-      source: donor:smodice_eldr_estimation/r24/TriangularVFM_V3
-      transferred: true
-      transferred_at: '2026-05-07T02:24:00Z'
-      donation_reason: 'manual: p*-related estimation sibling'
+      mae: 1.695615
+      eval: 200broad_holdout
+      source: rank200/TriangularVFM_V3
+      trial_id: 14
+      replaced_donor_at: '2026-05-07T02:25:58Z'
+      replaced_donor_note: replaced donor entry (donor:smodice_eldr_estimation/r24/TriangularVFM_V3) with native trial after exhaustive search with i_steps<2200
 provenance:
   generated_at: '2026-05-07T02:13:39Z'
   description: gold-standard hyperparameter set per (experiment, method).
@@ -242,4 +236,5 @@ provenance:
   - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
   - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
   - 'on 2026-05-07T02:24:00Z: gap fills for FMDRE_S2 and TriangularVFM_V3 from structural siblings'
+  - 'on 2026-05-07T02:25:58Z: re-checked sources at i_steps<2200; replaced donor entries with native trials where found'
   mae_comparability: ''

@@ -247,28 +247,22 @@ methods:
       trial_id: 0
   TriangularVFM_V3:
     hyperparams:
-      n_epochs: 1119
-      lr: 0.0005596730477003431
+      n_epochs: 1313
+      lr: 0.002147293531711561
       batch_size: 256
-      k: 20
+      k: 10
       gamma_schedule: linear-stiff
-      t2_max: 0.762937422001735
-      eps: 0.0028412065289669893
-      path_height: 1.742714889413896
-      integration_steps: 914
-      ema_decay: null
-      grad_clip_norm: null
-      n_hutch_samples: 16
-      n_hidden_layers: 4
+      t2_max: 0.6067769728969131
+      eps: 0.003747847467397766
+      path_height: 1.8851482113781413
+      integration_steps: 1342
     score:
-      mae: 0.269031
-      donor_eval: r24_holdout
-      donor_experiment: elbo_estimation
-      transfer_penalty: null
-      source: donor:elbo_estimation/r24/TriangularVFM_V3
-      transferred: true
-      transferred_at: '2026-05-07T02:24:00Z'
-      donation_reason: "manual: fallback \u2014 own trial has i_steps=3785 above 2000 cap"
+      mae: 5.089033
+      eval: 200broad_holdout
+      source: rank200/TriangularVFM_V3
+      trial_id: 30
+      replaced_donor_at: '2026-05-07T02:25:58Z'
+      replaced_donor_note: replaced donor entry (donor:elbo_estimation/r24/TriangularVFM_V3) with native trial after exhaustive search with i_steps<2200
   VFM:
     hyperparams:
       n_epochs: 1259
@@ -294,4 +288,5 @@ provenance:
   - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
   - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
   - 'on 2026-05-07T02:24:00Z: gap fills for FMDRE_S2 and TriangularVFM_V3 from structural siblings'
+  - 'on 2026-05-07T02:25:58Z: re-checked sources at i_steps<2200; replaced donor entries with native trials where found'
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
