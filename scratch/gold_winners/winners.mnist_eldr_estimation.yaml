@@ -1,0 +1,88 @@
+experiment: mnist_eldr_estimation
+methods:
+  CTSM:
+    hyperparams:
+      n_epochs: 1082
+      lr: 0.0013963183918159526
+      batch_size: 256
+      sigma: 0.5977230542122569
+      eps: 0.001382006130938672
+    score:
+      mae: 9.233253
+      eval: 200broad_holdout
+      source: var200_noDRE/CTSM
+      trial_id: 59
+  FMDRE:
+    hyperparams:
+      n_epochs: 1128
+      lr: 0.0013284574677782488
+      batch_size: 512
+      eps: 0.005209937529013056
+      integration_steps: 1488
+      hidden_dim: 128
+      score_weight: 0.27370072613577456
+    score:
+      mae: 9.532266
+      eval: 200broad_holdout
+      source: rank200_noDRE/FMDRE
+      trial_id: 1
+  FMDRE_S2:
+    hyperparams:
+      n_epochs: 1248
+      lr: 0.001004712656380738
+      batch_size: 512
+      eps: 0.04048843751791195
+      integration_steps: 1320
+      hidden_dim: 512
+      score_weight: 0.5764505499580618
+      p_uncond: 0.10471686686719446
+    score:
+      mae: 9.804093
+      eval: 200broad_holdout
+      source: rank200_noDRE/FMDRE_S2
+      trial_id: 63
+  MultiHeadTDRE:
+    hyperparams:
+      learning_rate: 0.009296734379221017
+      num_epochs: 125
+      hidden_dim: 128
+      head_dim: 40
+      num_shared_layers: 2
+    score:
+      mae: 8.919173
+      eval: 200broad_holdout
+      source: rank200_noDRE/MHTTDRE
+      trial_id: 42
+  TSM:
+    hyperparams:
+      n_epochs: 794
+      lr: 0.001362995491214936
+      batch_size: 256
+      eps: 1.110619849373941e-05
+    score:
+      mae: 9.122517
+      eval: 200broad_holdout
+      source: rank200_noDRE/TSM
+      trial_id: 65
+  VFM:
+    hyperparams:
+      n_epochs: 789
+      lr: 0.000732548357541328
+      batch_size: 128
+      k: 10
+      eps: 0.004490764816854096
+      integration_steps: 1063
+    score:
+      mae: 9.422482
+      eval: 200broad_holdout
+      source: var200_noDRE/VFM
+      trial_id: 48
+provenance:
+  generated_at: '2026-05-07T02:01:46Z'
+  description: gold-standard hyperparameter set per (experiment, method).
+  rules:
+  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
+  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
+  - 'triangular methods using integration_steps: filtered to <2000'
+  - 'FMDRE/FMDRE_S2: additionally filtered to integration_steps<1750'
+  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

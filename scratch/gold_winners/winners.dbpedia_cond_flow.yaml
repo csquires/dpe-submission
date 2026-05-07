@@ -1,0 +1,85 @@
+experiment: dbpedia_cond_flow
+methods:
+  BDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.0004427837109640731
+      num_epochs: 398
+      batch_size: 16384
+    score:
+      mae: 2.059264
+      eval: 200broad_holdout
+      source: summary/BDRE
+      trial_id: 92
+  CTSM:
+    hyperparams:
+      n_epochs: 1066
+      lr: 0.00047791012393537093
+      batch_size: 256
+      sigma: 0.8544922759464358
+      eps: 0.00037227445578201626
+    score:
+      mae: 2.814707
+      eval: 200broad_holdout
+      source: rank200_noDRE/CTSM
+      trial_id: 12
+  FMDRE:
+    hyperparams:
+      n_epochs: 907
+      lr: 0.002909908380581816
+      batch_size: 128
+      eps: 0.02693316548122775
+      integration_steps: 1499
+      hidden_dim: 512
+      score_weight: 0.22093581327477943
+    score:
+      mae: 2.90738
+      eval: 200broad_holdout
+      source: summary/FMDRE_general
+      trial_id: 0
+  FMDRE_S2:
+    hyperparams:
+      n_epochs: 849
+      lr: 0.0017246599435371832
+      batch_size: 256
+      eps: 0.01808613021947169
+      integration_steps: 1272
+      hidden_dim: 512
+      score_weight: 0.16048020023369494
+      p_uncond: 0.3094836649997901
+    score:
+      mae: 2.789888
+      eval: 200broad_holdout
+      source: summary/FMDRE_S2_general
+      trial_id: 3
+  MDRE_15:
+    hyperparams:
+      latent_dim: 64
+      learning_rate: 0.003250176965870447
+      num_epochs: 459
+      num_waypoints: 15
+    score:
+      mae: 1.698274
+      eval: 200broad_holdout
+      source: summary/MDRE_15
+      trial_id: 166
+  TSM:
+    hyperparams:
+      n_epochs: 884
+      lr: 0.0014074152497953031
+      batch_size: 64
+      eps: 3.2081797633384736e-05
+    score:
+      mae: 2.589617
+      eval: 200broad_holdout
+      source: rank200_noDRE/TSM
+      trial_id: 129
+provenance:
+  generated_at: '2026-05-07T02:01:46Z'
+  description: gold-standard hyperparameter set per (experiment, method).
+  rules:
+  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
+  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
+  - 'triangular methods using integration_steps: filtered to <2000'
+  - 'FMDRE/FMDRE_S2: additionally filtered to integration_steps<1750'
+  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

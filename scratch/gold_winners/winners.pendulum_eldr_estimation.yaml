@@ -1,0 +1,101 @@
+experiment: pendulum_eldr_estimation
+methods:
+  BDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.005102353004867334
+      num_epochs: 451
+      batch_size: null
+    score:
+      mae: 7.122169
+      eval: 200broad_holdout
+      source: summary/BDRE
+      trial_id: 122
+  CTSM:
+    hyperparams:
+      n_epochs: 987
+      lr: 0.0011651667511469793
+      batch_size: 256
+      sigma: 2.5453451325607204
+      eps: 0.0022263447711575184
+      integration_steps: 2164
+    score:
+      mae: 8.345648
+      eval: 200broad_holdout
+      source: summary/CTSM
+      trial_id: 20
+  FMDRE:
+    hyperparams:
+      n_epochs: 848
+      lr: 0.0010901675447373895
+      batch_size: 512
+      eps: 0.010057303083933867
+      integration_steps: 1005
+      hidden_dim: 128
+      score_weight: 0.11433301893154459
+    score:
+      mae: 8.577812
+      eval: 200broad_holdout
+      source: rank200_noDRE/FMDRE
+      trial_id: 129
+  FMDRE_S2:
+    hyperparams:
+      n_epochs: 868
+      lr: 0.0005299492568205207
+      batch_size: 128
+      eps: 0.001450628998090912
+      integration_steps: 1626
+      hidden_dim: 128
+      score_weight: 2.909765846281904
+      p_uncond: 0.8206487389601113
+    score:
+      mae: 9.13648
+      eval: 200broad_holdout
+      source: rank200_noDRE/FMDRE_S2_general
+      trial_id: 22
+  MDRE_15:
+    hyperparams:
+      latent_dim: 256
+      learning_rate: 0.007674146017532711
+      num_epochs: 188
+      num_waypoints: 20
+      batch_size: 8192
+    score:
+      mae: 4.880288
+      eval: 200broad_holdout
+      source: rank200/MDRE_15
+      trial_id: 2
+  MultiHeadTDRE:
+    hyperparams:
+      learning_rate: 0.005911344279462825
+      num_epochs: 199
+      hidden_dim: 128
+      head_dim: 10
+      num_shared_layers: 2
+      num_waypoints: 5
+      batch_size: 4096
+    score:
+      mae: 5.773147
+      eval: 200broad_holdout
+      source: var200/MultiHeadTDRE
+      trial_id: 95
+  TSM:
+    hyperparams:
+      n_epochs: 1367
+      lr: 0.00048458554143078687
+      batch_size: 64
+      eps: 1.687538539320584e-05
+    score:
+      mae: 6.422818
+      eval: 200broad_holdout
+      source: rank200/TSM
+      trial_id: 193
+provenance:
+  generated_at: '2026-05-07T02:01:46Z'
+  description: gold-standard hyperparameter set per (experiment, method).
+  rules:
+  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
+  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
+  - 'triangular methods using integration_steps: filtered to <2000'
+  - 'FMDRE/FMDRE_S2: additionally filtered to integration_steps<1750'
+  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

@@ -1,0 +1,158 @@
+methods:
+  BDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.006526326199115686
+      num_epochs: 144
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 0.379521
+      training_trial_id: 93
+      training_seed: 1729
+      holdout_score: 0.379521
+      holdout_seed: 4096
+      source_view: rank200
+      source_method_key: BDRE
+      source_file: smodice_eldr_estimation_combined_rank.json
+      source_summary: min holdout_mae across extended pool
+  CTSM:
+    hyperparams:
+      n_epochs: 894
+      lr: 0.0015274770545719459
+      batch_size: 256
+      sigma: 0.5868630836318811
+      eps: 0.0003422626220707701
+      integration_steps: 1416
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 0.569027
+      training_trial_id: 191
+      training_seed: 1729
+      holdout_score: 0.569027
+      holdout_seed: 4096
+      source_view: rank200
+      source_method_key: CTSM
+      source_file: smodice_eldr_estimation_combined_rank.json
+      source_summary: min holdout_mae across extended pool
+  FMDRE:
+    hyperparams:
+      n_epochs: 750
+      lr: 0.002576989194446682
+      batch_size: 512
+      eps: 0.03719640781983142
+      integration_steps: 1163
+      hidden_dim: 256
+      score_weight: 0.19692138876140275
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 0.911992
+      training_trial_id: 5
+      training_seed: 1729
+      holdout_score: 0.911992
+      holdout_seed: 4096
+      source_view: rank200_noDRE
+      source_method_key: FMDRE
+      source_file: smodice_eldr_estimation_combined_rank_noDRE.json
+      source_summary: min holdout_mae across extended pool
+  FMDRE_S2:
+    hyperparams:
+      n_epochs: 1189
+      lr: 0.0019627252393444616
+      batch_size: 512
+      eps: 0.03820309966041983
+      integration_steps: 1749
+      hidden_dim: 256
+      score_weight: 0.12210991622673349
+      p_uncond: 0.35246012696160967
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 0.847952
+      training_trial_id: 75
+      training_seed: 1729
+      holdout_score: 0.847952
+      holdout_seed: 4096
+      source_view: rank200_noDRE
+      source_method_key: FMDRE_S2
+      source_file: smodice_eldr_estimation_combined_rank_noDRE.json
+      source_summary: min holdout_mae across extended pool
+  MDRE_15:
+    hyperparams:
+      latent_dim: 64
+      learning_rate: 0.003244020192793081
+      num_epochs: 384
+      num_waypoints: 20
+      n_hidden_layers: 3
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 0.346357
+      training_trial_id: 76
+      training_seed: 1729
+      holdout_score: 0.346357
+      holdout_seed: 4096
+      source_view: r24_upd1
+      source_method_key: MDRE_15
+      source_file: smodice_eldr_estimation_refined24_rank.json
+      source_summary: min holdout_mae across extended pool
+  MultiHeadTDRE:
+    hyperparams:
+      learning_rate: 0.00035340614066068423
+      num_epochs: 520
+      hidden_dim: 64
+      head_dim: 40
+      num_shared_layers: 3
+      num_waypoints: 10
+      n_hidden_layers: 3
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 0.545999
+      training_trial_id: 37
+      training_seed: 1729
+      holdout_score: 0.545999
+      holdout_seed: 4096
+      source_view: r24_upd1
+      source_method_key: MultiHeadTDRE
+      source_file: smodice_eldr_estimation_refined24_rank.json
+      source_summary: min holdout_mae across extended pool
+  TSM:
+    hyperparams:
+      n_epochs: 1070
+      lr: 0.0008886221744528721
+      batch_size: 256
+      eps: 3.168809652803047e-05
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 0.718834
+      training_trial_id: 11
+      training_seed: 1729
+      holdout_score: 0.718834
+      holdout_seed: 4096
+      source_view: rank200
+      source_method_key: TSM
+      source_file: smodice_eldr_estimation_combined_rank.json
+      source_summary: min holdout_mae across extended pool
+  VFM:
+    hyperparams:
+      n_epochs: 1401
+      lr: 0.0007740777892289217
+      batch_size: 256
+      k: 20
+      eps: 0.003065839632153586
+      integration_steps: 611
+    score:
+      training_stage: uniform_200broad_winner_v2
+      training_score: 1.067364
+      training_trial_id: 31
+      training_seed: 1729
+      holdout_score: 1.067364
+      holdout_seed: 4096
+      source_view: rank200
+      source_method_key: VFM
+      source_file: smodice_eldr_estimation_combined_rank.json
+      source_summary: min holdout_mae across extended pool
+provenance:
+  generated_at: '2026-05-06T19:30:00Z'
+  workflow_version: v2
+  source: select_uniform_200broad_winners (extended pool)
+  rule: 'min holdout_mae across union of: rankanalysis_200broad (regular+noDRE), varanalysis_200broad (regular+noDRE), rankanalysis_r24broad (regular+upd1), and combined_summary; suffix variants (_wave3/_ctsmfix/_vfmfix/_fmdre_retry/_general/_retry/_retry2) folded into base method; MHTTDRE aliased to MultiHeadTDRE; FMDRE/FMDRE_S2 additionally filtered to integration_steps<1750'
+  scope: non-triangular methods only
+  n_source_files: 54

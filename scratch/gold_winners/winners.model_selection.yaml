@@ -1,0 +1,254 @@
+experiment: model_selection
+methods:
+  BDRE:
+    hyperparams:
+      latent_dim: 256
+      learning_rate: 0.009762179238225708
+      num_epochs: 451
+    score:
+      mae: 8.386606
+      eval: 200broad_holdout
+      source: summary/BDRE
+      trial_id: 14
+  CTSM:
+    hyperparams:
+      n_epochs: 1295
+      lr: 0.0017931278208056253
+      batch_size: 256
+      sigma: 0.7600374958019976
+      eps: 0.0009886010954134473
+      n_hidden_layers: 2
+    score:
+      mae: 12.437831
+      eval: 200broad_holdout
+      source: summary/CTSM
+      trial_id: 160
+  FMDRE:
+    hyperparams:
+      n_epochs: 1383
+      lr: 0.0015949403929996606
+      batch_size: 128
+      eps: 0.04654946087914437
+      integration_steps: 725
+      hidden_dim: 256
+      score_weight: 1.5806942907757184
+      n_hidden_layers: 2
+    score:
+      mae: 10.782951
+      eval: 200broad_holdout
+      source: var200_noDRE/FMDRE
+      trial_id: 26
+  FMDRE_S2:
+    hyperparams:
+      n_epochs: 1009
+      lr: 0.0015295561839809503
+      batch_size: 512
+      eps: 0.016185996145695002
+      integration_steps: 641
+      hidden_dim: 256
+      score_weight: 0.2519269780611382
+      p_uncond: 0.3765024593914133
+    score:
+      mae: 12.286929
+      eval: 200broad_holdout
+      source: rank200_noDRE/FMDRE_S2
+      trial_id: 13
+  MDRE_15:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.008045868045235315
+      num_epochs: 396
+      num_waypoints: 15
+    score:
+      mae: 5.451446
+      eval: 200broad_holdout
+      source: summary/MDRE_15
+      trial_id: 48
+  MultiHeadTDRE:
+    hyperparams:
+      learning_rate: 0.004244655231029823
+      num_epochs: 188
+      hidden_dim: 128
+      head_dim: 40
+      num_shared_layers: 1
+      num_waypoints: 5
+      n_hidden_layers: 2
+    score:
+      mae: 3.534283
+      eval: 200broad_holdout
+      source: var200/MultiHeadTDRE
+      trial_id: 5
+  MultiHeadTriangularTDRE:
+    hyperparams:
+      learning_rate: 0.0093593140750269
+      num_epochs: 509
+      hidden_dim: 16
+      head_dim: 20
+      num_shared_layers: 1
+      num_waypoints: 10
+      vertex: 0.35230985576467494
+      n_hidden_layers: 2
+    score:
+      mae: 9.162745
+      eval: r24_holdout
+      source: r24/MultiHeadTriangularTDRE
+      trial_id: 19
+  TSM:
+    hyperparams:
+      n_epochs: 1274
+      lr: 0.0025183455730820145
+      batch_size: 256
+      eps: 6.254324017303376e-06
+    score:
+      mae: 13.543067
+      eval: 200broad_holdout
+      source: var200/TSM
+      trial_id: 35
+  TriangularCTSM_V1:
+    hyperparams:
+      n_epochs: 1242
+      lr: 0.00042475685561676113
+      batch_size: 256
+      sigma: 0.4595490986071409
+      vertex: 0.32045030997697566
+      eps: 0.00196614167378021
+      integration_steps: 435
+      inner_eps: 0.02
+      ema_decay: null
+      grad_clip_norm: 1.0
+      time_dist: beta_5_5
+      n_hidden_layers: 3
+    score:
+      mae: 22.20277
+      eval: r24_holdout
+      source: r24/TriangularCTSM_V1
+      trial_id: 20
+  TriangularCTSM_V2:
+    hyperparams:
+      n_epochs: 878
+      lr: 0.0010150399081341574
+      batch_size: 256
+      sigma: 0.7580092237713958
+      eps: 0.0005506986097100334
+      integration_steps: 1822
+      ema_decay: null
+      grad_clip_norm: 1.0
+      time_dist: beta_5_5
+      n_hidden_layers: 4
+      vertex: 0.5812249989480933
+    score:
+      mae: 22.938232
+      eval: r24_holdout
+      source: r24/TriangularCTSM_V2
+      trial_id: 3
+  TriangularCTSM_V3:
+    hyperparams:
+      n_epochs: 1036
+      lr: 0.0014695638542345517
+      batch_size: 256
+      sigma: 0.8657614949080283
+      gamma_schedule: linear-stiff
+      k: 48
+      t2_max: 0.786963733241789
+      eps: 0.0020015555933619576
+      path_height: 1.7254339401888332
+      integration_steps: 599
+      ema_decay: null
+      grad_clip_norm: null
+      time_dist: uniform
+      n_hidden_layers: 4
+    score:
+      mae: 20.245867
+      eval: r24_holdout
+      source: r24/TriangularCTSM_V3
+      trial_id: 3
+  TriangularFMDRE:
+    hyperparams:
+      n_epochs: 999
+      lr: 0.0007898708956147703
+      batch_size: 512
+      eps: 0.035693707160121844
+      integration_steps: 829
+      hidden_dim: 256
+      score_weight: 0.3233637374785367
+      n_hidden_layers: 3
+    score:
+      mae: 12.476442
+      eval: r24_holdout
+      source: r24/TriangularFMDRE
+      trial_id: 8
+  TriangularMDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.0077880825587301325
+      num_epochs: 364
+      midpoint_oversample: 3
+      gamma_power: 4.098574681683065
+      num_waypoints: 15
+      vertex: 0.36843596971667164
+      n_hidden_layers: 2
+    score:
+      mae: 13.506325
+      eval: r24_holdout
+      source: r24/TriangularMDRE
+      trial_id: 4
+  TriangularVFM_V1:
+    hyperparams:
+      n_epochs: 1161
+      lr: 0.0012967320183990255
+      batch_size: 256
+      sigma: 2.2659942835152873
+      vertex: 0.2659961605093048
+      gamma_min: 0.018323796779535915
+      eps: 0.002795453335083157
+      integration_steps: 1346
+      ema_decay: null
+      grad_clip_norm: 5.0
+      n_hutch_samples: 1
+      inner_eps: 0.1
+      n_hidden_layers: 3
+    score:
+      mae: 16.557212
+      eval: r24_holdout
+      source: r24/TriangularVFM_V1
+      trial_id: 3
+  TriangularVFM_V2:
+    hyperparams:
+      n_epochs: 977
+      lr: 0.001670021175374017
+      batch_size: 256
+      k: 20
+      eps: 0.0014350578871667472
+      integration_steps: 1340
+      ema_decay: null
+      grad_clip_norm: 1.0
+      n_hutch_samples: 16
+      n_hidden_layers: 4
+      vertex: 0.25005463197671507
+    score:
+      mae: 21.447841
+      eval: r24_holdout
+      source: r24/TriangularVFM_V2
+      trial_id: 0
+  VFM:
+    hyperparams:
+      n_epochs: 1259
+      lr: 0.002505208633296151
+      batch_size: 256
+      k: 10
+      eps: 0.00138724076633509
+      integration_steps: 1552
+    score:
+      mae: 5.096955
+      eval: 200broad_holdout
+      source: rank200/VFM
+      trial_id: 18
+provenance:
+  generated_at: '2026-05-07T02:01:46Z'
+  description: gold-standard hyperparameter set per (experiment, method).
+  rules:
+  - 'non-triangular: best from 200broad/r24/summary pool, eval=200broad_holdout'
+  - 'triangular (r24-scope only): best from r24/r24_upd1, eval=r24_holdout'
+  - 'triangular methods using integration_steps: filtered to <2000'
+  - 'FMDRE/FMDRE_S2: additionally filtered to integration_steps<1750'
+  mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
