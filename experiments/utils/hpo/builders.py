@@ -167,10 +167,13 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
 
 
 def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularCTSM:
-    """return TriangularCTSM V2 (barycentric) estimator initialized from flat_hp dict."""
+    """return TriangularCTSM V2 (barycentric) estimator initialized from flat_hp dict.
+
+    vertex is HP-sampled via flat_hp; falls back to 0.5 (legacy default) for backward compat.
+    """
     path = BarycentricCtsm1D(
         sigma=flat_hp["sigma"],
-        vertex=0.5,
+        vertex=flat_hp.get("vertex", 0.5),
         eps=flat_hp["eps"]
     )
     return TriangularCTSM(
@@ -245,10 +248,13 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
 
 
 def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularVFM:
-    """return TriangularVFM V2 (barycentric) estimator initialized from flat_hp dict."""
+    """return TriangularVFM V2 (barycentric) estimator initialized from flat_hp dict.
+
+    vertex is HP-sampled via flat_hp; falls back to 0.5 (legacy default) for backward compat.
+    """
     path = BarycentricVfm1D(
         k=flat_hp["k"],
-        vertex=0.5,
+        vertex=flat_hp.get("vertex", 0.5),
         eps=flat_hp["eps"]
     )
     return TriangularVFM(

@@ -33,29 +33,43 @@ def narrow_spec(spec: Tuple, top_k_values: List) -> Tuple:
       else: raise ValueError(f"unknown spec type: {spec[0]}")
     """
     spec_type = spec[0]
-    lo = min(top_k_values)
-    hi = max(top_k_values)
+    # robust to None values mixed with numerics (e.g. ema_decay shifting from
+    # 0.999 to None mid-campaign). drop Nones for numeric specs unless they are
+    # the only values observed.
+    if spec_type != "choice":
+        non_none = [v for v in top_k_values if v is not None]
+        if non_none:
+            top_k_values = non_none
+    if not top_k_values or all(v is None for v in top_k_values):
+        return spec  # nothing usable; fall back to base spec
 
     if spec_type == "log_uniform":
+        lo, hi = min(top_k_values), max(top_k_values)
         if lo == hi:
             return ("choice", [lo])
         return ("log_uniform", lo, hi)
 
     elif spec_type == "log_uniform_int":
+        lo, hi = min(top_k_values), max(top_k_values)
         if lo == hi:
             return ("choice", [int(lo)])
         return ("log_uniform_int", int(lo), int(hi))
 
     elif spec_type == "uniform":
+        lo, hi = min(top_k_values), max(top_k_values)
         if lo == hi:
             return ("choice", [lo])
         return ("uniform", lo, hi)
 
     elif spec_type == "uniform_int":
+        lo, hi = min(top_k_values), max(top_k_values)
         return ("uniform_int", int(lo), int(hi))
 
     elif spec_type == "choice":
-        return ("choice", sorted(set(top_k_values)))
+        # sort key handles None alongside numerics/strings
+        uniq = list(set(top_k_values))
+        uniq.sort(key=lambda x: (x is None, x if x is not None else 0))
+        return ("choice", uniq)
 
     else:
         raise ValueError(f"unknown spec type: {spec_type}")

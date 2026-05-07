@@ -27,7 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKDIR = "/home/aviamala/dpe-submission"
+WORKDIR = os.environ.get("DPE_WORKDIR", "/home/aviamala/dpe-submission")
+CONDA_ENV = os.environ.get("DPE_CONDA_ENV", "fac")
 
 
 def _build_wrap(queue_file: Path, lock_file: Path, n_per_element: int,
@@ -45,7 +46,7 @@ def _build_wrap(queue_file: Path, lock_file: Path, n_per_element: int,
         args.extend(["--method-filter", method_filter])
     quoted = " ".join(shlex.quote(a) for a in args)
     return (
-        "set +u && source ~/.bashrc && conda activate fac && set -u && "
+        f"set +u && source ~/.bashrc && conda activate {CONDA_ENV} && set -u && "
         f"cd {WORKDIR} && {quoted}"
     )
 
@@ -62,7 +63,7 @@ def main() -> int:
                    help="max simultaneous elements (slurm %%N modifier)")
     p.add_argument("--n-per-element", type=int, default=2,
                    help="lines claimed per array element")
-    p.add_argument("--walltime", default="2:00:00")
+    p.add_argument("--walltime", default="6:00:00")
     p.add_argument("--partition", default="array")
     p.add_argument("--cpus-per-task", type=int, default=4)
     p.add_argument("--mem", default="16G")

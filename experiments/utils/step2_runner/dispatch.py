@@ -27,7 +27,8 @@ from pathlib import Path
 
 from experiments.utils.step2_runner.load_winners import load_winners, list_methods
 
-WORKDIR = "/home/aviamala/dpe-submission"
+WORKDIR = os.environ.get("DPE_WORKDIR", "/home/aviamala/dpe-submission")
+CONDA_ENV = os.environ.get("DPE_CONDA_ENV", "fac")
 DEFAULT_PARTITION = "preempt"
 DEFAULT_RESOURCES = "--gpus=1 --cpus-per-task=4 --mem=24G"
 
@@ -53,7 +54,7 @@ def queue_line(experiment: str, method: str, cell_chunk: list[int],
     job_name = f"step2_{experiment[:18]}_{method}_c{cell_chunk[0]}-{cell_chunk[-1]}"
     cfg_arg = f"--config {config_path}" if config_path else ""
     wrap = (
-        "set +u && source ~/.bashrc && conda activate fac && set -u && "
+        f"set +u && source ~/.bashrc && conda activate {CONDA_ENV} && set -u && "
         f"export HDF5_USE_FILE_LOCKING=FALSE && cd {WORKDIR} && "
         "python -m experiments.utils.step2_runner.worker "
         f"--experiment {experiment} --method {method} "

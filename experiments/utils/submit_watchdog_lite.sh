@@ -20,7 +20,8 @@ shift 4 2>/dev/null || true
 if [[ "${1:-}" == "--" ]]; then shift; fi
 EXTRA_ARGS="$*"
 
-WORKDIR="/home/aviamala/dpe-submission"
+WORKDIR="${DPE_WORKDIR:-/home/aviamala/dpe-submission}"
+CONDA_ENV="${DPE_CONDA_ENV:-fac}"
 export DPE_DATA_ROOT="${DPE_DATA_ROOT:-/data/user_data/$USER/dpe-submission}"
 export DPE_CKPT_ROOT="${DPE_CKPT_ROOT:-/scratch/$USER/ckpt/dpe-submission}"
 
@@ -55,7 +56,7 @@ JID=$(sbatch --parsable \
     --output="$LOGDIR/watchdog.out" \
     --error="$LOGDIR/watchdog.err" \
     --wrap="export DPE_WAVE3='${DPE_WAVE3:-}' DPE_DATA_ROOT='$DPE_DATA_ROOT' DPE_CKPT_ROOT='$DPE_CKPT_ROOT' && \
-            source ~/.bashrc && conda activate fac && cd $WORKDIR && \
+            source ~/.bashrc && conda activate $CONDA_ENV && cd $WORKDIR && \
             python -m experiments.utils.watchdog_lite \
               --queue-file '$WATCHDOG_QUEUE_FILE' \
               --my-cap $MY_CAP \

@@ -403,6 +403,18 @@ def refined(method: str, exp: str, adapter, n: int = 49, seed: int = 1729,
     if not trial_results:
         return None  # B3: None not raise
 
+    # refined-only profile (e.g. refined24) has n=0; skip narrowing entirely
+    # so we don't trip narrow_spec on heterogeneous-typed HPs (None vs numeric)
+    # arising from mid-campaign spec changes.
+    if n == 0:
+        return {
+            "skipped": True,
+            "reason": "refined budget is 0",
+            "num_trials": 0,
+            "config_dir": None,
+            "results_dir": None,
+        }
+
     scores = [float(t["score"]) for t in trial_results]
     top1 = min(scores)
     med = float(median(scores))

@@ -27,7 +27,8 @@ CPU_CONCURRENCY="${5:-100}"
 N_PER_ELEMENT="${6:-2}"
 METHOD_FILTER="${7:-}"
 
-WORKDIR="/home/aviamala/dpe-submission"
+WORKDIR="${DPE_WORKDIR:-/home/aviamala/dpe-submission}"
+CONDA_ENV="${DPE_CONDA_ENV:-fac}"
 export DPE_DATA_ROOT="${DPE_DATA_ROOT:-/data/user_data/$USER/dpe-submission}"
 export DPE_CKPT_ROOT="${DPE_CKPT_ROOT:-/scratch/$USER/ckpt/dpe-submission}"
 
@@ -65,7 +66,7 @@ if [[ -n "$METHOD_FILTER" ]]; then
     FILTER_ARG="--method-filter $METHOD_FILTER"
 fi
 
-source ~/.bashrc && conda activate fac
+set +u && source ~/.bashrc && conda activate "$CONDA_ENV" && set -u
 cd "$WORKDIR"
 python -m experiments.utils.step2_runner.cpu_dispatcher \
     --queue-file "$QUEUE_FILE" \
