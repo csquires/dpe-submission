@@ -12,18 +12,25 @@ methods:
       trial_id: 2
   CTSM:
     hyperparams:
-      n_epochs: 1276
-      lr: 0.0005867529462878758
-      batch_size: 128
-      sigma: 1.0891214362868358
-      eps: 0.0013364789654317537
+      n_epochs: 1207
+      lr: 0.0005291746354842164
+      batch_size: 512
+      sigma: 0.6183377867670272
+      eps: 0.001358585872522639
       n_hidden_layers: 2
-      integration_steps: 459
+      integration_steps: 1745
     score:
       mae: 0.465071
       eval: 200broad_holdout
       source: rank200/CTSM
       trial_id: 20
+      mae_ablation_smoke: 0.3227236419916153
+      mae_prior_gold_smoke: 0.523184295549418
+      selected_candidate: native+bs512
+      ablation_results: &id001
+      - scratch/smoke_eig_family_ablation_results.json
+      - scratch/augment_eig_results.json
+      patched_at: '2026-05-07T07:24:55Z'
   FMDRE:
     hyperparams:
       n_epochs: 1117
@@ -40,22 +47,32 @@ methods:
       eval: 200broad_holdout
       source: summary/FMDRE
       trial_id: 22
+      mae_ablation_smoke: 0.10169781744480133
+      mae_prior_gold_smoke: 0.11760970293814843
+      selected_candidate: native+extras_from_gold
+      ablation_results: *id001
+      patched_at: '2026-05-07T07:24:55Z'
   FMDRE_S2:
     hyperparams:
-      n_epochs: 1201
-      lr: 0.002825815374221726
+      n_epochs: 1323
+      lr: 0.0027815631985541388
       batch_size: 512
-      eps: 0.021200798354303056
-      integration_steps: 820
-      hidden_dim: 256
-      score_weight: 0.40547417974849664
-      p_uncond: 0.32991319193958113
-      div_method: exact
+      eps: 0.018050592527471827
+      integration_steps: 1982
+      hidden_dim: 128
+      score_weight: 0.20826459980130002
+      p_uncond: 0.19538128991571896
     score:
       mae: 0.121302
       eval: 200broad_holdout
       source: rank200_noDRE/FMDRE_S2_general
       trial_id: 10
+      mae_ablation_smoke: 0.10226336955363458
+      mae_prior_gold_smoke: 0.14747624358389305
+      selected_candidate: native_top1
+      ablation_results: &id002
+      - scratch/smoke_eig_family_ablation_results.json
+      patched_at: '2026-05-07T06:58:25Z'
   MDRE_15:
     hyperparams:
       latent_dim: 64
@@ -185,15 +202,13 @@ methods:
       donation_reason: donor_assignments_long.csv
   TriangularFMDRE:
     hyperparams:
-      n_epochs: 999
-      lr: 0.0007898708956147703
+      n_epochs: 996
+      lr: 0.0019033732196363587
       batch_size: 512
-      eps: 0.035693707160121844
-      integration_steps: 829
+      eps: 0.029001362552406425
+      integration_steps: 605
       hidden_dim: 256
-      score_weight: 0.3233637374785367
-      n_hidden_layers: 3
-      div_method: exact
+      score_weight: 0.7087915098139792
     score:
       mae: 12.476442
       donor_eval: r24_holdout
@@ -203,6 +218,11 @@ methods:
       transferred: true
       transferred_at: '2026-05-07T02:32:22Z'
       donation_reason: donor_assignments_long.csv
+      mae_ablation_smoke: 0.1067307283367388
+      mae_prior_gold_smoke: 0.1145318241413868
+      selected_candidate: native_top1
+      ablation_results: *id002
+      patched_at: '2026-05-07T06:58:25Z'
   TriangularMDRE:
     hyperparams:
       latent_dim: 128
@@ -224,14 +244,13 @@ methods:
       donation_reason: donor_assignments_long.csv
   TriangularTSM:
     hyperparams:
-      n_epochs: 1324
-      lr: 0.002179121071306526
-      batch_size: 256
+      n_epochs: 978
+      lr: 0.0005124509791920962
+      batch_size: 512
       hidden_dim: 128
-      eps: 8.098068719269202e-05
-      vertex: 0.4096954265301701
-      peak_max: 0.6810563427859988
-      n_hidden_layers: 3
+      eps: 9.548873942203656e-05
+      vertex: 0.6188739633416862
+      peak_max: 0.8406238500163501
     score:
       mae: 17.296805
       donor_eval: r24_holdout
@@ -241,22 +260,22 @@ methods:
       transferred: true
       transferred_at: '2026-05-07T02:32:22Z'
       donation_reason: donor_assignments_long.csv
+      mae_ablation_smoke: 0.09110527485609055
+      mae_prior_gold_smoke: 0.1568587878280372
+      selected_candidate: native+bs512
+      ablation_results: *id001
+      patched_at: '2026-05-07T07:24:55Z'
   TriangularVFM_V1:
     hyperparams:
-      n_epochs: 1167
-      lr: 0.0012621963750624613
+      n_epochs: 836
+      lr: 0.0014901705777545819
       batch_size: 256
-      sigma: 0.6064328333076221
-      vertex: 0.3081870300130339
-      gamma_min: 0.03611291873950996
-      eps: 0.0038318297891703763
-      integration_steps: 911
-      ema_decay: null
-      grad_clip_norm: 1.0
-      n_hutch_samples: 4
-      inner_eps: 0.0
-      n_hidden_layers: 3
-      div_method: exact
+      sigma: 1.4366677813460198
+      vertex: 0.4856017932910848
+      gamma_min: 0.010359983266681654
+      eps: 0.004683800737253653
+      integration_steps: 2000
+      n_hidden_layers: 2
     score:
       mae: 1.193583
       donor_eval: r24_holdout
@@ -266,20 +285,20 @@ methods:
       transferred: true
       transferred_at: '2026-05-07T02:32:22Z'
       donation_reason: donor_assignments_long.csv
+      mae_ablation_smoke: 0.0900967851346487
+      mae_prior_gold_smoke: 0.34301018188814447
+      selected_candidate: native_top1
+      ablation_results: *id002
+      patched_at: '2026-05-07T06:58:25Z'
   TriangularVFM_V2:
     hyperparams:
-      n_epochs: 1052
-      lr: 0.0022794087425453673
-      batch_size: 128
+      n_epochs: 1454
+      lr: 0.0011436924225602788
+      batch_size: 256
       k: 20
-      eps: 0.002817262741720043
-      integration_steps: 1584
-      ema_decay: null
-      grad_clip_norm: 1.0
-      n_hutch_samples: 4
-      n_hidden_layers: 3
-      vertex: 0.6132923901634875
-      div_method: exact
+      eps: 0.003406470967127267
+      integration_steps: 2000
+      n_hidden_layers: 2
     score:
       mae: 0.154372
       donor_eval: r24_holdout
@@ -289,22 +308,23 @@ methods:
       transferred: true
       transferred_at: '2026-05-07T02:32:22Z'
       donation_reason: donor_assignments_long.csv
+      mae_ablation_smoke: 0.10266913139340295
+      mae_prior_gold_smoke: 0.4048722524292492
+      selected_candidate: native_top1
+      ablation_results: *id002
+      patched_at: '2026-05-07T06:58:25Z'
   TriangularVFM_V3:
     hyperparams:
-      n_epochs: 1119
-      lr: 0.0005596730477003431
+      n_epochs: 1460
+      lr: 0.0015480908581482237
       batch_size: 256
-      k: 20
+      k: 40
       gamma_schedule: linear-stiff
-      t2_max: 0.762937422001735
-      eps: 0.0028412065289669893
-      path_height: 1.742714889413896
-      integration_steps: 914
-      ema_decay: null
-      grad_clip_norm: null
-      n_hutch_samples: 16
-      n_hidden_layers: 4
-      div_method: exact
+      t2_max: 0.758122081617698
+      eps: 0.003314655338338957
+      path_height: 1.0273232628023512
+      integration_steps: 2000
+      n_hidden_layers: 2
     score:
       mae: 0.269031
       donor_eval: r24_holdout
@@ -314,6 +334,11 @@ methods:
       transferred: true
       transferred_at: '2026-05-07T02:32:22Z'
       donation_reason: donor_assignments_long.csv
+      mae_ablation_smoke: 0.28008401305144126
+      mae_prior_gold_smoke: 0.3457156477411366
+      selected_candidate: native_top1
+      ablation_results: *id002
+      patched_at: '2026-05-07T06:58:25Z'
   VFM:
     hyperparams:
       n_epochs: 1392

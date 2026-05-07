@@ -97,15 +97,21 @@ methods:
       trial_id: 178
   TSM:
     hyperparams:
-      n_epochs: 1070
-      lr: 0.0008886221744528721
-      batch_size: 256
-      eps: 3.168809652803047e-05
+      n_epochs: 1323
+      lr: 0.0010907567936405676
+      batch_size: 512
+      eps: 5.551378127079014e-05
     score:
       mae: 0.718834
       eval: 200broad_holdout
       source: rank200/TSM
       trial_id: 11
+      mae_ablation_smoke: 0.5954161751287904
+      mae_prior_gold_smoke: 0.6458902252201157
+      selected_candidate: native+bs512
+      ablation_results: &id001
+      - scratch/smoke_smodice_family_ablation_results.json
+      patched_at: '2026-05-07T07:49:49Z'
   TriangularCTSM_V1:
     hyperparams:
       n_epochs: 800
@@ -133,12 +139,12 @@ methods:
         inner_eps: 0.05
   TriangularCTSM_V2:
     hyperparams:
-      n_epochs: 1196
-      lr: 0.0006781761481076357
-      batch_size: 256
-      sigma: 0.5631727777403943
-      eps: 0.0014938384892309706
-      integration_steps: 466
+      n_epochs: 1048
+      lr: 0.0007124618064899702
+      batch_size: 512
+      sigma: 0.753590175152413
+      eps: 0.0021624605666345537
+      integration_steps: 733
       ema_decay: null
       grad_clip_norm: 1.0
       time_dist: beta_2_2
@@ -148,6 +154,11 @@ methods:
       eval: r24_holdout
       source: r24/TriangularCTSM_V2
       trial_id: 4
+      mae_ablation_smoke: 0.9552812830293659
+      mae_prior_gold_smoke: 1.205736768061291
+      selected_candidate: native+extras+bs512
+      ablation_results: *id001
+      patched_at: '2026-05-07T07:49:49Z'
   TriangularCTSM_V3:
     hyperparams:
       n_epochs: 1251
@@ -221,20 +232,14 @@ methods:
       trial_id: 4
   TriangularVFM_V1:
     hyperparams:
-      n_epochs: 1167
-      lr: 0.0012621963750624613
-      batch_size: 256
-      eps: 0.0038318297891703763
-      integration_steps: 911
-      ema_decay: null
-      grad_clip_norm: 1.0
-      n_hutch_samples: 4
-      n_hidden_layers: 3
-      sigma: 0.5
-      vertex: 0.8
-      gamma_min: 0.1
-      inner_eps: 0.0
-      div_method: exact
+      n_epochs: 949
+      lr: 0.0016039204367788733
+      batch_size: 512
+      sigma: 0.4131328374219141
+      vertex: 0.37117567570589227
+      gamma_min: 0.019690325154805715
+      eps: 0.004541396156372699
+      integration_steps: 1529
     score:
       mae: 0.6562102138996124
       eval: sweep_4cell
@@ -242,14 +247,19 @@ methods:
       replaced_from_eval: r24_holdout
       replaced_from_mae: 1.193583
       replaced_at: '2026-05-07T02:32:22Z'
+      mae_ablation_smoke: 0.9180109641766706
+      mae_prior_gold_smoke: 0.9767143342998678
+      selected_candidate: native+bs512
+      ablation_results: *id001
+      patched_at: '2026-05-07T07:49:49Z'
   TriangularVFM_V2:
     hyperparams:
-      n_epochs: 865
-      lr: 0.001252115100446899
-      batch_size: 256
+      n_epochs: 1105
+      lr: 0.0010065341437002352
+      batch_size: 512
       k: 20
-      eps: 0.0040637797935891085
-      integration_steps: 810
+      eps: 0.004230906405211761
+      integration_steps: 1701
       ema_decay: null
       grad_clip_norm: 1.0
       n_hutch_samples: 1
@@ -261,17 +271,22 @@ methods:
       eval: r24_holdout
       source: r24/TriangularVFM_V2
       trial_id: 87
+      mae_ablation_smoke: 1.4014310878057563
+      mae_prior_gold_smoke: 1.5976565865343169
+      selected_candidate: native+extras+bs512
+      ablation_results: *id001
+      patched_at: '2026-05-07T07:49:49Z'
   TriangularVFM_V3:
     hyperparams:
-      n_epochs: 885
-      lr: 0.0010626132118344584
-      batch_size: 64
-      k: 10
+      n_epochs: 859
+      lr: 0.0013113780056197553
+      batch_size: 256
+      k: 20
       gamma_schedule: linear-stiff
-      t2_max: 0.8362827015745187
-      eps: 0.004313808678126258
-      path_height: 1.7617216433331855
-      integration_steps: 1630
+      t2_max: 0.8984935538667909
+      eps: 0.0030469663962793023
+      path_height: 1.7344432260615101
+      integration_steps: 2000
       ema_decay: null
       grad_clip_norm: 5.0
       n_hutch_samples: 1
@@ -282,19 +297,29 @@ methods:
       eval: r24_holdout
       source: r24/TriangularVFM_V3
       trial_id: 12
+      mae_ablation_smoke: 2.0427995528052962
+      mae_prior_gold_smoke: 2.226622689216584
+      selected_candidate: native+extras_from_gold
+      ablation_results: *id001
+      patched_at: '2026-05-07T07:49:49Z'
   VFM:
     hyperparams:
-      n_epochs: 1401
-      lr: 0.0007740777892289217
+      n_epochs: 1428
+      lr: 0.0008968834419484682
       batch_size: 256
       k: 20
-      eps: 0.003065839632153586
-      integration_steps: 611
+      eps: 0.0026433740976112446
+      integration_steps: 943
     score:
       mae: 1.067364
       eval: 200broad_holdout
       source: rank200/VFM
       trial_id: 31
+      mae_ablation_smoke: 1.1871740833183484
+      mae_prior_gold_smoke: 1.8219654965017522
+      selected_candidate: native_top1
+      ablation_results: *id001
+      patched_at: '2026-05-07T07:49:49Z'
 provenance:
   generated_at: '2026-05-07T02:32:22Z'
   description: gold-standard hyperparameter set per (experiment, method)
