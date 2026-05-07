@@ -17,6 +17,7 @@ import torch
 
 from src.utils.io import _load_config
 from experiments.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from experiments.utils.hpo.method_specs import METHOD_SPECS
 
 
 def load_config(path: str) -> dict:
@@ -40,19 +41,30 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
     return f"kl_idx_{cell_idx // config['num_instances_per_kl']}"
 
 
+def _build_estimator(method: str, hp: dict, config: dict, device: str):
+    """SEARCH_SPACES first (config-aware builders); else fall back to METHOD_SPECS
+    (canonical builders that take num_waypoints, no config)."""
+    if method in SEARCH_SPACES:
+        return SEARCH_SPACES[method]["builder"](
+            input_dim=config["data_dim"], device=device, config=config, **hp,
+        )
+    if method not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} in neither SEARCH_SPACES nor METHOD_SPECS")
+    spec = METHOD_SPECS[method]
+    nwp = spec.get("num_waypoints", None)
+    return spec["builder"](
+        input_dim=config["data_dim"], device=device,
+        num_waypoints=nwp if nwp is not None else 0, **hp,
+    )
+
+
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
-    if method not in SEARCH_SPACES:
-        raise KeyError(f"method {method!r} not in plugin_dre SEARCH_SPACES")
-
-    builder = SEARCH_SPACES[method]["builder"]
     seed_val = hash((method, cell_idx)) % (2**32)
     torch.manual_seed(seed_val)
     np.random.seed(seed_val)
 
-    estimator = builder(
-        input_dim=config["data_dim"], device=device, config=config, **hp,
-    )
+    estimator = _build_estimator(method, hp, config, device)
 
     with _open_dataset(config) as f:
         p0 = torch.from_numpy(f["samples_p0_arr"][cell_idx]).to(device)

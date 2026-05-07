@@ -23,6 +23,7 @@ import torch
 
 from src.utils.io import _load_config
 from experiments.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from experiments.utils.hpo.method_specs import METHOD_SPECS
 
 
 def _decode(flat_idx: int, config: dict) -> tuple[int, int]:
@@ -52,22 +53,34 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
     return f"pstar_idx_{pstar_idx}"
 
 
+def _build_estimator(method: str, hp: dict, config: dict, device: str):
+    """SEARCH_SPACES first (config-aware builders); else fall back to METHOD_SPECS
+    (canonical builders that take num_waypoints, no config). pstar's gold winners
+    are exclusively triangular methods, so most go through the METHOD_SPECS path."""
+    if method in SEARCH_SPACES:
+        return SEARCH_SPACES[method]["builder"](
+            input_dim=config["data_dim"], device=device, config=config, **hp,
+        )
+    if method not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} in neither SEARCH_SPACES nor METHOD_SPECS")
+    spec = METHOD_SPECS[method]
+    nwp = spec.get("num_waypoints", None)
+    return spec["builder"](
+        input_dim=config["data_dim"], device=device,
+        num_waypoints=nwp if nwp is not None else 0, **hp,
+    )
+
+
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
-    if method not in SEARCH_SPACES:
-        raise KeyError(f"method {method!r} not in pstar_sample_complexity SEARCH_SPACES")
-
     instance_idx, pstar_idx = _decode(cell_idx, config)
     nsamples_pstar = config["nsamples_pstar_values"][pstar_idx]
 
-    builder = SEARCH_SPACES[method]["builder"]
     seed_val = hash((method, cell_idx)) % (2**32)
     torch.manual_seed(seed_val)
     np.random.seed(seed_val)
 
-    estimator = builder(
-        input_dim=config["data_dim"], device=device, config=config, **hp,
-    )
+    estimator = _build_estimator(method, hp, config, device)
 
     with _open_dataset(config) as f:
         p0 = torch.from_numpy(f["samples_p0_arr"][instance_idx]).to(device)
