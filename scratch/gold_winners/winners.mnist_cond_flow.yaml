@@ -186,8 +186,10 @@ methods:
       mae_ablation_smoke: 3.1828471420756457
       mae_prior_gold_smoke: 3.8359540832321875
       selected_candidate: native+extras+bs512
-      ablation_results: *id001
-      patched_at: '2026-05-07T08:27:08Z'
+      ablation_results: &id002
+      - scratch/smoke_mnist_comprehensive_results.json
+      - scratch/delta_path_vertex_results__mnist.json
+      patched_at: '2026-05-07T10:01:04Z'
   TriangularFMDRE:
     hyperparams:
       n_epochs: 999
@@ -301,8 +303,8 @@ methods:
       mae_ablation_smoke: 3.5536387498715314
       mae_prior_gold_smoke: 4.613992522059847
       selected_candidate: native+extras+bs512
-      ablation_results: *id001
-      patched_at: '2026-05-07T08:27:08Z'
+      ablation_results: *id002
+      patched_at: '2026-05-07T10:01:04Z'
   TriangularVFM_V3:
     hyperparams:
       n_epochs: 1009
@@ -335,8 +337,8 @@ methods:
       mae_ablation_smoke: 3.800237098924536
       mae_prior_gold_smoke: 3.8753012802422515
       selected_candidate: native+extras_from_gold
-      ablation_results: *id001
-      patched_at: '2026-05-07T08:27:08Z'
+      ablation_results: *id002
+      patched_at: '2026-05-07T10:01:04Z'
   VFM:
     hyperparams:
       n_epochs: 1204

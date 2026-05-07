@@ -44,7 +44,7 @@ methods:
       ablation_results: &id001
       - scratch/smoke_pendulum_family_ablation_results.json
       - scratch/augment_pendulum_results.json
-      patched_at: '2026-05-07T07:24:55Z'
+      patched_at: '2026-05-07T10:01:04Z'
   FMDRE_S2:
     hyperparams:
       n_epochs: 868
@@ -137,7 +137,7 @@ methods:
       mae_prior_gold_smoke: 7.727023198178017
       selected_candidate: native+bs512
       ablation_results: *id001
-      patched_at: '2026-05-07T07:24:55Z'
+      patched_at: '2026-05-07T10:01:04Z'
   TriangularCTSM_V2:
     hyperparams:
       n_epochs: 1340
@@ -159,7 +159,7 @@ methods:
       mae_prior_gold_smoke: 7.914553234814415
       selected_candidate: native+bs512
       ablation_results: *id001
-      patched_at: '2026-05-07T07:24:55Z'
+      patched_at: '2026-05-07T10:01:04Z'
   TriangularCTSM_V3:
     hyperparams:
       n_epochs: 1251
@@ -184,7 +184,9 @@ methods:
       mae_ablation_smoke: 8.516838926565367
       mae_prior_gold_smoke: 8.896606859883233
       selected_candidate: native_top1
-      ablation_results: *id001
+      ablation_results: &id002
+      - scratch/smoke_pendulum_family_ablation_results.json
+      - scratch/augment_pendulum_results.json
       patched_at: '2026-05-07T07:24:55Z'
   TriangularFMDRE:
     hyperparams:
@@ -207,7 +209,7 @@ methods:
       mae_ablation_smoke: 7.80674172605903
       mae_prior_gold_smoke: 8.049344083082742
       selected_candidate: native_top1
-      ablation_results: *id001
+      ablation_results: *id002
       patched_at: '2026-05-07T07:24:55Z'
   TriangularMDRE:
     hyperparams:
@@ -270,7 +272,7 @@ methods:
       mae_prior_gold_smoke: 9.171956823520967
       selected_candidate: native+bs512
       ablation_results: *id001
-      patched_at: '2026-05-07T07:24:55Z'
+      patched_at: '2026-05-07T10:01:04Z'
   TriangularVFM_V2:
     hyperparams:
       n_epochs: 1052
