@@ -44,10 +44,11 @@ def load_config(path: str) -> dict:
 
 
 def _dataset_path(config: dict) -> str:
-    return os.path.join(
-        config["data_dir"],
+    filename = config.get(
+        "dataset_filename",
         f"dataset_d={config['data_dim']},nsamples={config['nsamples']}.h5",
     )
+    return os.path.join(config["data_dir"], filename)
 
 
 def _open_dataset(config: dict) -> h5py.File:
@@ -174,5 +175,6 @@ def gather_dataset_name(method: str, config: dict) -> str:
 
 def gather_output_path(config: dict) -> str:
     out_dir = config.get("raw_results_dir", "experiments/elbo_estimation/raw_results")
-    fname = f"results_d={config['data_dim']},nsamples={config['nsamples']}.h5"
-    return os.path.join(out_dir, fname)
+    stem = config.get("dataset_filename", f"dataset_d={config['data_dim']},nsamples={config['nsamples']}.h5")
+    stem = stem.replace("dataset_", "results_").removesuffix(".h5")
+    return os.path.join(out_dir, f"{stem}.h5")
