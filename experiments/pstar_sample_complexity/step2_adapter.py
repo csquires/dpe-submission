@@ -56,19 +56,25 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
 def _build_estimator(method: str, hp: dict, config: dict, device: str):
     """SEARCH_SPACES first (config-aware builders); else fall back to METHOD_SPECS
     (canonical builders that take num_waypoints, no config). pstar's gold winners
-    are exclusively triangular methods, so most go through the METHOD_SPECS path."""
+    are exclusively triangular methods, so most go through the METHOD_SPECS path.
+
+    kwargs are merged into a single dict with hp last, so gold-yaml hp always
+    overrides config / METHOD_SPECS defaults on collision (e.g. num_waypoints).
+    """
     if method in SEARCH_SPACES:
-        return SEARCH_SPACES[method]["builder"](
-            input_dim=config["data_dim"], device=device, config=config, **hp,
-        )
+        kwargs = {"input_dim": config["data_dim"], "device": device, "config": config, **hp}
+        return SEARCH_SPACES[method]["builder"](**kwargs)
     if method not in METHOD_SPECS:
         raise KeyError(f"method {method!r} in neither SEARCH_SPACES nor METHOD_SPECS")
     spec = METHOD_SPECS[method]
     nwp = spec.get("num_waypoints", None)
-    return spec["builder"](
-        input_dim=config["data_dim"], device=device,
-        num_waypoints=nwp if nwp is not None else 0, **hp,
-    )
+    kwargs = {
+        "input_dim": config["data_dim"],
+        "device": device,
+        "num_waypoints": nwp if nwp is not None else 0,
+        **hp,
+    }
+    return spec["builder"](**kwargs)
 
 
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
