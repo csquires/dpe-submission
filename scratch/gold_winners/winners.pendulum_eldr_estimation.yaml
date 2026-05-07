@@ -5,7 +5,6 @@ methods:
       latent_dim: 128
       learning_rate: 0.005102353004867334
       num_epochs: 451
-      batch_size: null
     score:
       mae: 7.122169
       eval: 200broad_holdout
@@ -59,7 +58,6 @@ methods:
       learning_rate: 0.007674146017532711
       num_epochs: 188
       num_waypoints: 20
-      batch_size: 8192
     score:
       mae: 4.880288
       eval: 200broad_holdout
@@ -73,7 +71,6 @@ methods:
       head_dim: 10
       num_shared_layers: 2
       num_waypoints: 5
-      batch_size: 4096
     score:
       mae: 5.773147
       eval: 200broad_holdout
@@ -88,7 +85,6 @@ methods:
       num_shared_layers: 3
       num_waypoints: 5
       vertex: 0.7487052848536593
-      batch_size: 16384
       n_hidden_layers: 3
     score:
       mae: 4.050103
@@ -188,6 +184,62 @@ methods:
       second_donor: elbo_estimation
       second_donor_pen: 0.0067082815501073
       gap_to_second: 0.0067082815501073
+  TriangularFMDRE:
+    hyperparams:
+      n_epochs: 1000
+      lr: 0.0012
+      batch_size: 256
+      eps: 0.01
+      integration_steps: 2000
+      hidden_dim: 256
+      score_weight: 1.0
+    score:
+      mae: 2.640329599380493
+      donor_eval: sweep_4cell
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/variant_sweep/anchor1
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularFMDRE gap fill from mnist_cond_flow'
+  TriangularMDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.007626207694466331
+      num_epochs: 235
+      midpoint_oversample: 3
+      gamma_power: 3.5496547578322377
+      num_waypoints: 10
+      vertex: 0.6411928955859685
+      n_hidden_layers: 3
+    score:
+      mae: 3.718233
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularMDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularMDRE gap fill from mnist_cond_flow'
+  TriangularTSM:
+    hyperparams:
+      n_epochs: 1250
+      lr: 0.0008587756521519505
+      batch_size: 256
+      hidden_dim: 128
+      eps: 0.00022832746592415796
+      vertex: 0.44658741549018866
+      peak_max: 0.9599844548722224
+      n_hidden_layers: 4
+    score:
+      mae: 0.654888
+      donor_eval: r24_holdout
+      donor_experiment: smodice_eldr_estimation
+      transfer_penalty: null
+      source: donor:smodice_eldr_estimation/r24/TriangularTSM
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularTSM gap fill from smodice_eldr_estimation'
   TriangularVFM_V1:
     hyperparams:
       n_epochs: 1161
@@ -238,6 +290,23 @@ methods:
       second_donor: mnist_cond_flow
       second_donor_pen: 0.0
       gap_to_second: 0.0
+  VFM:
+    hyperparams:
+      n_epochs: 1401
+      lr: 0.0007740777892289217
+      batch_size: 256
+      k: 20
+      eps: 0.003065839632153586
+      integration_steps: 611
+    score:
+      mae: 1.067364
+      donor_eval: 200broad_holdout
+      donor_experiment: smodice_eldr_estimation
+      transfer_penalty: null
+      source: donor:smodice_eldr_estimation/rank200/VFM
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: eldr structural sibling'
 provenance:
   generated_at: '2026-05-07T02:10:13Z'
   description: gold-standard hyperparameter set per (experiment, method).
@@ -248,4 +317,6 @@ provenance:
   - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
   - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
   - transferred entries (marked transferred:true) populated from scratch/refined24/donor_assignments_long.csv on 2026-05-07T02:13:39Z
+  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
+  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

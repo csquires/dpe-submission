@@ -1,5 +1,19 @@
 experiment: mnist_eldr_estimation
 methods:
+  BDRE:
+    hyperparams:
+      latent_dim: 256
+      learning_rate: 0.00831823232503526
+      num_epochs: 320
+    score:
+      mae: 3.306462
+      donor_eval: 200broad_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/summary/BDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
   CTSM:
     hyperparams:
       n_epochs: 1082
@@ -41,6 +55,21 @@ methods:
       eval: 200broad_holdout
       source: rank200_noDRE/FMDRE_S2
       trial_id: 63
+  MDRE_15:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.0034260960295001064
+      num_epochs: 138
+      num_waypoints: 5
+    score:
+      mae: 3.436636
+      donor_eval: 200broad_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/rank200/MDRE_15
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
   MultiHeadTDRE:
     hyperparams:
       learning_rate: 0.009296734379221017
@@ -53,6 +82,25 @@ methods:
       eval: 200broad_holdout
       source: rank200_noDRE/MHTTDRE
       trial_id: 42
+  MultiHeadTriangularTDRE:
+    hyperparams:
+      learning_rate: 0.019981095655516836
+      num_epochs: 374
+      hidden_dim: 16
+      head_dim: 40
+      num_shared_layers: 3
+      num_waypoints: 5
+      vertex: 0.7487052848536593
+      n_hidden_layers: 3
+    score:
+      mae: 4.050103
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/MultiHeadTriangularTDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
   TSM:
     hyperparams:
       n_epochs: 794
@@ -64,6 +112,202 @@ methods:
       eval: 200broad_holdout
       source: rank200_noDRE/TSM
       trial_id: 65
+  TriangularCTSM_V1:
+    hyperparams:
+      n_epochs: 1130
+      lr: 0.0005798013600962388
+      batch_size: 256
+      sigma: 2.5888220300811473
+      vertex: 0.44728584463936955
+      eps: 0.0023058295227169337
+      integration_steps: 1741
+      inner_eps: 0.02
+      ema_decay: null
+      grad_clip_norm: 5.0
+      time_dist: uniform
+      n_hidden_layers: 3
+    score:
+      mae: 7.215237
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularCTSM_V1
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+  TriangularCTSM_V2:
+    hyperparams:
+      n_epochs: 1175
+      lr: 0.00043274845378258914
+      batch_size: 256
+      sigma: 0.6879774374114728
+      eps: 0.0014766142872909586
+      integration_steps: 1905
+      ema_decay: null
+      grad_clip_norm: null
+      time_dist: beta_2_2
+      n_hidden_layers: 3
+      vertex: 0.7453406978669361
+    score:
+      mae: 7.623066
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularCTSM_V2
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+  TriangularCTSM_V3:
+    hyperparams:
+      n_epochs: 1212
+      lr: 0.001176269243648994
+      batch_size: 256
+      sigma: 0.49480224949160156
+      gamma_schedule: linear-stiff
+      k: 12
+      t2_max: 0.8768558306350689
+      eps: 0.0021057178700611507
+      path_height: 1.086503084296682
+      integration_steps: 1483
+      ema_decay: null
+      grad_clip_norm: 1.0
+      time_dist: uniform
+      n_hidden_layers: 4
+    score:
+      mae: 5.285832
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularCTSM_V3
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+  TriangularFMDRE:
+    hyperparams:
+      n_epochs: 1000
+      lr: 0.0012
+      batch_size: 256
+      eps: 0.01
+      integration_steps: 2000
+      hidden_dim: 256
+      score_weight: 1.0
+    score:
+      mae: 2.640329599380493
+      donor_eval: sweep_4cell
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/variant_sweep/anchor1
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularFMDRE gap fill from mnist_cond_flow'
+  TriangularMDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.007626207694466331
+      num_epochs: 235
+      midpoint_oversample: 3
+      gamma_power: 3.5496547578322377
+      num_waypoints: 10
+      vertex: 0.6411928955859685
+      n_hidden_layers: 3
+    score:
+      mae: 3.718233
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularMDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+  TriangularTSM:
+    hyperparams:
+      n_epochs: 1250
+      lr: 0.0008587756521519505
+      batch_size: 256
+      hidden_dim: 128
+      eps: 0.00022832746592415796
+      vertex: 0.44658741549018866
+      peak_max: 0.9599844548722224
+      n_hidden_layers: 4
+    score:
+      mae: 0.654888
+      donor_eval: r24_holdout
+      donor_experiment: smodice_eldr_estimation
+      transfer_penalty: null
+      source: donor:smodice_eldr_estimation/r24/TriangularTSM
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularTSM gap fill from smodice_eldr_estimation'
+  TriangularVFM_V1:
+    hyperparams:
+      n_epochs: 1051
+      lr: 0.0010505241358035615
+      batch_size: 64
+      sigma: 1.2552906538174717
+      vertex: 0.268659026263047
+      gamma_min: 0.0235727914104122
+      eps: 0.00240037254574775
+      integration_steps: 1607
+      ema_decay: null
+      grad_clip_norm: 1.0
+      n_hutch_samples: 1
+      inner_eps: 0.0
+      n_hidden_layers: 4
+    score:
+      mae: 4.880475
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularVFM_V1
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+  TriangularVFM_V2:
+    hyperparams:
+      n_epochs: 909
+      lr: 0.0006800927362610657
+      batch_size: 256
+      k: 10
+      eps: 0.002401248797668876
+      integration_steps: 1785
+      ema_decay: null
+      grad_clip_norm: 1.0
+      n_hutch_samples: 4
+      n_hidden_layers: 3
+      vertex: 0.7221620427114139
+    score:
+      mae: 5.933799
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularVFM_V2
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
+  TriangularVFM_V3:
+    hyperparams:
+      n_epochs: 979
+      lr: 0.0012618618728629954
+      batch_size: 256
+      k: 20
+      gamma_schedule: linear-stiff
+      t2_max: 0.749186057187202
+      eps: 0.0029385177561768376
+      path_height: 1.6991276384455438
+      integration_steps: 1532
+      ema_decay: null
+      grad_clip_norm: 1.0
+      n_hutch_samples: 1
+      n_hidden_layers: 4
+    score:
+      mae: 5.515871
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularVFM_V3
+      transferred: true
+      transferred_at: '2026-05-07T02:15:40Z'
+      donation_reason: 'manual: mnist_eldr_estimation -> mnist_cond_flow (structural similarity)'
   VFM:
     hyperparams:
       n_epochs: 789
@@ -86,4 +330,7 @@ provenance:
   - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
   - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
   - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
+  - manual donor transfer from mnist_cond_flow on 2026-05-07T02:15:40Z (structural similarity)
+  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
+  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

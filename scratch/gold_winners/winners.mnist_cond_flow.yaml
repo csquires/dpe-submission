@@ -84,7 +84,6 @@ methods:
       num_shared_layers: 3
       num_waypoints: 5
       vertex: 0.7487052848536593
-      batch_size: 16384
       n_hidden_layers: 3
     score:
       mae: 4.050103
@@ -160,6 +159,21 @@ methods:
       eval: r24_holdout
       source: r24/TriangularCTSM_V3
       trial_id: 15
+  TriangularFMDRE:
+    hyperparams:
+      n_epochs: 1000
+      lr: 0.0012
+      batch_size: 256
+      eps: 0.01
+      integration_steps: 2000
+      hidden_dim: 256
+      score_weight: 1.0
+    score:
+      mae: 2.640329599380493
+      eval: sweep_4cell
+      source: variant_sweep/anchor1
+      sweep_4cell_anchor: 1
+      sweep_4cell_unique: {}
   TriangularMDRE:
     hyperparams:
       latent_dim: 128
@@ -175,6 +189,25 @@ methods:
       eval: r24_holdout
       source: r24/TriangularMDRE
       trial_id: 2
+  TriangularTSM:
+    hyperparams:
+      n_epochs: 1324
+      lr: 0.002179121071306526
+      batch_size: 256
+      hidden_dim: 128
+      eps: 8.098068719269202e-05
+      vertex: 0.4096954265301701
+      peak_max: 0.6810563427859988
+      n_hidden_layers: 3
+    score:
+      mae: 17.296805
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: null
+      source: donor:model_selection/r24/TriangularTSM
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularTSM gap fill from model_selection'
   TriangularVFM_V1:
     hyperparams:
       n_epochs: 1051
@@ -255,4 +288,6 @@ provenance:
   - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
   - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
   - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
+  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
+  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

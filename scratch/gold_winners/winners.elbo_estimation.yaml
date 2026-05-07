@@ -178,6 +178,44 @@ methods:
       eval: r24_holdout
       source: r24/TriangularFMDRE
       trial_id: 17
+  TriangularMDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.007626207694466331
+      num_epochs: 235
+      midpoint_oversample: 3
+      gamma_power: 3.5496547578322377
+      num_waypoints: 10
+      vertex: 0.6411928955859685
+      n_hidden_layers: 3
+    score:
+      mae: 3.718233
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularMDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularMDRE gap fill from mnist_cond_flow'
+  TriangularTSM:
+    hyperparams:
+      n_epochs: 1324
+      lr: 0.002179121071306526
+      batch_size: 256
+      hidden_dim: 128
+      eps: 8.098068719269202e-05
+      vertex: 0.4096954265301701
+      peak_max: 0.6810563427859988
+      n_hidden_layers: 3
+    score:
+      mae: 17.296805
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: null
+      source: donor:model_selection/r24/TriangularTSM
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularTSM gap fill from model_selection'
   TriangularVFM_V1:
     hyperparams:
       n_epochs: 1247
@@ -259,4 +297,6 @@ provenance:
   - triangular CTSM/VFM/FMDRE families filtered to integration_steps<2000
   - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
   - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
+  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
+  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'

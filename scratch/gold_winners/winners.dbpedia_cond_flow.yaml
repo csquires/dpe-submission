@@ -5,7 +5,6 @@ methods:
       latent_dim: 128
       learning_rate: 0.0004427837109640731
       num_epochs: 398
-      batch_size: 16384
     score:
       mae: 2.059264
       eval: 200broad_holdout
@@ -63,6 +62,23 @@ methods:
       eval: 200broad_holdout
       source: summary/MDRE_15
       trial_id: 166
+  MultiHeadTDRE:
+    hyperparams:
+      learning_rate: 0.007232672098032508
+      num_epochs: 350
+      hidden_dim: 16
+      head_dim: 40
+      num_shared_layers: 3
+      num_waypoints: 5
+    score:
+      mae: 3.265007
+      donor_eval: 200broad_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/summary/MultiHeadTDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: cond_flow structural sibling'
   MultiHeadTriangularTDRE:
     hyperparams:
       learning_rate: 0.019981095655516836
@@ -72,7 +88,6 @@ methods:
       num_shared_layers: 3
       num_waypoints: 5
       vertex: 0.7487052848536593
-      batch_size: 16384
       n_hidden_layers: 3
     score:
       mae: 4.050103
@@ -193,6 +208,44 @@ methods:
       second_donor: model_selection
       second_donor_pen: 0.232222131240473
       gap_to_second: 0.04014814628185581
+  TriangularMDRE:
+    hyperparams:
+      latent_dim: 128
+      learning_rate: 0.007626207694466331
+      num_epochs: 235
+      midpoint_oversample: 3
+      gamma_power: 3.5496547578322377
+      num_waypoints: 10
+      vertex: 0.6411928955859685
+      n_hidden_layers: 3
+    score:
+      mae: 3.718233
+      donor_eval: r24_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/r24/TriangularMDRE
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularMDRE gap fill from mnist_cond_flow'
+  TriangularTSM:
+    hyperparams:
+      n_epochs: 1324
+      lr: 0.002179121071306526
+      batch_size: 256
+      hidden_dim: 128
+      eps: 8.098068719269202e-05
+      vertex: 0.4096954265301701
+      peak_max: 0.6810563427859988
+      n_hidden_layers: 3
+    score:
+      mae: 17.296805
+      donor_eval: r24_holdout
+      donor_experiment: model_selection
+      transfer_penalty: null
+      source: donor:model_selection/r24/TriangularTSM
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: TriangularTSM gap fill from model_selection'
   TriangularVFM_V1:
     hyperparams:
       n_epochs: 1161
@@ -243,6 +296,23 @@ methods:
       second_donor: elbo_estimation
       second_donor_pen: 0.0183986833723985
       gap_to_second: 0.0174764726914491
+  VFM:
+    hyperparams:
+      n_epochs: 1204
+      lr: 0.0007112929021319523
+      batch_size: 256
+      k: 20
+      eps: 0.002606722798557143
+      integration_steps: 2448
+    score:
+      mae: 4.261055
+      donor_eval: 200broad_holdout
+      donor_experiment: mnist_cond_flow
+      transfer_penalty: null
+      source: donor:mnist_cond_flow/summary/VFM
+      transferred: true
+      transferred_at: '2026-05-07T02:19:50Z'
+      donation_reason: 'manual: cond_flow structural sibling'
 provenance:
   generated_at: '2026-05-07T02:10:13Z'
   description: gold-standard hyperparameter set per (experiment, method).
@@ -253,4 +323,6 @@ provenance:
   - 'triangular TSM/MDRE/MHT-TDRE: no integration_steps filter (these variants do not use integration)'
   - 'FMDRE/FMDRE_S2 (non-tri): additionally filtered to integration_steps<1750'
   - transferred entries (marked transferred:true) populated from scratch/refined24/donor_assignments_long.csv on 2026-05-07T02:13:39Z
+  - batch_size stripped from BDRE/MDRE_15/MultiHeadTDRE/TriangularMDRE/MultiHeadTriangularTDRE on 2026-05-07T02:19:50Z (these methods do not consume it)
+  - manual gap-fill donations on 2026-05-07T02:19:50Z (dbpedia VFM/MultiHeadTDRE, pendulum VFM, TriangularFMDRE/MDRE/TSM gaps)
   mae_comparability: 'within non-tri rows: comparable. within tri rows: comparable. across tri vs nontri: NOT directly comparable due to different eval grids.'
