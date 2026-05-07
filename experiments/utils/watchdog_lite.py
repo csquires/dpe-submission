@@ -61,7 +61,10 @@ def render_sbatch(template: str, time_str: str, exclude_str: str,
         out = out.replace("--exclude={exclude}", "")
     out = out.replace("--partition=preempt",
                      f"--partition={partition} --constraint='{gpu_constraint}'")
-    out = out.replace(" --requeue", "")
+    # keep --requeue when actually targeting preempt (preempt jobs need it
+    # to restart after eviction); strip for general where it's a no-op.
+    if partition != "preempt":
+        out = out.replace(" --requeue", "")
     return out
 
 
