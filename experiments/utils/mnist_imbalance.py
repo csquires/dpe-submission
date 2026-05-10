@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torchvision.datasets
 import torchvision.transforms as transforms
-from scipy.special import xlogy
+from scipy.special import xlogy, polygamma, psi as digamma
 
 
 def sample_dirichlet_weights(alpha: float, n_draws: int, seed: int | None = None, K: int = 10) -> np.ndarray:
@@ -129,6 +129,93 @@ def invert_weights(w: np.ndarray) -> np.ndarray:
         result = result.squeeze(axis=0)
 
     return result
+
+
+def bound_moments(alpha: float, K: int) -> dict:
+    """closed-form moments of the pointwise sandwich on KL(w || invert(w)).
+
+    pointwise bracket from semisynth appendix:
+        ell(w) = 2 T1 - T2/K + log K  <=  KL(w || invert(w))  <=  2 T1 - T2 + log K = u(w)
+    where T1 = sum_j w_j log w_j, T2 = sum_j log w_j, w ~ Dir(alpha 1_K).
+
+    args:
+        alpha: dirichlet concentration (alpha > 0).
+        K: simplex dimension (number of classes).
+
+    returns:
+        dict with keys {E_ell, E_u, Var_ell, Var_u, E_T1, E_T2, Var_T1, Var_T2, Cov_T1_T2}.
+
+    procedure:
+        1. evaluate the digamma table at alpha + s, K alpha + s for s in {0,1,2}
+           and the trigamma analogues.
+        2. assemble mu1, mu2 (means of T1, T2), Var(T2), E[T1^2], Var(T1),
+           E[T1 T2], Cov(T1, T2) per the appendix derivation.
+        3. apply linear combinations to get E[ell], E[u], Var(ell), Var(u).
+    """
+    psi1_a1 = digamma(alpha + 1.0)
+    psi1_Ka1 = digamma(K * alpha + 1.0)
+    psi1_a2 = digamma(alpha + 2.0)
+    psi1_Ka2 = digamma(K * alpha + 2.0)
+    psi1_a = digamma(alpha)
+    psi1_Ka = digamma(K * alpha)
+
+    tri_a = polygamma(1, alpha)
+    tri_Ka = polygamma(1, K * alpha)
+    tri_a1 = polygamma(1, alpha + 1.0)
+    tri_Ka1 = polygamma(1, K * alpha + 1.0)
+    tri_a2 = polygamma(1, alpha + 2.0)
+    tri_Ka2 = polygamma(1, K * alpha + 2.0)
+
+    phi1 = psi1_a1 - psi1_Ka1
+    phi2 = psi1_a2 - psi1_Ka2
+    phi3 = psi1_a1 - psi1_Ka2
+    phi4 = psi1_a - psi1_Ka1
+    Delta1 = tri_a1 - tri_Ka1
+    Delta2 = tri_a2 - tri_Ka2
+
+    mu1 = phi1
+    mu2 = K * (psi1_a - psi1_Ka)
+
+    var_T2 = K * tri_a - (K ** 2) * tri_Ka
+
+    a1 = (alpha + 1.0) / (K * alpha + 1.0)
+    a2 = ((K - 1) * alpha) / (K * alpha + 1.0)
+    E_T1_sq = a1 * (phi2 ** 2 + Delta2) + a2 * (phi3 ** 2 - tri_Ka2)
+    var_T1 = E_T1_sq - mu1 ** 2
+
+    E_T1_T2 = phi1 ** 2 + Delta1 + (K - 1) * (phi1 * phi4 - tri_Ka1)
+    cov_T1_T2 = E_T1_T2 - mu1 * mu2
+
+    log_K = float(np.log(K))
+    E_ell = 2 * mu1 - mu2 / K + log_K
+    E_u = 2 * mu1 - mu2 + log_K
+    var_ell = 4 * var_T1 - (4 / K) * cov_T1_T2 + var_T2 / (K ** 2)
+    var_u = 4 * var_T1 - 4 * cov_T1_T2 + var_T2
+
+    return {
+        "E_ell": float(E_ell),
+        "E_u": float(E_u),
+        "Var_ell": float(max(var_ell, 0.0)),
+        "Var_u": float(max(var_u, 0.0)),
+        "E_T1": float(mu1),
+        "E_T2": float(mu2),
+        "Var_T1": float(max(var_T1, 0.0)),
+        "Var_T2": float(max(var_T2, 0.0)),
+        "Cov_T1_T2": float(cov_T1_T2),
+    }
+
+
+def expected_kl_jensen_ub(alpha: float, K: int) -> float:
+    """outer-Jensen upper bound on E[KL(w || invert(w))] for alpha > 1.
+
+    E[KL] <= -2 [psi(K alpha + 1) - psi(alpha + 1)] + log(K (K alpha - 1)/(alpha - 1)),
+    valid only for alpha > 1; returns +inf otherwise.
+    """
+    if alpha <= 1.0:
+        return float('inf')
+    entropy_term = digamma(K * alpha + 1.0) - digamma(alpha + 1.0)
+    log_ES = float(np.log(K * (K * alpha - 1.0) / (alpha - 1.0)))
+    return float(-2.0 * entropy_term + log_ES)
 
 
 def weight_kl(w: np.ndarray, w_prime: np.ndarray) -> float | np.ndarray:
