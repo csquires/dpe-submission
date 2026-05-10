@@ -37,6 +37,10 @@ test_*
 data/*
 experiments/mnist_eldr_estimation/hpo_configs/
 **/submit_*.sh
+# launcher dependencies — must be tracked so other accounts can run hpo campaigns.
+!experiments/utils/submit_watchdog.sh
+!experiments/utils/submit_watchdog_lite.sh
+!experiments/utils/step2_runner/submit_dual.sh
 **/trial_*.json
 experiments/smodice_eldr_estimation/build_task_manifest.py
 experiments/utils/check_smodice_feasibility.py
@@ -54,3 +58,8 @@ experiments/mnist_eldr_cond_flow/step5_compare.py
 # experiments/mnist_eldr_estimation/diagnostic_mem_profile.py
 slurm*
 tests/ablate.py
+scratch/hp*
+scratch/oor_*
+smoke_test*
+jsons/
+*_EMA.md
