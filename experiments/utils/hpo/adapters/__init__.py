@@ -5,39 +5,31 @@ minimal factory pattern. resolves experiment names to adapter classes
 and instantiates fresh adapters on demand (no caching).
 """
 from experiments.utils.hpo.adapters.base import ExperimentAdapter
-from experiments.utils.hpo.adapters.mnist_cond_flow import MnistCondFlowAdapter
-from experiments.utils.hpo.adapters.mnist_estimation import MnistEstimationAdapter
-from experiments.utils.hpo.adapters.dbpedia_cond_flow import DbpediaCondFlowAdapter
-from experiments.utils.hpo.adapters.pendulum_eldr_estimation import PendulumAdapter
+from experiments.utils.hpo.adapters.mnist import MnistAdapter
+from experiments.utils.hpo.adapters.mnist_uncond import MnistUncondAdapter
+from experiments.utils.hpo.adapters.dbpedia import DbpediaAdapter
+from experiments.utils.hpo.adapters.pendulum import PendulumAdapter
 from experiments.utils.hpo.adapters.model_selection import ModelSelectionAdapter
 from experiments.utils.hpo.adapters.eig_estimation import EIGAdapter
 from experiments.utils.hpo.adapters.elbo_estimation import ELBOAdapter
-from experiments.utils.hpo.adapters.smodice_eldr_estimation import SmodiceAdapter
+from experiments.utils.hpo.adapters.occupancy import OccupancyAdapter
 from experiments.utils.hpo.adapters.dre_sample_complexity import DreSampleComplexityAdapter
 
-# from experiments.utils.hpo.adapters.pendulum_eldr_estimation import PendulumAdapter
-# from experiments.utils.hpo.adapters.model_selection import ModelSelectionAdapter
-# from experiments.utils.hpo.adapters.eig_estimation import EIGAdapter
-# from experiments.utils.hpo.adapters.elbo_estimation import ELBOAdapter
-# from experiments.utils.hpo.adapters.smodice_eldr_estimation import SmodiceAdapter
+
 
 
 _ADAPTERS: dict[str, type[ExperimentAdapter]] = {
-    "mnist_cond_flow": MnistCondFlowAdapter,
-    "mnist_estimation": MnistEstimationAdapter,
-    "dbpedia_cond_flow": DbpediaCondFlowAdapter,
-    "pendulum_eldr_estimation": PendulumAdapter,
+    # canonical (new) keys
+    "mnist": MnistAdapter,
+    "mnist_uncond": MnistUncondAdapter,
+    "dbpedia": DbpediaAdapter,
+    "pendulum": PendulumAdapter,
+    "occupancy": OccupancyAdapter,
+    # unrelated, no rename
     "model_selection": ModelSelectionAdapter,
     "eig_estimation": EIGAdapter,
     "elbo_estimation": ELBOAdapter,
-    "smodice_eldr_estimation": SmodiceAdapter,
     "dre_sample_complexity": DreSampleComplexityAdapter,
-    # "dbpedia_cond_flow": DbpediaCondFlowAdapter,
-    # "pendulum_eldr_estimation": PendulumAdapter,
-    # "model_selection": ModelSelectionAdapter,
-    # "eig_estimation": EIGAdapter,
-    # "elbo_estimation": ELBOAdapter,
-    # "smodice_eldr_estimation": SmodiceAdapter,
 }
 
 
