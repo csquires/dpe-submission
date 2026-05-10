@@ -291,7 +291,7 @@ def main():
             "kl_p1_p0": heavy_stats["kl_p1_p0"],
         }
     print_hardness_table(stats, alphas, aug)
-    plot_hardness_figure(stats, alphas, config, aug)
+    plot_hardness_figure(stats, alphas, config, aug, K=10)
 
     if heavy_stats is not None:
         plot_kl_figure(data, config, alphas, heavy_stats)

@@ -130,6 +130,10 @@ def main():
     method_keys = [m for m in results if m not in ('alphas', 'kl_mean')]
     for method in sorted(method_keys):
         mae, std = results[method]
+        # skip methods that are all-NaN (no valid cells); else log-scale fails
+        if not np.any(np.isfinite(mae)):
+            print(f"  skipping {method}: all NaN")
+            continue
         color = METHODS.get(method, 'gray')
         ax.plot(alphas, mae, label=method, color=color, linewidth=2)
         ax.fill_between(alphas, mae - std, mae + std, color=color, alpha=ERROR_BAND_ALPHA)

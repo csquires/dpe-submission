@@ -596,11 +596,26 @@ def print_hardness_table(stats, alphas, heavy_stats=None):
                   f"{np.std(row):>8.3f} {np.min(row):>8.3f} {np.max(row):>8.3f}")
 
 
-def plot_hardness_figure(stats, alphas, config, heavy_stats=None):
+def plot_hardness_figure(stats, alphas, config, heavy_stats=None, K=None):
     """box plot grid of hardness metrics per alpha.
 
-    saves to figures_dir/datagen_variance.png
+    saves to figures_dir/datagen_variance.png. when K is provided, the kl_cat
+    panel additionally shows analytical references derived in
+    notes/semisynth_appendix.tex (appendix:weight-kl-bounds): the Dirichlet-mean
+    pointwise lower bound E[ell(w)] (always valid, all alpha > 0), and the
+    outer-Jensen upper bound on E[KL] (valid only for alpha > 1).
+
+    args:
+        stats: dict[name -> [n_alphas, num_pairs]] from compute_hardness.
+        alphas: list of alpha values.
+        config: experiment config dict (for figures_dir).
+        heavy_stats: optional dict[name -> [n_alphas, num_pairs]] of extra
+                     metrics (e.g., latent KL).
+        K: number of classes (10 for MNIST, 14 for DBpedia). when None, no
+           analytical overlay is drawn.
     """
+    from experiments.utils.mnist_imbalance import bound_moments, expected_kl_jensen_ub
+
     all_metrics = dict(stats)
     if heavy_stats is not None:
         all_metrics.update(heavy_stats)
@@ -628,6 +643,30 @@ def plot_hardness_figure(stats, alphas, config, heavy_stats=None):
             jitter = np.random.RandomState(42).uniform(-0.1, 0.1, len(vals[ai]))
             ax.scatter(np.full(len(vals[ai]), ai + 1) + jitter, vals[ai],
                        s=12, alpha=0.6, color="tab:red", zorder=5)
+
+        # analytical overlay on the kl_cat panel (closed-form Dirichlet bounds)
+        if name == "kl_cat" and K is not None:
+            lb_label_drawn = False
+            ub_label_drawn = False
+            for ai, alpha in enumerate(alphas):
+                mom = bound_moments(alpha, K)
+                ub_jensen = expected_kl_jensen_ub(alpha, K)
+                xc = ai + 1
+                ax.hlines(mom["E_ell"], xc - 0.35, xc + 0.35,
+                          colors="tab:green", linestyles="--", linewidth=2,
+                          zorder=6,
+                          label="E[ell] (LB)" if not lb_label_drawn else None)
+                lb_label_drawn = True
+                if np.isfinite(ub_jensen):
+                    ax.hlines(ub_jensen, xc - 0.35, xc + 0.35,
+                              colors="tab:purple", linestyles="--", linewidth=2,
+                              zorder=6,
+                              label="Jensen UB on E[KL]"
+                                    if not ub_label_drawn else None)
+                    ub_label_drawn = True
+            if lb_label_drawn or ub_label_drawn:
+                ax.legend(fontsize=7, loc="best")
+
         ax.set_xlabel("alpha")
         ax.set_ylabel(name)
         ax.set_title(name)
@@ -667,7 +706,7 @@ def main():
     if args.compute_kl:
         heavy_stats = compute_heavy_stats(data, config, alphas, num_pairs)
     print_hardness_table(stats, alphas, heavy_stats)
-    plot_hardness_figure(stats, alphas, config, heavy_stats)
+    plot_hardness_figure(stats, alphas, config, heavy_stats, K=10)
 
     # figure 2: heavy kl diagnostic (qq plots + correlation)
     if args.compute_kl:

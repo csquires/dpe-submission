@@ -65,4 +65,5 @@ ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
 plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, loc="upper left", fontsize=10)
 plt.tight_layout()
 os.makedirs(FIGURES_DIR, exist_ok=True)
-plt.savefig(f'{FIGURES_DIR}/final.pdf')
+plt.savefig(f'{FIGURES_DIR}/eig_estimation_final.pdf', bbox_inches='tight')
+plt.savefig(f'{FIGURES_DIR}/eig_estimation_final.png', dpi=150, bbox_inches='tight')
