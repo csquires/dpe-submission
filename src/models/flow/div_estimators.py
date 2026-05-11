@@ -12,6 +12,7 @@ batching via vmap internally, and return divergence estimates [B].
 
 import torch
 import math
+import warnings
 from torch import Tensor
 from typing import Callable
 
@@ -132,3 +133,47 @@ def div_chunked(
         div_list.append(div_chunk)
 
     return torch.cat(div_list, dim=0)  # [B]
+
+
+def compute_divergence(
+    output: Tensor,
+    x: Tensor,
+    epsilon: Tensor = None,
+) -> Tensor:
+    """
+    Computes exact divergence via per-dimension autograd loop.
+
+    **Deprecated:** Use `exact_div(f, x)` or `hutch_div(f, x)` for new code.
+    This function is maintained for backward compatibility and computes
+    divergence by summing per-dimension gradients: sum_i d(output_i)/dx_i.
+
+    Uses create_graph=False since this is only called during inference,
+    not during training where backprop through the divergence is needed.
+
+    Inputs:
+      output: vector field outputs [B, D]
+      x: input points [B, D] (must have requires_grad=True)
+      epsilon: ignored (kept for API compatibility)
+
+    Output:
+      divergence estimates [B] (one per sample)
+    """
+    warnings.warn(
+        "compute_divergence is deprecated; prefer exact_div(f, x) or hutch_div(f, x) for new code.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    batch_size, dim = x.shape
+    divergence = torch.zeros(batch_size, device=x.device, dtype=x.dtype)
+
+    for i in range(dim):
+        grad_i = torch.autograd.grad(
+            outputs=output[:, i].sum(),
+            inputs=x,
+            create_graph=False,
+            retain_graph=False,
+        )[0]
+        divergence = divergence + grad_i[:, i]
+
+    return divergence

@@ -1,3 +1,13 @@
+import warnings as _deprecation_warnings
+
+_deprecation_warnings.warn(
+    "src.density_ratio_estimation.tdre is deprecated and will be removed "
+    "in a future cycle. Migration: use src.density_ratio_estimation.mh_tdre.MultiHeadTDRE "
+    "(TDRE with separate per-pair classifiers is deprecated).",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
@@ -42,36 +52,3 @@ class TDRE(DensityRatioEstimator):
             waypoint_ldrs[:, i] = self.classifiers[i].predict_logits(xs)
         return waypoint_ldrs.sum(axis=1)  # [b]
 
-
-if __name__ == '__main__':
-    from torch.distributions import MultivariateNormal
-    from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
-    from src.models.binary_classification import make_pairwise_binary_classifiers
-
-    DIM = 2
-    NSAMPLES_TRAIN = 10000
-    NSAMPLES_TEST = 10
-    KL_DIVERGENCE = 5
-    DEVICE = "cuda"
-
-    # === CREATE SYNTHETIC DATA ===
-    gaussian_pair = create_two_gaussians_kl(DIM, KL_DIVERGENCE, beta=0.5)
-    mu0, Sigma0 = gaussian_pair['mu0'].to(DEVICE), gaussian_pair['Sigma0'].to(DEVICE)
-    mu1, Sigma1 = gaussian_pair['mu1'].to(DEVICE), gaussian_pair['Sigma1'].to(DEVICE)
-    p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
-    p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
-    samples_p0 = p0.sample((NSAMPLES_TRAIN,)).to(DEVICE)
-    samples_p1 = p1.sample((NSAMPLES_TRAIN,)).to(DEVICE)
-    samples_pstar1 = p0.sample((NSAMPLES_TEST,)).to(DEVICE)
-
-    # === DENSITY RATIO ESTIMATION ===
-    num_waypoints = 10
-    classifiers = make_pairwise_binary_classifiers(name="default", num_classes=num_waypoints, input_dim=DIM)
-    tdre = TDRE(classifiers, device=DEVICE)
-    tdre.fit(samples_p0, samples_p1)
-
-    # === EVALUATION ===
-    est_ldrs = tdre.predict_ldr(samples_pstar1)
-    true_ldrs = p0.log_prob(samples_pstar1) - p1.log_prob(samples_pstar1)
-    mae = torch.mean(torch.abs(est_ldrs - true_ldrs))
-    print(f'MAE: {mae}')

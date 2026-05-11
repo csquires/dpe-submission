@@ -32,6 +32,7 @@ from src.models.multiclass_classification import make_multiclass_classifier
 
 from src.waypoints.triangular_continuous import BarycentricCtsm1D, BarycentricVfm1D
 from src.waypoints.triangular_continuous_2d import Stacked2DCtsm, Stacked2DVfm
+from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 from src.waypoints.curve_2d import Curve2D
 
 
@@ -116,12 +117,15 @@ def build_TriangularMDRE(input_dim: int, device: str, config: dict, **hp) -> Tri
         learning_rate=hp["learning_rate"],
         num_epochs=hp["num_epochs"],
     )
-    return TriangularMDRE(
-        classifier=classifier,
-        device=device,
+    builder = TriangularWaypointBuilder1D(
         midpoint_oversample=hp["midpoint_oversample"],
         gamma_power=hp["gamma_power"],
-        vertex=0.5,
+        vertex=hp.get("vertex", 0.5),
+    )
+    return TriangularMDRE(
+        classifier=classifier,
+        waypoint_builder=builder,
+        device=device,
     )
 
 

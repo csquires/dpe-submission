@@ -37,6 +37,7 @@ from src.waypoints.triangular_continuous import BarycentricCtsm1D, BarycentricVf
 from src.waypoints.triangular_continuous_2d import Stacked2DCtsm, Stacked2DVfm
 from src.waypoints.curve_2d import Curve2D
 from src.waypoints.waypoints1d import DefaultWaypointBuilder1D
+from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 from src.models.binary_classification import (
     make_binary_classifier,
@@ -91,11 +92,15 @@ def build_TriangularFMDRE(input_dim: int, device: str | torch.device, num_waypoi
 def build_MHTTDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> MultiHeadTriangularTDRE:
     """return MHTTDRE estimator with multi-head classifier built from flat_hp dict.
 
-    num_waypoints and vertex can be HP-sampled via flat_hp; fall back to arg/0.5.
+    num_waypoints and waypoint-builder HPs can be HP-sampled via flat_hp;
+    fall back to arg/defaults for num_waypoints, 0/1.0/0.5 for waypoint builder.
     """
     nwp = flat_hp.pop("num_waypoints", num_waypoints)
     if nwp is None:
         nwp = 5
+    # pop waypoint-builder HPs with sensible defaults.
+    midpoint_oversample = flat_hp.pop("midpoint_oversample", 0)
+    gamma_power = flat_hp.pop("gamma_power", 1.0)
     vertex = flat_hp.pop("vertex", 0.5)
     classifier = make_multi_head_binary_classifier(
         input_dim=input_dim,
@@ -107,10 +112,15 @@ def build_MHTTDRE(input_dim: int, device: str | torch.device, num_waypoints: int
         num_epochs=flat_hp["num_epochs"],
         batch_size=flat_hp.get("batch_size"),
     )
+    builder = TriangularWaypointBuilder1D(
+        midpoint_oversample=midpoint_oversample,
+        gamma_power=gamma_power,
+        vertex=vertex,
+    )
     return MultiHeadTriangularTDRE(
         classifier=classifier,
+        waypoint_builder=builder,
         num_waypoints=nwp,
-        vertex=vertex,
         device=device
     )
 
@@ -332,28 +342,32 @@ def build_TriangularMDRE(input_dim: int, device: str | torch.device, num_waypoin
     """return TriangularMDRE estimator with triangular-path multiclass classifier.
 
     constructs multiclass classifier with num_waypoints classes and training
-    hyperparams, then wraps in TriangularMDRE with midpoint oversampling and
-    gamma power params. classifier_name defaults to "default"; override via
-    flat_hp["classifier_name"] if needed.
+    hyperparams, then wraps in TriangularMDRE with waypoint_builder constructed
+    from midpoint_oversample, gamma_power, and vertex HPs. classifier_name
+    defaults to "default"; override via flat_hp["classifier_name"] if needed.
     """
     classifier_name = flat_hp.pop("classifier_name", "default")
-    vertex = flat_hp.pop("vertex", 0.5)
     nwp = flat_hp.pop("num_waypoints", num_waypoints)
     if nwp is None:
         nwp = 10
-    midpoint_oversample = flat_hp.pop("midpoint_oversample")
-    gamma_power = flat_hp.pop("gamma_power")
+    # pop waypoint-builder HPs with sensible defaults.
+    midpoint_oversample = flat_hp.pop("midpoint_oversample", 0)
+    gamma_power = flat_hp.pop("gamma_power", 1.0)
+    vertex = flat_hp.pop("vertex", 0.5)
     # estimator-only HPs popped before forwarding to classifier factory.
     max_train_samples = flat_hp.pop("max_train_samples", None)
     classifier = make_multiclass_classifier(
         name=classifier_name, input_dim=input_dim, num_classes=nwp, **flat_hp,
     )
-    return TriangularMDRE(
-        classifier=classifier,
-        device=device,
+    builder = TriangularWaypointBuilder1D(
         midpoint_oversample=midpoint_oversample,
         gamma_power=gamma_power,
         vertex=vertex,
+    )
+    return TriangularMDRE(
+        classifier=classifier,
+        waypoint_builder=builder,
+        device=device,
         max_train_samples=max_train_samples,
     )
 

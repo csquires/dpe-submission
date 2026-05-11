@@ -1,4 +1,9 @@
-"""pure function for training conditional flow matching models."""
+"""DEPRECATED: train_conditional_flow is deprecated and will be removed in a future release.
+
+Migrate to train_score_flow with flow_matching_loss from _losses.py.
+See src/models/flow/train_score_flow.py for the new unified trainer.
+"""
+import warnings
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -22,7 +27,11 @@ def train_conditional_flow(
     p_uncond: float = 0.0,
     sentinel_cond: float = -1.0,
 ) -> nn.Module:
-    """train conditional flow matching with joint velocity + score targets.
+    """DEPRECATED: train conditional flow matching with joint velocity + score targets.
+
+    .. deprecated:: (future)
+      This function is deprecated. Use train_score_flow with flow_matching_loss instead.
+      See src/models/flow/train_score_flow.py and src/models/flow/_losses.py.
 
     trains model with mixed batches from two distributions (p0 and p1).
     uses linear interpolation between noise and data with uniform time sampling
@@ -86,6 +95,15 @@ def train_conditional_flow(
       6. model.eval()
       7. return model
     """
+    warnings.warn(
+        "train_conditional_flow is deprecated and will be removed in a future release. "
+        "Migrate to train_score_flow(model, p0, p1, None, flow_matching_loss, optim, "
+        "n_steps, batch_size, time_sampler, ..., loss_kwargs={'score_weight': ..., "
+        "'p_uncond': ..., 'sentinel_cond': ...}). "
+        "See src/models/flow/train_score_flow.py and _losses.py for details.",
+        DeprecationWarning,
+        stacklevel=2
+    )
 
     # resolve device
     if device is None:

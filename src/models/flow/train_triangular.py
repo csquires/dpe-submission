@@ -1,4 +1,9 @@
-"""pure function for training 3-class triangular flow matching models."""
+"""DEPRECATED: train_triangular_flow is deprecated and will be removed in a future release.
+
+Migrate to train_score_flow with triangular_flow_matching_loss.
+See src/models/flow/train_score_flow.py and _losses.py for details.
+"""
+import warnings
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -25,7 +30,12 @@ def train_triangular_flow(
     cosine_min_factor: float = 1.0,
     triangular_p_uncond: float = 0.0,
 ) -> nn.Module:
-    """train 3-class triangular flow matching with masked score loss.
+    """DEPRECATED: train 3-class triangular flow matching with masked score loss.
+
+    THIS FUNCTION IS DEPRECATED AND WILL BE REMOVED IN A FUTURE RELEASE.
+    Migrate to train_score_flow(model, p0, p1, pstar, triangular_flow_matching_loss, optim, n_steps, ...,
+    loss_kwargs={'score_weight': ..., 'triangular_p_uncond': ...}).
+    See src/models/flow/train_score_flow.py and _losses.py for details.
 
     trains model with stratified batches from three distributions:
     p_0 (source), p_1 (target), p_* (auxiliary).
@@ -113,6 +123,14 @@ def train_triangular_flow(
       entries corresponding to p_0 and p_1. we divide by n_active (the number
       of nonzero entries after masking) for a mean, not a sum.
     """
+    warnings.warn(
+        "train_triangular_flow is deprecated and will be removed in a future release. "
+        "Migrate to train_score_flow(model, p0, p1, pstar, triangular_flow_matching_loss, optim, n_steps, "
+        "batch_size, time_sampler, ..., loss_kwargs={'score_weight': ..., 'triangular_p_uncond': ...}). "
+        "See src/models/flow/train_score_flow.py and _losses.py for details.",
+        DeprecationWarning,
+        stacklevel=2
+    )
 
     # resolve device
     if device is None:

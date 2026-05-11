@@ -13,19 +13,16 @@ class TriangularMDRE(DensityRatioEstimator):
     def __init__(
         self,
         classifier: MulticlassClassifier,
-        waypoint_builder: TriangularWaypointBuilder1D = None,
+        waypoint_builder: TriangularWaypointBuilder1D | None = None,
         device: str = "cuda",
-        midpoint_oversample: int = 0,
-        gamma_power: float = 1.0,
-        vertex: float = 0.5,
-        max_train_samples: int = None,
+        max_train_samples: int | None = None,
     ):
         self.device = device
         self.classifier = classifier.to(self.device)
         self.waypoint_builder = waypoint_builder or TriangularWaypointBuilder1D(
-            midpoint_oversample=midpoint_oversample,
-            gamma_power=gamma_power,
-            vertex=vertex,
+            midpoint_oversample=0,
+            gamma_power=1.0,
+            vertex=0.5,
         )
         self.num_waypoints = self.classifier.num_classes
         self.max_train_samples = max_train_samples

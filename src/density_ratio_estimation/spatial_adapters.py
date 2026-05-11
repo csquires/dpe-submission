@@ -5,6 +5,15 @@ These adapters allow integrating spatial methods into experiments without
 modifying the original implementation files.
 """
 
+import warnings as _deprecation_warnings
+_deprecation_warnings.warn(
+    "src.density_ratio_estimation.spatial_adapters is deprecated and will be removed "
+    "in a future cycle. Migration: use src.density_ratio_estimation.vfm.VFM directly; "
+    "the make_spatial_velo_denoiser factory is deprecated.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from src.density_ratio_estimation.spatial_velo_denoiser2 import SpatialVeloDenoiser
 
 

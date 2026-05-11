@@ -1,12 +1,15 @@
-from typing import Optional
+"""Time Score Matching (TSM) density ratio estimator."""
 
-import numpy as np
+from typing import Optional
+import warnings
+
 import torch
 import torch.optim as optim
-import torch.autograd as autograd
-from scipy import integrate
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation._trainer import train_score_flow
+from src.density_ratio_estimation._ema import sample_time_and_iw
+from src.density_ratio_estimation._losses import hyvarinen_time_score_loss
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 
 
@@ -25,10 +28,72 @@ class TSM(DensityRatioEstimator):
         atol: float = 1e-6,
         n_hidden_layers: int = 3,
         activation: str = "silu",
-    ):
+        integration_steps: int = 200,
+    ) -> None:
+        """
+        Time Score Matching density ratio estimator.
+
+        Estimates log density ratio via a time-interpolated score-matching objective.
+        Learns a time-dependent score network s_phi(x, tau) that is integrated over
+        tau to predict log(p0(x) / p1(x)).
+
+        Procedure:
+          1. Constructor: validate activation, set hyperparameters, auto-detect device.
+          2. fit(samples_p0, samples_p1): initialize model, delegate training loop to
+             train_score_flow with hyvarinen_time_score_loss.
+          3. predict_ldr(xs): integrate score network output via torch.trapezoid.
+
+        Args:
+            input_dim: Dimension of input space.
+            hidden_dim: Width of hidden layers in score network. Default 256.
+            n_epochs: Number of gradient steps (training loop iteration count).
+                      Internally treated as n_steps for train_score_flow.
+                      Kept for backward compatibility with HPO scripts. Default 1000.
+            batch_size: Mini-batch size for each gradient step. Default 512.
+            lr: Learning rate for Adam optimizer. Default 1e-3.
+            reweight: If True, scale loss by Hyvärinen weighting lambda(tau).
+                      Default False.
+            eps: Time-domain margin; tau sampled from [eps, 1-eps].
+                 Default 1e-5.
+            device: Device string ("cuda", "cpu") or None for auto-detect.
+                    If None, use cuda if available else cpu. Default None.
+            rtol: ODE solver tolerance (deprecated; kept for HPO compat).
+                  Emits DeprecationWarning if rtol != 1e-6. Default 1e-6.
+            atol: ODE solver tolerance (deprecated; kept for HPO compat).
+                  Emits DeprecationWarning if atol != 1e-6. Default 1e-6.
+            n_hidden_layers: Number of hidden layers in score network. Default 3.
+            activation: Activation function name in {"elu", "gelu", "silu"}.
+                        Default "silu".
+            integration_steps: Number of quadrature points for tau grid in predict_ldr.
+                               Default 200.
+
+        Raises:
+            ValueError: If activation not in {"elu", "gelu", "silu"}.
+        """
         super().__init__(input_dim)
         if activation not in ("elu", "gelu", "silu"):
-            raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}")
+            raise ValueError(
+                f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
+            )
+
+        # emit DeprecationWarning for rtol/atol (no longer used in torch.trapezoid path)
+        if rtol != 1e-6:
+            warnings.warn(
+                "rtol is deprecated; torch.trapezoid does not use ODE tolerances. "
+                "Parameter is accepted but ignored. Use integration_steps to control "
+                "quadrature precision.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if atol != 1e-6:
+            warnings.warn(
+                "atol is deprecated; torch.trapezoid does not use ODE tolerances. "
+                "Parameter is accepted but ignored. Use integration_steps to control "
+                "quadrature precision.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self.hidden_dim = hidden_dim
         self.n_epochs = n_epochs
         self.batch_size = batch_size
@@ -39,129 +104,158 @@ class TSM(DensityRatioEstimator):
         self.atol = atol
         self.n_hidden_layers = n_hidden_layers
         self.activation = activation
+        self.integration_steps = integration_steps
+
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
+
         self.model = None
         self.optimizer = None
 
     def init_model(self) -> None:
-        self.model = TimeScoreNetwork1D(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
+        """
+        Instantiate TimeScoreNetwork1D and Adam optimizer.
 
-    def time_score_loss(
-        self,
-        p0_samples: torch.Tensor,
-        p1_samples: torch.Tensor,
-        x_t: torch.Tensor,
-        t: torch.Tensor,
-    ) -> torch.Tensor:
-        t0 = torch.zeros((len(p1_samples), 1), device=p1_samples.device) + self.eps
-        t1 = torch.ones((len(p0_samples), 1), device=p0_samples.device)
-
-        if self.reweight:
-            lambda_t = (1 - t ** 2).squeeze()
-            lambda_t0 = (1 - t0.squeeze() ** 2)
-            lambda_t1 = (1 - t1.squeeze() ** 2 + self.eps ** 2)
-            lambda_dt = (-2 * t.squeeze())
-        else:
-            lambda_t = lambda_t0 = lambda_t1 = 1.0
-            lambda_dt = 0.0
-
-        # term1 = (2 * self.model(p1_samples, t0)).squeeze() * lambda_t0
-        # term2 = (2 * self.model(p0_samples, t1)).squeeze() * lambda_t1
-
-        term1 = (2 * self.model(p0_samples, t0)).squeeze() * lambda_t0
-        term2 = (2 * self.model(p1_samples, t1)).squeeze() * lambda_t1
-
-        t = t.clone().detach().requires_grad_(True)
-        x_t_score = self.model(x_t, t)
-        x_t_score_dt = autograd.grad(x_t_score.sum(), t, create_graph=True)[0]
-        term3 = (2 * x_t_score_dt).squeeze() * lambda_t
-        term4 = x_t_score.squeeze() * lambda_dt if isinstance(lambda_dt, torch.Tensor) else x_t_score.squeeze() * lambda_dt
-        term5 = (x_t_score ** 2).squeeze() * lambda_t
-
-        loss = term1 - term2 + term3 + term4 + term5
-        return loss.mean()
+        Procedure:
+          1. Create TimeScoreNetwork1D with stored hyperparameters.
+          2. Move model to self.device.
+          3. Create Adam optimizer with lr=self.lr, betas=(0.9, 0.999), eps=1e-8.
+        """
+        self.model = TimeScoreNetwork1D(
+            self.input_dim,
+            self.hidden_dim,
+            n_hidden_layers=self.n_hidden_layers,
+            activation=self.activation,
+        ).to(self.device)
+        self.optimizer = optim.Adam(
+            self.model.parameters(),
+            lr=self.lr,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+        )
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+        """
+        Train the score network via train_score_flow + hyvarinen_time_score_loss.
+
+        Procedure:
+          1. Call init_model() to instantiate model and optimizer.
+          2. Build time_sampler: lambda with signature (batch_size, eps, device) ->
+             (tau [B,1], iw [B,1]), delegates to sample_time_and_iw("uniform", ...).
+          3. Build loss_kwargs: {"reweight": self.reweight, "eps": self.eps}.
+          4. Call train_score_flow with:
+             - model: self.model
+             - samples_p0, samples_p1: input samples
+             - samples_pstar: None (TSM uses 2-source loss, no intermediate anchor)
+             - loss_fn: hyvarinen_time_score_loss
+             - optim: self.optimizer
+             - n_steps: self.n_epochs (renamed for train_score_flow)
+             - batch_size: self.batch_size
+             - time_sampler: the lambda above
+             - scheduler: None (no lr scheduling for TSM)
+             - ema: None (no EMA for TSM)
+             - grad_clip_norm: None (no grad clipping for TSM)
+             - eps: self.eps
+             - loss_kwargs: as built above
+
+        Args:
+            samples_p0: Source distribution samples, shape [N0, D].
+            samples_p1: Target distribution samples, shape [N1, D].
+
+        Raises:
+            RuntimeError: If model instantiation fails or loss computation raises.
+        """
         self.init_model()
-        self.model.train()
 
-        samples_p0 = samples_p0.float()
-        samples_p1 = samples_p1.float()
-        n_p0 = samples_p0.shape[0]
-        n_p1 = samples_p1.shape[0]
+        # time_sampler: uniform tau in [eps, 1-eps] with unit importance weights
+        time_sampler = lambda B, eps_val, dev: sample_time_and_iw(
+            "uniform", B, eps_val, dev
+        )
 
-        for _ in range(self.n_epochs):
-            p0_idx = torch.randint(0, n_p0, (self.batch_size,))
-            p1_idx = torch.randint(0, n_p1, (self.batch_size,))
-            p0_samples = samples_p0[p0_idx].to(self.device)
-            p1_samples = samples_p1[p1_idx].to(self.device)
+        # loss_kwargs for hyvarinen_time_score_loss
+        loss_kwargs = {"reweight": self.reweight, "eps": self.eps}
 
-            t = torch.rand(self.batch_size, 1, device=self.device) * (1 - self.eps)
-            # x_t = t * p0_samples + torch.sqrt(1 - t ** 2) * p1_samples
-            x_t = torch.sqrt(1 - t ** 2) * p0_samples + t * p1_samples
-
-            self.optimizer.zero_grad()
-            loss = self.time_score_loss(p0_samples, p1_samples, x_t, t)
-            loss.backward()
-            self.optimizer.step()
+        # delegate training loop to unified trainer
+        train_score_flow(
+            model=self.model,
+            samples_p0=samples_p0,
+            samples_p1=samples_p1,
+            samples_pstar=None,
+            loss_fn=hyvarinen_time_score_loss,
+            optim=self.optimizer,
+            n_steps=self.n_epochs,
+            batch_size=self.batch_size,
+            time_sampler=time_sampler,
+            scheduler=None,
+            ema=None,
+            grad_clip_norm=None,
+            eps=self.eps,
+            loss_kwargs=loss_kwargs,
+        )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
+        """
+        Integrate learned score to predict log density ratio.
+
+        Procedure:
+          1. Validate model is not None; raise RuntimeError if untrained.
+          2. Set model to eval mode.
+          3. Move input to device and cast to float.
+          4. Build uniform tau grid: ts = torch.linspace(eps, 1.0, integration_steps,
+             device=device).
+          5. For each tau in ts: evaluate model(xs, tau_broadcast) to get score,
+             negate to form integrand -score(x, tau).
+          6. Stack evaluations: vals [T, N_test].
+          7. Integrate via torch.trapezoid over tau dimension; dt = (1.0 - eps) / (integration_steps - 1).
+          8. Return result as CPU tensor.
+
+        Tensor Shapes:
+          - xs: [N_test, D] input.
+          - ts: [T] where T = integration_steps.
+          - tau_broadcast: [N_test, 1] (repeated for each tau in ts).
+          - model(xs, tau_broadcast): [N_test] score output.
+          - vals: [T, N_test] stacked scores.
+          - log_ratios: [N_test] integrated log ratio.
+
+        Args:
+            xs: Test samples, shape [N_test, D].
+
+        Returns:
+            torch.Tensor: Log density ratio log(p0(x) / p1(x)), shape [N_test].
+                         Returned on CPU device.
+
+        Raises:
+            RuntimeError: If model is None (not trained).
+        """
         if self.model is None:
-            raise RuntimeError("TSM model is not trained. Call fit() before predict_ldr().")
+            raise RuntimeError(
+                "TSM model is not trained. Call fit() before predict_ldr()."
+            )
 
         self.model.eval()
-        samples = xs.to(self.device)
+        xs = xs.float().to(self.device)
 
         with torch.no_grad():
-            def ode_func(t, y, samples_tensor):
-                t_tensor = torch.ones(samples_tensor.size(0), 1, device=self.device) * t
-                score = self.model(samples_tensor, t_tensor)
-                # return score.squeeze().cpu().numpy()
-                return (-score).squeeze().cpu().numpy()
-
-            ode_fn = lambda t, y: ode_func(t, y, samples)
-            solution = integrate.solve_ivp(
-                ode_fn,
-                (self.eps, 1.0),
-                np.zeros((samples.size(0),)),
-                method="RK45",
-                rtol=self.rtol,
-                atol=self.atol,
+            # build uniform tau grid from eps to 1.0
+            ts = torch.linspace(
+                self.eps, 1.0, self.integration_steps, device=self.device
             )
-            log_ratios = solution.y[:, -1]
 
-        return torch.from_numpy(log_ratios)
+            # evaluate score at each tau; stack results
+            vals = []
+            for t in ts:
+                tau_broadcast = torch.full(
+                    (xs.shape[0], 1), t.item(), device=self.device
+                )
+                score_t = self.model(xs, tau_broadcast).squeeze(-1)  # [N_test]
+                vals.append(-score_t)  # negate for integrand
 
+            vals = torch.stack(vals, dim=0)  # [T, N_test]
 
-if __name__ == '__main__':
-    from torch.distributions import MultivariateNormal
-    from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
-    
-    DIM = 2
-    NSAMPLES_TRAIN = 10000
-    NSAMPLES_TEST = 10
-    KL_DIVERGENCE = 5
+            # integrate via trapezoid rule
+            dt = (1.0 - self.eps) / (self.integration_steps - 1)
+            log_ratios = torch.trapezoid(vals, dx=dt, dim=0).cpu()  # [N_test]
 
-    # === CREATE SYNTHETIC DATA ===
-    gaussian_pair = create_two_gaussians_kl(DIM, KL_DIVERGENCE, beta=0.5)
-    mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']
-    mu1, Sigma1 = gaussian_pair['mu1'], gaussian_pair['Sigma1']
-    p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
-    p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
-    samples_p0 = p0.sample((NSAMPLES_TRAIN,))
-    samples_p1 = p1.sample((NSAMPLES_TRAIN,))
-    samples_pstar1 = p0.sample((NSAMPLES_TEST,))
-
-    # === DENSITY RATIO ESTIMATION ===
-    tsm = TSM(DIM)
-    tsm.fit(samples_p0, samples_p1)
-
-    # === EVALUATION ===
-    est_ldrs = tsm.predict_ldr(samples_pstar1)
-    true_ldrs = p0.log_prob(samples_pstar1) - p1.log_prob(samples_pstar1)
-    mae = torch.mean(torch.abs(est_ldrs - true_ldrs))
-    print(f'MAE: {mae}')
+        return log_ratios

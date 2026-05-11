@@ -4,6 +4,15 @@ score-based stochastic interpolant density ratio estimator.
 estimates log p0(x)/p1(x) via velocity b and score s networks.
 time score formula: partial_t log rho = -div(b) - b.s
 """
+import warnings as _deprecation_warnings
+_deprecation_warnings.warn(
+    "src.density_ratio_estimation.spatial_velo_score is deprecated and will be removed "
+    "in a future cycle. Migration: use src.density_ratio_estimation.vfm.VFM "
+    "(the score-based variant in this file is deprecated).",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from typing import Optional, Literal
 
 import numpy as np

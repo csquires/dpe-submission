@@ -4,6 +4,30 @@ from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.sampling.tabular import grid_coord_angle, pointwise_smoothed_ldr
 
 
+def _count_and_smooth(s: torch.Tensor, a: torch.Tensor, n_states: int, n_actions: int, alpha: float) -> torch.Tensor:
+	"""count (s, a) pairs and apply laplace smoothing.
+
+	flattens (s, a) to joint index k = s * n_actions + a, histograms via bincount,
+	adds laplace smoothing constant alpha, normalizes to density, and reshapes to
+	tabular form [n_states, n_actions].
+
+	args:
+		s: state indices, shape [N], int64
+		a: action indices, shape [N], int64
+		n_states: number of states
+		n_actions: number of actions
+		alpha: laplace smoothing parameter (> 0)
+
+	returns:
+		d_hat: empirical density [n_states, n_actions], sums to 1.0
+	"""
+	K = n_states * n_actions
+	flat = s * n_actions + a  # [N]
+	count = torch.bincount(flat, minlength=K).float() + alpha  # [K]
+	d = count / count.sum()  # [K]
+	return d.reshape(n_states, n_actions)
+
+
 class TabularPluginDRE(DensityRatioEstimator):
     """empirical plug-in density ratio estimator for tabular (state, action) pairs.
 
@@ -80,22 +104,9 @@ class TabularPluginDRE(DensityRatioEstimator):
         s_O, a_O = self._decode(samples_p0)  # each shape [N_O], int64
         s_E, a_E = self._decode(samples_p1)  # each shape [N_E], int64
 
-        # flatten to joint indices: k = s * n_actions + a
-        K = self.n_states * self.n_actions
-        flat_O = s_O * self.n_actions + a_O  # [N_O]
-        flat_E = s_E * self.n_actions + a_E  # [N_E]
-
-        # count and smooth
-        device = flat_O.device
-        count_O = torch.bincount(flat_O, minlength=K).float() + self.smoothing_alpha  # [K]
-        count_E = torch.bincount(flat_E, minlength=K).float() + self.smoothing_alpha  # [K]
-
-        # normalize to density and reshape
-        d_O = count_O / count_O.sum()  # [K]
-        d_E = count_E / count_E.sum()  # [K]
-
-        self._d_O_hat = d_O.reshape(self.n_states, self.n_actions).cpu()  # [n_states, n_actions]
-        self._d_E_hat = d_E.reshape(self.n_states, self.n_actions).cpu()  # [n_states, n_actions]
+        # count and smooth via helper
+        self._d_O_hat = _count_and_smooth(s_O, a_O, self.n_states, self.n_actions, self.smoothing_alpha).cpu()  # [n_states, n_actions]
+        self._d_E_hat = _count_and_smooth(s_E, a_E, self.n_states, self.n_actions, self.smoothing_alpha).cpu()  # [n_states, n_actions]
 
         self._fitted = True
 
@@ -297,21 +308,9 @@ class SmoothedTabularPluginDRE(DensityRatioEstimator):
         s_E = latent_p1[:, 0]  # [N_E]
         a_E = latent_p1[:, 1]  # [N_E]
 
-        # flatten and count (identical to TabularPluginDRE)
-        K = self.n_states * self.n_actions
-        flat_O = s_O * self.n_actions + a_O  # [N_O]
-        flat_E = s_E * self.n_actions + a_E  # [N_E]
-
-        device = flat_O.device
-        count_O = torch.bincount(flat_O, minlength=K).float() + self.smoothing_alpha  # [K]
-        count_E = torch.bincount(flat_E, minlength=K).float() + self.smoothing_alpha  # [K]
-
-        # normalize and reshape
-        d_O = count_O / count_O.sum()  # [K]
-        d_E = count_E / count_E.sum()  # [K]
-
-        self._d_O_hat = d_O.reshape(self.n_states, self.n_actions).cpu()  # [n_states, n_actions]
-        self._d_E_hat = d_E.reshape(self.n_states, self.n_actions).cpu()  # [n_states, n_actions]
+        # count and smooth via helper
+        self._d_O_hat = _count_and_smooth(s_O, a_O, self.n_states, self.n_actions, self.smoothing_alpha).cpu()  # [n_states, n_actions]
+        self._d_E_hat = _count_and_smooth(s_E, a_E, self.n_states, self.n_actions, self.smoothing_alpha).cpu()  # [n_states, n_actions]
 
         self._fitted = True
 

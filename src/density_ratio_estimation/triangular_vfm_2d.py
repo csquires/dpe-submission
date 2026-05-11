@@ -1,10 +1,14 @@
 """TriangularVFM2D: V3-VFM 2D-time stacked-interpolant density ratio estimator.
 
-Mirrors TriangularVFM (1D) but trains two velocity heads (b_1, b_2) and one
-denoiser (eta) sequentially on a 2D-time stacked interpolant path. Inference
+Migrated per B13 spec. Trains two velocity heads (b_1, b_2) and one denoiser (eta)
+sequentially on a 2D-time stacked interpolant path via inline losses. Inference
 integrates the time-score along a Curve2D from tau=eps to 1-eps.
+
+Note: Inline losses used (not delegated to train_two_phase or train_score_flow).
+This is pragmatic (transparent, no closure overhead) until Scope A losses are
+extended with model_call kwarg.
 """
-from typing import Optional, Literal
+from typing import Optional, Literal, Callable
 import warnings
 import itertools
 
@@ -196,10 +200,11 @@ class TriangularVFM2D(DensityRatioEstimator):
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
     ) -> None:
-        """Joint training of b_1 and b_2 with eta frozen.
+        """Train b_1 and b_2 jointly with eta frozen.
 
-        Per-direction losses computed separately; sum is back-propagated.
-        Antithetic variance reduction is applied if self.antithetic=True.
+        Velocity matching via inline losses (half-norm minus dot). Per-direction
+        losses computed separately; sum is back-propagated. Antithetic variance
+        reduction applied if self.antithetic=True.
         """
         n0 = samples_p0.shape[0]
         n1 = samples_p1.shape[0]
@@ -218,7 +223,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         t2_max = float(self.path.t2_max)
 
         for epoch in range(self.n_epochs):
-            # bootstrap minibatches
+            # bootstrap minibatches [B, D]
             idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
             idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
             idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
@@ -226,14 +231,14 @@ class TriangularVFM2D(DensityRatioEstimator):
             x1 = samples_p1[idx1]  # [B, D]
             xstar = samples_pstar[idx_star]  # [B, D]
 
-            # time sampling
+            # sample time on 2D domain
             t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps  # [B, 1]
             t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - self.eps) + self.eps  # [B, 1]
 
-            # noise
+            # sample noise
             z = torch.randn_like(x0)  # [B, D]
 
-            # path quantities (detached)
+            # compute path quantities (detached — no gradients through path)
             mu = self.path.mu(x0, x1, xstar, t1, t2).detach()  # [B, D]
             dmu_dt1 = self.path.dmu_dt1(x0, x1, xstar, t1, t2).detach()  # [B, D]
             dmu_dt2 = self.path.dmu_dt2(x0, x1, xstar, t1, t2).detach()  # [B, D]
@@ -242,7 +247,7 @@ class TriangularVFM2D(DensityRatioEstimator):
             dgamma_dt2 = self.path.dgamma_dt2(t1, t2).detach()  # [B, 1]
 
             if self.antithetic:
-                # antithetic variance reduction: evaluate at +z and -z
+                # antithetic variance reduction: evaluate at ±z
                 x_t_plus = mu + gamma_t * z  # [B, D]
                 x_t_minus = mu - gamma_t * z  # [B, D]
 
@@ -256,7 +261,7 @@ class TriangularVFM2D(DensityRatioEstimator):
                 target_1_minus = dmu_dt1 - dgamma_dt1 * z  # [B, D]
                 target_2_minus = dmu_dt2 - dgamma_dt2 * z  # [B, D]
 
-                # half-norm-minus-dot per direction, averaged over +/- pair
+                # half-norm-minus-dot per direction, averaged over ±z pair
                 loss_b1 = (
                     0.25 * (b1_plus ** 2).sum(dim=-1)
                     - 0.5 * (target_1_plus * b1_plus).sum(dim=-1)
@@ -270,6 +275,7 @@ class TriangularVFM2D(DensityRatioEstimator):
                     - 0.5 * (target_2_minus * b2_minus).sum(dim=-1)
                 ).mean()
             else:
+                # single forward pass
                 x_t = mu + gamma_t * z  # [B, D]
                 b1_pred = self.net_b1(t1, t2, x_t)  # [B, D]
                 b2_pred = self.net_b2(t1, t2, x_t)  # [B, D]
@@ -286,19 +292,22 @@ class TriangularVFM2D(DensityRatioEstimator):
                     - (target_2 * b2_pred).sum(dim=-1)
                 ).mean()
 
+            # backward + step
             loss = loss_b1 + loss_b2
-
             optimizer_b.zero_grad()
             loss.backward()
-            maybe_clip_grad(list(self.net_b1.parameters()) + list(self.net_b2.parameters()), self.grad_clip_norm)
+            maybe_clip_grad(
+                list(self.net_b1.parameters()) + list(self.net_b2.parameters()),
+                self.grad_clip_norm,
+            )
             optimizer_b.step()
             if self.ema_b1 is not None:
                 self.ema_b1.update(self.net_b1)
             if self.ema_b2 is not None:
                 self.ema_b2.update(self.net_b2)
 
+            # logging
             if self.verbose and (epoch + 1) % self.log_every == 0:
-                # log per-direction losses (NOT summed)
                 print(f"  [Epoch {epoch+1}] loss_b1={loss_b1.item():.4f} loss_b2={loss_b2.item():.4f}")
 
     def _train_eta_phase(
@@ -309,7 +318,7 @@ class TriangularVFM2D(DensityRatioEstimator):
     ) -> None:
         """Train eta with b_1 and b_2 frozen.
 
-        Mirrors V2-VFM eta-phase (denoising loss).
+        Denoising loss (half-norm minus dot with noise).
         """
         n0 = samples_p0.shape[0]
         n1 = samples_p1.shape[0]
@@ -325,6 +334,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         t2_max = float(self.path.t2_max)
 
         for epoch in range(self.n_epochs):
+            # bootstrap minibatches [B, D]
             idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
             idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
             idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
@@ -332,19 +342,23 @@ class TriangularVFM2D(DensityRatioEstimator):
             x1 = samples_p1[idx1]  # [B, D]
             xstar = samples_pstar[idx_star]  # [B, D]
 
+            # sample time on 2D domain
             t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps  # [B, 1]
             t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - self.eps) + self.eps  # [B, 1]
 
+            # sample noise and forward through path
             z = torch.randn_like(x0)  # [B, D]
             x_t = self.path.sample(x0, x1, xstar, t1, t2, z).detach()  # [B, D]
 
+            # forward through eta
             eta_pred = self.net_eta(t1, t2, x_t)  # [B, D]
 
-            # denoising loss: half-norm minus dot with z
+            # denoising loss: half-norm minus dot
             loss_eta = (
                 0.5 * (eta_pred ** 2).sum(dim=-1) - (z * eta_pred).sum(dim=-1)
             ).mean()
 
+            # backward + step
             optimizer_eta.zero_grad()
             loss_eta.backward()
             maybe_clip_grad(self.net_eta.parameters(), self.grad_clip_norm)
@@ -352,20 +366,20 @@ class TriangularVFM2D(DensityRatioEstimator):
             if self.ema_eta is not None:
                 self.ema_eta.update(self.net_eta)
 
+            # logging
             if self.verbose and (epoch + 1) % self.log_every == 0:
                 print(f"  [Epoch {epoch+1}] loss_eta={loss_eta.item():.4f}")
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """Estimate \\log p_0(x) / p_1(x) via time-score line integral on self.curve.
+        """Estimate log p_0(x) / p_1(x) via time-score line integral on self.curve.
 
-        This estimator computes TWO divergences (one per velocity head) per
-        integration step. The 2x cost relative to V2-VFM is intentional: the
-        2D-time decomposition splits the time-score into two directional
-        components, each requiring its own div-of-velocity. Do NOT collapse
-        the two jacrev calls into one — they have different inputs and outputs.
+        Computes TWO divergences (one per velocity head) per integration step.
+        The 2x cost is intentional: 2D-time decomposition splits time-score into
+        two directional components, each requiring its own div-of-velocity. Do
+        NOT collapse the two jacrev calls — they have different signatures.
 
         Args:
-            xs: [N, D] test points (CPU or device); will be moved to self.device.
+            xs: [N, D] test points (CPU or device); moved to self.device.
 
         Returns:
             [N] log density ratios, CPU float32.
@@ -384,19 +398,24 @@ class TriangularVFM2D(DensityRatioEstimator):
         samples = xs.float().to(self.device)  # [n_samples, D]
         n_samples = samples.shape[0]
 
+        # create uniform tau grid and pack curve outputs
         n_points = self.integration_steps
-        tau_vals = torch.linspace(self.eps, 1.0 - self.eps, steps=n_points, device=self.device)  # [n_points]
+        tau_vals = torch.linspace(
+            self.eps, 1.0 - self.eps, steps=n_points, device=self.device
+        )  # [n_points]
 
-        # step 5a: pack curve outputs into [n_points, 4] BEFORE vmap
         curve = self.curve
         tau_list = tau_vals.tolist()  # n_points python floats
         t_data = torch.tensor(
-            [[curve.t1(tau), curve.t2(tau), curve.dt1(tau), curve.dt2(tau)] for tau in tau_list],
+            [
+                [curve.t1(tau), curve.t2(tau), curve.dt1(tau), curve.dt2(tau)]
+                for tau in tau_list
+            ],
             device=self.device,
             dtype=samples.dtype,
         )  # [n_points, 4]
 
-        # if EMA is active, swap in shadow weights
+        # apply EMA if active
         if self.ema_b1 is not None:
             self.ema_b1.apply_to(self.net_b1)
         if self.ema_b2 is not None:
@@ -405,25 +424,27 @@ class TriangularVFM2D(DensityRatioEstimator):
             self.ema_eta.apply_to(self.net_eta)
 
         try:
-            # chunked inference: vmap over leading dim of t_data
+            # chunked inference: vmap over leading dim of t_data to avoid OOM
             chunk_size = max(1, 100000 // n_samples)
             compute_vmapped = torch.vmap(
                 self._compute_time_score_single,
                 in_dims=(0, None),
                 out_dims=0,
-                randomness='different',  # required for Hutchinson noise inside
+                randomness="different",  # required for Hutchinson noise inside
             )
 
             time_score_chunks = []
             for i in range(0, n_points, chunk_size):
-                t_chunk = t_data[i:i + chunk_size]  # [chunk_len, 4]
+                t_chunk = t_data[i : i + chunk_size]  # [chunk_len, 4]
                 chunk_scores = compute_vmapped(t_chunk, samples).detach()  # [chunk_len, n_samples]
                 time_score_chunks.append(chunk_scores)
 
             time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
 
+            # integrate via trapezoidal rule
             return -torch.trapezoid(time_scores, tau_vals, dim=0).cpu()  # [n_samples]
         finally:
+            # restore original weights if EMA was applied
             if self.ema_b1 is not None:
                 self.ema_b1.restore(self.net_b1)
             if self.ema_b2 is not None:
@@ -434,33 +455,32 @@ class TriangularVFM2D(DensityRatioEstimator):
     def _compute_time_score_single(
         self, t_tau: torch.Tensor, x: torch.Tensor
     ) -> torch.Tensor:
-        """Compute time-score d log rho / d tau at a single tau.
+        """Compute time-score d log rho / d tau at a single tau via 2D-time decomposition.
 
-        Mirrors V2-VFM `_compute_time_score_single`; the only structural
-        difference is the packed `[4]`-vector input form (4 scalars instead
-        of 1).
+        Unpack curve outputs (t_1, t_2, dt_1/dtau, dt_2/dtau), evaluate b_1, b_2, eta,
+        compute divergences separately, and combine via chain rule.
 
         Args:
             t_tau: [4] packed (t_1, t_2, dt_1/dtau, dt_2/dtau) as 0-d slices
-                   produced by the outer vmap over [n_points, 4].
+                   produced by outer vmap over [n_points, 4].
             x: [n_samples, D] test points (broadcast — not vmapped).
 
         Returns:
             [n_samples] time scores at the current tau.
         """
-        # unpack 0-d tensors
-        t1_s = t_tau[0]
-        t2_s = t_tau[1]
-        dt1_s = t_tau[2]
-        dt2_s = t_tau[3]
+        # unpack 0-d tensors from curve
+        t1_s = t_tau[0]  # 0-d
+        t2_s = t_tau[1]  # 0-d
+        dt1_s = t_tau[2]  # 0-d
+        dt2_s = t_tau[3]  # 0-d
 
         n_samples = x.shape[0]
 
-        # 0-d tensors must be view(1, 1)'d before expand to [n_samples, 1]
+        # expand 0-d tensors to [n_samples, 1] for network interface
         t1_batch = t1_s.view(1, 1).expand(n_samples, 1)  # [n_samples, 1]
         t2_batch = t2_s.view(1, 1).expand(n_samples, 1)  # [n_samples, 1]
 
-        # gamma at the scalar (t_1, t_2): use [1, 1]-shaped tensors for path interface
+        # gamma at scalar (t_1, t_2)
         gamma_t = self.path.gamma(t1_s.view(1, 1), t2_s.view(1, 1)).squeeze()  # 0-d
 
         # network forwards (full batch)
@@ -468,7 +488,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         b2_pred = self.net_b2(t1_batch, t2_batch, x)  # [n_samples, D]
         eta_pred = self.net_eta(t1_batch, t2_batch, x)  # [n_samples, D]
 
-        # divergence via vmap(jacrev) per head — TWO separate calls, do not collapse
+        # divergence via vmap(jacrev) per head — TWO separate calls, do NOT collapse
         t1_one = t1_s.view(1, 1)
         t2_one = t2_s.view(1, 1)
 
@@ -478,12 +498,14 @@ class TriangularVFM2D(DensityRatioEstimator):
         def b2_single(x_single):
             return self.net_b2(t1_one, t2_one, x_single.unsqueeze(0)).squeeze(0)
 
-        if self.div_method == 'exact':
+        # compute divergences
+        if self.div_method == "exact":
             div_b1 = exact_div(b1_single, x)  # [n_samples]
             div_b2 = exact_div(b2_single, x)  # [n_samples]
         else:
-            div_b1 = hutch_div(b1_single, x, noise=self.div_noise)
-            div_b2 = hutch_div(b2_single, x, noise=self.div_noise)
+            # hutchinson with optional multiple samples
+            div_b1 = hutch_div(b1_single, x, noise=self.div_noise)  # [n_samples]
+            div_b2 = hutch_div(b2_single, x, noise=self.div_noise)  # [n_samples]
             for _ in range(self.n_hutch_samples - 1):
                 div_b1 = div_b1 + hutch_div(b1_single, x, noise=self.div_noise)
                 div_b2 = div_b2 + hutch_div(b2_single, x, noise=self.div_noise)
@@ -501,41 +523,3 @@ class TriangularVFM2D(DensityRatioEstimator):
         # combine via curve derivatives (chain rule)
         time_score = s_1 * dt1_s + s_2 * dt2_s  # [n_samples]
         return time_score
-
-
-if __name__ == '__main__':
-    from torch.distributions import MultivariateNormal
-    from experiments.utils.prescribed_kls import create_two_gaussians_kl
-
-    DIM = 2
-    NSAMPLES_TRAIN = 10000
-    NSAMPLES_TEST = 10
-    KL_DIVERGENCE = 5.0
-
-    # gaussian pair with controlled KL
-    gp = create_two_gaussians_kl(dim=DIM, k=KL_DIVERGENCE, beta=0.5)
-    mu0, Sigma0 = gp["mu0"], gp["Sigma0"]
-    mu1, Sigma1 = gp["mu1"], gp["Sigma1"]
-
-    p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
-    p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
-
-    # midpoint anchor p_*
-    mu_star = (mu0 + mu1) / 2.0
-    Sigma_star = (Sigma0 + Sigma1) / 2.0
-    pstar = MultivariateNormal(mu_star, covariance_matrix=Sigma_star)
-
-    samples_p0 = p0.sample((NSAMPLES_TRAIN,))
-    samples_p1 = p1.sample((NSAMPLES_TRAIN,))
-    samples_pstar = pstar.sample((NSAMPLES_TRAIN,))
-    samples_test = p0.sample((NSAMPLES_TEST,))
-
-    # smoke test with reduced epochs
-    estimator = TriangularVFM2D(input_dim=DIM, verbose=True, n_epochs=200)
-    estimator.fit(samples_p0, samples_p1, samples_pstar)
-
-    est_ldrs = estimator.predict_ldr(samples_test)
-    true_ldrs = p0.log_prob(samples_test) - p1.log_prob(samples_test)
-    mae = torch.mean(torch.abs(est_ldrs - true_ldrs))
-
-    print(f"MAE: {mae:.6f}")

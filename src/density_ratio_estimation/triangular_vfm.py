@@ -8,9 +8,9 @@ Note on the path geometry: under the C^1 barycentric weights, all weight derivat
 vanish at tau=0.5, so Delta_{0.5} = 0. This is benign — measure-zero under
 tau ~ Uniform([eps, 1-eps]), geometrically expected (mu_{0.5} = x_*, locally
 stationary), and empirically navigated by the sibling TriangularCTSM V2 which uses
-the identical BarycentricCtsm1D path. 
+the identical BarycentricCtsm1D path.
 """
-from typing import Optional, Literal, Tuple
+from typing import Optional, Literal, Tuple, Callable
 import warnings
 
 import numpy as np
@@ -19,7 +19,9 @@ import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.density_ratio_estimation._ema import EMA, maybe_clip_grad
-from src.density_ratio_estimation.spatial_velo_denoiser2 import MLP, compute_divergence
+from src.density_ratio_estimation._trainer import train_two_phase
+from src.density_ratio_estimation._losses import velo_matching_loss, denoiser_loss
+from src.models.common.mlp import MLP
 from src.models.flow.div_estimators import exact_div, hutch_div
 from src.waypoints.path_1d import VfmPath1D
 from src.waypoints.triangular_continuous import BarycentricVfm1D
@@ -176,8 +178,11 @@ class TriangularVFM(DensityRatioEstimator):
             samples_pstar: Samples from p* (anchor distribution), shape [Nstar, D].
 
         Procedure:
-            phase 1: train net_b (net_eta frozen) with velocity matching loss
-            phase 2: train net_eta (net_b frozen) with denoising loss
+            1. Validate samples and move to device.
+            2. Initialize net_b and net_eta.
+            3. Set up optimizers, schedulers, and EMA helpers.
+            4. Call train_two_phase with velo_matching_loss (b-phase) and denoiser_loss (eta-phase).
+            5. Set both networks to eval mode.
         """
         # extract sample counts and validate n_star
         n0 = samples_p0.shape[0]
@@ -194,195 +199,96 @@ class TriangularVFM(DensityRatioEstimator):
             )
 
         # move samples to device and cast to float
-        samples_p0 = samples_p0.float().to(self.device)
-        samples_p1 = samples_p1.float().to(self.device)
-        samples_pstar = samples_pstar.float().to(self.device)
+        samples_p0 = samples_p0.float().to(self.device)  # [n0, D]
+        samples_p1 = samples_p1.float().to(self.device)  # [n1, D]
+        samples_pstar = samples_pstar.float().to(self.device)  # [n_star, D]
 
         # initialize model
         self.init_model()
+
+        # set up optimizers
+        optim_b = optim.Adam(
+            self.net_b.parameters(),
+            lr=self.lr,
+            betas=self.adam_betas,
+            eps=1e-8,
+            weight_decay=self.weight_decay,
+        )
+
+        scheduler_b = (
+            None
+            if self.cosine_min_factor == 1.0
+            else optim.lr_scheduler.CosineAnnealingLR(
+                optim_b, T_max=self.n_epochs, eta_min=self.lr * self.cosine_min_factor
+            )
+        )
+
+        optim_eta = optim.Adam(
+            self.net_eta.parameters(),
+            lr=self.lr,
+            betas=self.adam_betas,
+            eps=1e-8,
+            weight_decay=self.weight_decay,
+        )
+
+        scheduler_eta = (
+            None
+            if self.cosine_min_factor == 1.0
+            else optim.lr_scheduler.CosineAnnealingLR(
+                optim_eta, T_max=self.n_epochs, eta_min=self.lr * self.cosine_min_factor
+            )
+        )
+
+        # set up EMA helpers
+        ema_b = EMA(self.net_b, self.ema_decay) if self.ema_decay is not None else None
+        ema_eta = EMA(self.net_eta, self.ema_decay) if self.ema_decay is not None else None
+
+        # create time sampler
+        def time_sampler(batch_size: int, eps: float, device) -> tuple[torch.Tensor, torch.Tensor]:
+            """sample tau ~ U([eps, 1-eps]) with importance weight 1."""
+            sampler = getattr(self.path, "sample_tau", None)
+            if callable(sampler):
+                tau = sampler(batch_size, eps, device)  # [B, 1]
+            else:
+                tau = torch.rand(batch_size, 1, device=device) * (1 - 2*eps) + eps  # [B, 1]
+            iw = torch.ones(batch_size, 1, device=device)  # [B, 1]
+            return tau, iw
 
         # logging
         if self.verbose:
             print("[TriangularVFM] Starting Sequential Training (3 distributions)")
 
-        # train phases
-        self._train_b_phase(samples_p0, samples_p1, samples_pstar)
-        self._train_eta_phase(samples_p0, samples_p1, samples_pstar)
+        # call train_two_phase
+        train_two_phase(
+            model_b=self.net_b,
+            model_eta=self.net_eta,
+            samples_p0=samples_p0,
+            samples_p1=samples_p1,
+            samples_pstar=samples_pstar,
+            loss_b=velo_matching_loss,
+            loss_eta=denoiser_loss,
+            optim_b=optim_b,
+            optim_eta=optim_eta,
+            n_steps_b=self.n_epochs,
+            n_steps_eta=self.n_epochs,
+            batch_size=self.batch_size,
+            time_sampler=time_sampler,
+            scheduler_b=scheduler_b,
+            scheduler_eta=scheduler_eta,
+            ema_b=ema_b,
+            ema_eta=ema_eta,
+            grad_clip_norm_b=self.grad_clip_norm,
+            grad_clip_norm_eta=self.grad_clip_norm,
+            eps=self.eps,
+            loss_kwargs_b={"path": self.path, "antithetic": self.antithetic},
+            loss_kwargs_eta={"path": self.path},
+        )
 
-        # post-training cleanup
+        # final state (train_two_phase already sets both to eval, but explicit for clarity)
         self.net_b.eval()
         self.net_eta.eval()
 
-    def _train_b_phase(
-        self,
-        samples_p0: torch.Tensor,
-        samples_p1: torch.Tensor,
-        samples_pstar: torch.Tensor,
-    ) -> None:
-        """
-        Train velocity field network net_b with net_eta frozen.
 
-        Updates net_b parameters via Adam to minimize velocity matching loss.
-        Supports antithetic variance reduction if self.antithetic=True.
-
-        Args:
-            samples_p0: [N0, D] samples from p0, on device.
-            samples_p1: [N1, D] samples from p1, on device.
-            samples_pstar: [Nstar, D] samples from p*, on device.
-        """
-        n0 = samples_p0.shape[0]
-        n1 = samples_p1.shape[0]
-        n_star = samples_pstar.shape[0]
-
-        self.net_b.train()
-        self.net_eta.eval()
-        optimizer_b = optim.Adam(self.net_b.parameters(), lr=self.lr, betas=self.adam_betas, eps=1e-8, weight_decay=self.weight_decay)
-        scheduler_b = (None if self.cosine_min_factor == 1.0 else
-                       optim.lr_scheduler.CosineAnnealingLR(
-                           optimizer_b, T_max=self.n_epochs,
-                           eta_min=self.lr * self.cosine_min_factor))
-
-        for epoch in range(self.n_epochs):
-            # bootstrap sampling (with replacement)
-            idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
-            idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
-            idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
-            x0 = samples_p0[idx0]  # [B, D]
-            x1 = samples_p1[idx1]  # [B, D]
-            xstar = samples_pstar[idx_star]  # [B, D]
-
-            # time sampling: defer to path.sample_tau if provided (e.g. V1
-            # with inner_eps for vertex-band guard), else uniform on [eps, 1-eps].
-            sampler = getattr(self.path, "sample_tau", None)
-            if callable(sampler):
-                tau = sampler(self.batch_size, self.eps, self.device)  # [B, 1]
-            else:
-                tau = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps
-
-            # noise and path derivatives
-            z = torch.randn_like(x0)  # [B, D]
-            Delta = self.path.drift_deriv(x0, x1, xstar, tau).detach()  # [B, D]
-            gamma_t = self.path.gamma(tau).detach()  # [B, 1] or scalar broadcast
-            gamma_prime = self.path.dgamma_dtau(tau).detach()  # [B, 1]
-            mu = self.path.drift(x0, x1, xstar, tau).detach()  # [B, D]
-
-            # branch on antithetic flag
-            if self.antithetic:
-                # antithetic variance reduction
-                x_t_plus = mu + gamma_t * z  # [B, D]
-                x_t_minus = mu - gamma_t * z  # [B, D]
-
-                b_plus = self.net_b(tau, x_t_plus)  # [B, D]
-                b_minus = self.net_b(tau, x_t_minus)  # [B, D]
-
-                b_norm_sq_plus = (b_plus ** 2).sum(dim=-1)  # [B]
-                b_norm_sq_minus = (b_minus ** 2).sum(dim=-1)  # [B]
-
-                target_plus = Delta + gamma_prime * z  # [B, D]
-                target_minus = Delta - gamma_prime * z  # [B, D]
-
-                t_dot_b_plus = (target_plus * b_plus).sum(dim=-1)  # [B]
-                t_dot_b_minus = (target_minus * b_minus).sum(dim=-1)  # [B]
-
-                loss_b = (0.25 * b_norm_sq_plus - 0.5 * t_dot_b_plus
-                        + 0.25 * b_norm_sq_minus - 0.5 * t_dot_b_minus).mean()
-            else:
-                # standard training (no antithetic)
-                x_t = mu + gamma_t * z  # [B, D]
-                b_pred = self.net_b(tau, x_t)  # [B, D]
-
-                target = Delta + gamma_prime * z  # [B, D]
-                b_norm_sq = (b_pred ** 2).sum(dim=-1)  # [B]
-                t_dot_b = (target * b_pred).sum(dim=-1)  # [B]
-
-                loss_b = (0.5 * b_norm_sq - t_dot_b).mean()
-
-            # gradient step
-            optimizer_b.zero_grad()
-            loss_b.backward()
-            maybe_clip_grad(self.net_b.parameters(), self.grad_clip_norm)
-            optimizer_b.step()
-            if scheduler_b is not None:
-                scheduler_b.step()
-            if self.ema_b is not None:
-                self.ema_b.update(self.net_b)
-
-            # logging
-            if self.verbose and (epoch + 1) % self.log_every == 0:
-                print(f"  [Epoch {epoch+1}] loss_b={loss_b.item():.4f}")
-
-    def _train_eta_phase(
-        self,
-        samples_p0: torch.Tensor,
-        samples_p1: torch.Tensor,
-        samples_pstar: torch.Tensor,
-    ) -> None:
-        """
-        Train denoiser network net_eta with net_b frozen.
-
-        Updates net_eta parameters via Adam to minimize denoising loss.
-        KEY: tau is clamped to [eps, 1-eps] (deviation from stock VFM which uses [0,1]).
-
-        Args:
-            samples_p0: [N0, D] samples from p0, on device.
-            samples_p1: [N1, D] samples from p1, on device.
-            samples_pstar: [Nstar, D] samples from p*, on device.
-        """
-        n0 = samples_p0.shape[0]
-        n1 = samples_p1.shape[0]
-        n_star = samples_pstar.shape[0]
-
-        self.net_b.eval()
-        self.net_eta.train()
-        optimizer_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=self.adam_betas, eps=1e-8, weight_decay=self.weight_decay)
-        scheduler_eta = (None if self.cosine_min_factor == 1.0 else
-                         optim.lr_scheduler.CosineAnnealingLR(
-                             optimizer_eta, T_max=self.n_epochs,
-                             eta_min=self.lr * self.cosine_min_factor))
-
-        for epoch in range(self.n_epochs):
-            # bootstrap sampling (identical to b-phase)
-            idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
-            idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
-            idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
-            x0 = samples_p0[idx0]  # [B, D]
-            x1 = samples_p1[idx1]  # [B, D]
-            xstar = samples_pstar[idx_star]  # [B, D]
-
-            # time sampling: defer to path.sample_tau when provided (e.g. V1
-            # with inner_eps for vertex-band guard), else CLAMPED to [eps, 1-eps].
-            sampler = getattr(self.path, "sample_tau", None)
-            if callable(sampler):
-                tau = sampler(self.batch_size, self.eps, self.device)  # [B, 1]
-            else:
-                tau = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.eps) + self.eps
-
-            # noise and path sampling
-            z = torch.randn_like(x0)  # [B, D]
-            gamma_t = self.path.gamma(tau).detach()  # [B, 1]
-            x_t = self.path.sample(x0, x1, xstar, tau, z).detach()  # [B, D]
-
-            # forward pass and loss
-            eta_pred = self.net_eta(tau, x_t)  # [B, D]
-
-            eta_norm_sq = (eta_pred ** 2).sum(dim=-1)  # [B]
-            z_dot_eta = (z * eta_pred).sum(dim=-1)  # [B]
-
-            loss_eta = (0.5 * eta_norm_sq - z_dot_eta).mean()
-
-            # gradient step
-            optimizer_eta.zero_grad()
-            loss_eta.backward()
-            maybe_clip_grad(self.net_eta.parameters(), self.grad_clip_norm)
-            optimizer_eta.step()
-            if scheduler_eta is not None:
-                scheduler_eta.step()
-            if self.ema_eta is not None:
-                self.ema_eta.update(self.net_eta)
-
-            # logging
-            if self.verbose and (epoch + 1) % self.log_every == 0:
-                print(f"  [Epoch {epoch+1}] loss_eta={loss_eta.item():.4f}")
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """
@@ -519,90 +425,3 @@ class TriangularVFM(DensityRatioEstimator):
         # time-score formula
         time_score = -div_b + b_dot_eta / gamma_t  # [n_samples]
         return time_score
-
-
-if __name__ == '__main__':
-    from torch.distributions import MultivariateNormal
-    from experiments.utils.prescribed_kls import create_two_gaussians_kl
-    from src.waypoints.piecewise_sb import PiecewiseSBVfm1D
-
-    DIM = 2
-    NSAMPLES_TRAIN = 10000
-    NSAMPLES_TEST = 10
-    KL_DIVERGENCE = 5.0
-
-    # Create Gaussian pair
-    gaussian_pair = create_two_gaussians_kl(dim=DIM, k=KL_DIVERGENCE, beta=0.5)
-    mu0, Sigma0 = gaussian_pair["mu0"], gaussian_pair["Sigma0"]
-    mu1, Sigma1 = gaussian_pair["mu1"], gaussian_pair["Sigma1"]
-
-    p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
-    p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
-
-    # Anchor distribution p* = midpoint Gaussian
-    mu_star = (mu0 + mu1) / 2.0
-    Sigma_star = (Sigma0 + Sigma1) / 2.0
-    pstar = MultivariateNormal(mu_star, covariance_matrix=Sigma_star)
-
-    # Sample
-    samples_p0 = p0.sample((NSAMPLES_TRAIN,))
-    samples_p1 = p1.sample((NSAMPLES_TRAIN,))
-    samples_pstar = pstar.sample((NSAMPLES_TRAIN,))
-    samples_test = p0.sample((NSAMPLES_TEST,))
-
-    # Instantiate and train
-    estimator = TriangularVFM(input_dim=DIM, verbose=True)
-    estimator.fit(samples_p0, samples_p1, samples_pstar)
-
-    # Predict and evaluate
-    est_ldrs = estimator.predict_ldr(samples_test)
-    true_ldrs = p0.log_prob(samples_test) - p1.log_prob(samples_test)
-    mae = torch.mean(torch.abs(est_ldrs - true_ldrs))
-
-    print(f"MAE: {mae:.6f}")
-
-    # V1 VFM toy block: vertex sweep + gamma_min sweep
-    # Each training run takes ~30–90 seconds on CPU.
-    # Full sweep (3 vertices + 3 gamma_min = 6 runs) may take 3–9 minutes.
-
-    print("\n" + "="*60)
-    print("V1 VFM Vertex Sweep (gamma_min=5e-2)")
-    print("="*60)
-
-    for vertex in [0.2, 0.5, 0.8]:
-        path = PiecewiseSBVfm1D(sigma=1.0, vertex=vertex, gamma_min=5e-2, eps=1e-3)
-        estimator = TriangularVFM(input_dim=DIM, path=path, verbose=False)
-        estimator.fit(samples_p0, samples_p1, samples_pstar)
-        est_ldrs = estimator.predict_ldr(samples_test)
-        mae = torch.mean(torch.abs(est_ldrs - true_ldrs))
-        print(f"[V1 VFM, vertex={vertex}, gamma_min=5e-2] MAE: {mae:.6f}")
-        # smoke-test bound matches CTSM toy; tighten once the empirical
-        # MAE distribution on a larger test set is known.
-        assert torch.isfinite(mae) and mae < 10.0, (
-            f"V1 VFM vertex={vertex} failed: mae={mae} >= 10.0"
-        )
-
-    print("\n" + "="*60)
-    print("V1 VFM Gamma_min Sweep (vertex=0.5)")
-    print("="*60)
-
-    best_mae = float('inf')
-    best_gamma_min = None
-
-    for gamma_min in [1e-2, 5e-2, 1e-1]:
-        path = PiecewiseSBVfm1D(sigma=1.0, vertex=0.5, gamma_min=gamma_min, eps=1e-3)
-        estimator = TriangularVFM(input_dim=DIM, path=path, verbose=False)
-        estimator.fit(samples_p0, samples_p1, samples_pstar)
-        est_ldrs = estimator.predict_ldr(samples_test)
-        mae = torch.mean(torch.abs(est_ldrs - true_ldrs))
-        print(f"[V1 VFM, gamma_min={gamma_min}, vertex=0.5] MAE: {mae:.6f}")
-
-        if mae < best_mae:
-            best_mae = mae
-            best_gamma_min = gamma_min
-
-    print("\n" + "="*60)
-    print("[V1 VFM gamma_min sweep summary]")
-    print(f"  Best MAE: {best_mae:.6f} at gamma_min={best_gamma_min}")
-    print(f"  Recommended gamma_min: {best_gamma_min}")
-    print("="*60)

@@ -1,3 +1,5 @@
+"""Public API for density ratio estimation."""
+from src.density_ratio_estimation.base import DRE, ELDR, DensityRatioEstimator
 from src.density_ratio_estimation.bdre import BDRE
 from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tdre import TDRE
@@ -14,4 +16,20 @@ from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
 from src.density_ratio_estimation.triangular_vfm import TriangularVFM
 from src.density_ratio_estimation.triangular_vfm_2d import TriangularVFM2D
 from src.density_ratio_estimation.triangular_ctsm import TriangularCTSM
+from src.density_ratio_estimation.triangular_ctsm_2d import TriangularCTSM2D
 from src.density_ratio_estimation.tabular_plugin import TabularPluginDRE, SmoothedTabularPluginDRE
+from src.density_ratio_estimation.vfm import VFM
+
+# backward-compat alias
+SpatialVeloDenoiser = VFM
+
+__all__ = [
+    "DRE", "ELDR", "DensityRatioEstimator",
+    "BDRE", "MDRE", "TDRE", "MultiHeadTDRE",
+    "TSM", "CTSM", "TriangularTSM", "TriangularCTSM", "TriangularCTSM2D",
+    "TriangularTDRE", "MultiHeadTriangularTDRE", "TriangularMDRE",
+    "FMDRE", "FMDRE_S2", "TriangularFMDRE",
+    "VFM", "SpatialVeloDenoiser",
+    "TriangularVFM", "TriangularVFM2D",
+    "TabularPluginDRE", "SmoothedTabularPluginDRE",
+]

@@ -4,6 +4,15 @@ denoiser-based stochastic interpolant density ratio estimator.
 like spatial_velo_score but parameterizes via denoiser eta instead of score s.
 relationship: s = -eta/gamma. time score: -div(b) + b.eta/gamma
 """
+import warnings as _deprecation_warnings
+_deprecation_warnings.warn(
+    "src.density_ratio_estimation.spatial_velo_denoiser is deprecated and will be removed "
+    "in a future cycle. Migration: use src.density_ratio_estimation.vfm.VFM "
+    "(the simultaneous-training variant in this file is deprecated).",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from typing import Optional, Literal
 
 import numpy as np

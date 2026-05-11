@@ -16,12 +16,9 @@ class MultiHeadTriangularTDRE(DensityRatioEstimator):
     def __init__(
         self,
         classifier: MultiHeadBinaryClassifier,
-        waypoint_builder: TriangularWaypointBuilder1D = None,
+        waypoint_builder: TriangularWaypointBuilder1D | None = None,
         num_waypoints: int = 5,
         device: str = "cuda",
-        midpoint_oversample: int = 0,
-        gamma_power: float = 1.0,
-        vertex: float = 0.5,
     ) -> None:
         """
         Initialize MultiHeadTriangularTDRE.
@@ -31,16 +28,10 @@ class MultiHeadTriangularTDRE(DensityRatioEstimator):
             waypoint_builder: triangular waypoint builder (default: None, creates default)
             num_waypoints: number of waypoints in triangular path (default: 5)
             device: device to run classifier on (default: "cuda")
-            midpoint_oversample: oversample factor for midpoint sampling (default: 0)
-            gamma_power: power parameter for waypoint scaling (default: 1.0)
-            vertex: vertex coordinate for triangular waypoint builder (default: 0.5)
         """
         self.device = device
         self.num_waypoints = num_waypoints
         self.classifier = classifier.to(self.device)
-        self.midpoint_oversample = midpoint_oversample
-        self.gamma_power = gamma_power
-        self.vertex = vertex
 
         # validate head count
         if self.classifier.num_heads != num_waypoints - 1:
@@ -48,12 +39,12 @@ class MultiHeadTriangularTDRE(DensityRatioEstimator):
                 "MultiHeadBinaryClassifier must have num_heads == num_waypoints - 1"
             )
 
-        # initialize waypoint builder
+        # initialize waypoint builder with default if None
         if waypoint_builder is None:
             self.waypoint_builder = TriangularWaypointBuilder1D(
-                midpoint_oversample=midpoint_oversample,
-                gamma_power=gamma_power,
-                vertex=vertex,
+                midpoint_oversample=0,
+                gamma_power=1.0,
+                vertex=0.5,
             )
         else:
             self.waypoint_builder = waypoint_builder
@@ -115,10 +106,3 @@ class MultiHeadTriangularTDRE(DensityRatioEstimator):
 
         return ldr
 
-
-if __name__ == "__main__":
-    import sys
-
-    print("Note: MultiHeadTriangularTDRE requires MultiHeadBinaryClassifier.")
-    print("This module cannot be tested standalone until classifier is available.")
-    sys.exit(0)

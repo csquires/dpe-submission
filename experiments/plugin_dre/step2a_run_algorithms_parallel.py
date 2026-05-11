@@ -39,6 +39,7 @@ from src.density_ratio_estimation.mdre import MDRE
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 config = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
@@ -96,11 +97,11 @@ triangular_mdre_classifier = make_multiclass_classifier(
     input_dim=DATA_DIM,
     num_classes=triangular_mdre_waypoints,
 )
+builder = TriangularWaypointBuilder1D(midpoint_oversample=7, gamma_power=3.0)
 triangular_mdre = TriangularMDRE(
     triangular_mdre_classifier,
     device=DEVICE,
-    midpoint_oversample=7,
-    gamma_power=3.0,
+    waypoint_builder=builder,
 )
 
 # List of all algorithms to run

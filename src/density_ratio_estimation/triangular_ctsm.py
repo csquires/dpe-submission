@@ -3,13 +3,15 @@ TriangularCTSM: Continuous-time score matching for triangular density ratio esti
 
 V2 (barycentric continuous path via three anchor distributions).
 """
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
-from src.density_ratio_estimation._ema import EMA, maybe_clip_grad, sample_time_and_iw
+from src.density_ratio_estimation._ema import EMA, sample_time_and_iw
+from src.density_ratio_estimation._trainer import train_score_flow
+from src.density_ratio_estimation._losses import closed_form_sb_loss
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 from src.waypoints.path_1d import CtsmPath1D
 from src.waypoints.triangular_continuous import BarycentricCtsm1D
@@ -134,71 +136,48 @@ class TriangularCTSM(DensityRatioEstimator):
             samples_p1: Samples from p1, shape [N1, D].
             samples_pstar: Samples from p* (anchor distribution), shape [Nstar, D].
 
-        Training loop:
-        - Randomly sample from each distribution each epoch.
-        - Generate tau uniformly in [eps, 1-eps].
-        - Call path.sample_and_target(x0, x1, xstar, tau, epsilon) to obtain (x_tau, target, lambda_t).
-        - Compute MSE loss: (target - lambda_t * pred)^2.
-        - Update model via gradient descent.
+        Procedure:
+          1. Initialize model and optimizer via init_model().
+          2. Delegate training to train_score_flow with:
+             - model, samples, loss_fn=closed_form_sb_loss
+             - loss_kwargs: {"sigma": 1.0, "path": self.path}
+             - time_sampler: conditional on self.path.sample_tau vs time_dist
+          3. Set model.eval() at completion.
+
+        Notes:
+          - V1 path (PiecewiseSBCtsm1D) with sample_tau method: closed_form_sb_loss
+            will dynamically override (tau, iw) inside the loss.
+          - V2 path (BarycentricCtsm1D) without sample_tau: trainer-provided time_sampler
+            is used (respects self.time_dist kwarg).
+          - EMA update is handled by train_score_flow if self.ema is not None.
+          - Gradient clipping is applied via trainer if grad_clip_norm > 0.
         """
         self.init_model()
-        self.model.train()
 
-        # move samples to device and cast to float
-        samples_p0 = samples_p0.to(self.device).float()
-        samples_p1 = samples_p1.to(self.device).float()
-        samples_pstar = samples_pstar.to(self.device).float()
-
-        # sample counts
-        n0 = samples_p0.shape[0]
-        n1 = samples_p1.shape[0]
-        n_star = samples_pstar.shape[0]
-
-        # training loop
-        for _ in range(self.n_epochs):
-            # sample indices
-            idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
-            idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
-            idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
-
-            # extract minibatches
-            x0 = samples_p0[idx0]  # [B, D]
-            x1 = samples_p1[idx1]  # [B, D]
-            xstar = samples_pstar[idx_star]  # [B, D]
-
-            # sample tau; if the path has its own sampler (e.g. V1 with
-            # inner_eps avoiding the vertex band), use it. otherwise fall
-            # back to time_dist knob (which may be uniform or Beta).
+        # time sampler: respects path.sample_tau if it exists; otherwise time_dist
+        def time_sampler_fn(batch_size: int, eps: float, device) -> tuple[torch.Tensor, torch.Tensor]:
+            """Sample (tau, iw) respecting path override or falling back to time_dist."""
             sampler = getattr(self.path, "sample_tau", None)
             if callable(sampler):
-                tau = sampler(self.batch_size, self.eps, self.device)  # [B, 1]
-                iw = torch.ones(self.batch_size, 1, device=self.device)  # [B, 1]
+                return sampler(batch_size, eps, device), torch.ones(batch_size, 1, device=device)
             else:
-                tau, iw = sample_time_and_iw(self.time_dist, self.batch_size, self.eps, self.device)  # [B, 1], [B, 1]
+                return sample_time_and_iw(self.time_dist, batch_size, eps, device)
 
-            # sample noise
-            epsilon = torch.randn_like(x0)  # [B, D]
-
-            # get path samples and targets (all detached)
-            x_tau, target, lambda_t = self.path.sample_and_target(x0, x1, xstar, tau, epsilon)
-            # x_tau: [B, D]
-            # target: [B, 1]
-            # lambda_t: [B, 1]
-
-            # forward pass
-            pred = self.model(x_tau, tau)  # [B, 1]
-
-            # MSE loss with importance weighting
-            err = target - lambda_t * pred  # [B, 1]
-            loss = torch.mean(iw * (err ** 2))
-
-            # backward pass
-            self.optimizer.zero_grad()
-            loss.backward()
-            maybe_clip_grad(self.model.parameters(), self.grad_clip_norm)
-            self.optimizer.step()
-            if self.ema is not None:
-                self.ema.update(self.model)
+        train_score_flow(
+            model=self.model,
+            samples_p0=samples_p0,
+            samples_p1=samples_p1,
+            samples_pstar=samples_pstar,
+            loss_fn=closed_form_sb_loss,
+            optim=self.optimizer,
+            n_steps=self.n_epochs,
+            batch_size=self.batch_size,
+            time_sampler=time_sampler_fn,
+            ema=self.ema,
+            grad_clip_norm=self.grad_clip_norm,
+            eps=self.eps,
+            loss_kwargs={"sigma": 1.0, "path": self.path},
+        )
 
         self.model.eval()
 
@@ -243,77 +222,3 @@ class TriangularCTSM(DensityRatioEstimator):
         finally:
             if self.ema is not None:
                 self.ema.restore(self.model)
-
-
-if __name__ == "__main__":
-    from torch.distributions import MultivariateNormal
-
-    from experiments.utils.prescribed_kls import create_two_gaussians_kl
-
-    DIM = 2
-    NSAMPLES_TRAIN = 10000
-    NSAMPLES_TEST = 10
-    KL_DIVERGENCE = 5.0
-
-    # create Gaussian pair with controlled KL divergence
-    gaussian_pair = create_two_gaussians_kl(
-        dim=DIM,
-        k=KL_DIVERGENCE,
-        beta=0.5,
-    )
-    mu0 = gaussian_pair["mu0"]
-    Sigma0 = gaussian_pair["Sigma0"]
-    mu1 = gaussian_pair["mu1"]
-    Sigma1 = gaussian_pair["Sigma1"]
-
-    # instantiate p0 and p1
-    p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
-    p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
-
-    # instantiate p* (anchor): midpoint in mean and covariance
-    mu_star = (mu0 + mu1) / 2.0
-    Sigma_star = (Sigma0 + Sigma1) / 2.0
-    pstar = MultivariateNormal(mu_star, covariance_matrix=Sigma_star)
-
-    # sample from all three distributions
-    samples_p0 = p0.sample((NSAMPLES_TRAIN,))
-    samples_p1 = p1.sample((NSAMPLES_TRAIN,))
-    samples_pstar = pstar.sample((NSAMPLES_TRAIN,))
-    samples_test = p0.sample((NSAMPLES_TEST,))
-
-    # instantiate and train estimator
-    estimator = TriangularCTSM(input_dim=DIM)
-    estimator.fit(samples_p0, samples_p1, samples_pstar)
-
-    # predict and evaluate
-    est_ldrs = estimator.predict_ldr(samples_test)
-    true_ldrs = p0.log_prob(samples_test) - p1.log_prob(samples_test)
-    mae = torch.mean(torch.abs(est_ldrs - true_ldrs))
-
-    print(f"MAE: {mae}")
-
-    # V1 CTSM: piecewise-SB path, vertex sweep over {0.2, 0.5, 0.8}
-    for vertex in [0.2, 0.5, 0.8]:
-        # construct V1 path with current vertex
-        path_v1 = PiecewiseSBCtsm1D(sigma=1.0, vertex=vertex, eps=1e-3)
-
-        # construct estimator with V1 path
-        estimator_v1 = TriangularCTSM(input_dim=DIM, path=path_v1)
-
-        # fit on training samples (reuse from V2 block)
-        estimator_v1.fit(samples_p0, samples_p1, samples_pstar)
-
-        # predict on test samples
-        est_ldrs_v1 = estimator_v1.predict_ldr(samples_test)
-
-        # compute MAE against true log density ratios (reuse from V2 block)
-        mae_v1 = torch.mean(torch.abs(est_ldrs_v1 - true_ldrs))
-
-        # print result
-        print(f"[V1 CTSM, vertex={vertex}] MAE: {mae_v1}")
-
-        # smoke-test bound: catch "totally broken" without policing toy noise
-        # (NSAMPLES_TEST=10 yields high MAE variance; V2 itself reports ~3.3 here)
-        assert torch.isfinite(mae_v1) and mae_v1 < 10.0, (
-            f"V1 CTSM vertex={vertex} regression: MAE {mae_v1} >= 10.0"
-        )

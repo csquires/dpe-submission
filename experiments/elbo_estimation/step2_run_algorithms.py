@@ -17,6 +17,7 @@ from src.density_ratio_estimation import BDRE, MDRE, TDRE
 from src.density_ratio_estimation.tsm import TSM
 from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 
 config = yaml.load(open('experiments/elbo_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -60,11 +61,11 @@ tsm = TSM(DATA_DIM+1, device=DEVICE)
 # instantiate triangular mdre
 triangular_mdre_waypoints = 15
 triangular_mdre_classifier = make_multiclass_classifier(name="default", input_dim=DATA_DIM+1, num_classes=triangular_mdre_waypoints)
+builder = TriangularWaypointBuilder1D(midpoint_oversample=7, gamma_power=3.0)
 triangular_mdre = TriangularMDRE(
     triangular_mdre_classifier,
     device=DEVICE,
-    midpoint_oversample=7,
-    gamma_power=3.0,
+    waypoint_builder=builder,
 )
 
 # instantiate spatial velo denoiser (VFM)

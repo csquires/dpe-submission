@@ -8,6 +8,7 @@ uniform lambda=1 (CTSM) or hard-floored gamma schedule (VFM).
 import torch
 from torch import Tensor
 from src.waypoints.path_1d import CtsmPath1D, VfmPath1D
+from src.waypoints.sb_bridge import sb_bridge_target
 
 
 class PiecewiseSBCtsm1D(CtsmPath1D):
@@ -146,9 +147,10 @@ class PiecewiseSBCtsm1D(CtsmPath1D):
         """Sample point on piecewise-SB path and return closed-form CTSM regression target.
 
         Per-leg local times: t1 = tau / vertex (leg 1), t2 = (tau - vertex) / (1 - vertex) (leg 2).
-        Per-leg Gaussian variance: sigma^2 * t_leg * (1 - t_leg) (SB variance per local time).
-        Per-leg closed-form target: canonical T^* = (dvar/dtau * (eps_sq - dim) / 2 + std * Delta . eps) / var.
-        Hard switch via mask = tau < vertex.
+        Delegates per-leg SB mathematics to sb_bridge_target helper with chain-rule scaling
+        applied to targets (1/vertex for leg1, 1/(1-vertex) for leg2) to convert from local
+        tau derivatives back to global tau derivatives. lambda_t and x_tau are NOT scaled
+        (lambda_t is variance-based, tau-parameterization invariant; x_tau is a path value).
 
         Args:
             x0: [B, D] endpoint from p0.
@@ -162,76 +164,44 @@ class PiecewiseSBCtsm1D(CtsmPath1D):
             target: [B, 1] closed-form regression target, detached.
             lambda_t: [B, 1] per-sample weight factor, detached.
         """
-        # leg 1: tau in [0, vertex]
-        t1_local = tau / self.vertex                          # [B, 1]
-        g_leg1 = t1_local * (1 - t1_local)                   # [B, 1]
-        dg_leg1_dtau = (1 - 2 * t1_local) / self.vertex       # [B, 1]
-        std_leg1 = self.sigma * torch.sqrt(g_leg1)            # [B, 1]
-        var_leg1 = self.sigma ** 2 * g_leg1                   # [B, 1]
-        dvar_leg1_dtau = self.sigma ** 2 * dg_leg1_dtau       # [B, 1]
+        # leg membership: mask = tau < vertex (boolean, [B, 1])
+        mask_leg1 = tau < self.vertex                         # [B, 1]
 
-        # drift and derivative for leg 1
-        mu_leg1 = (1 - t1_local) * x0 + t1_local * xstar      # [B, D]
-        Delta_leg1 = (xstar - x0) / self.vertex               # [B, D]
+        # compute local tau on each leg
+        local_tau1 = tau / self.vertex                        # [B, 1]
+        local_tau2 = (tau - self.vertex) / (1 - self.vertex)  # [B, 1]
 
-        # leg 2: tau in [vertex, 1]
-        t2_local = (tau - self.vertex) / (1 - self.vertex)    # [B, 1]
-        g_leg2 = t2_local * (1 - t2_local)                   # [B, 1]
-        dg_leg2_dtau = (1 - 2 * t2_local) / (1 - self.vertex) # [B, 1]
-        std_leg2 = self.sigma * torch.sqrt(g_leg2)            # [B, 1]
-        var_leg2 = self.sigma ** 2 * g_leg2                   # [B, 1]
-        dvar_leg2_dtau = self.sigma ** 2 * dg_leg2_dtau       # [B, 1]
+        # clamp local tau to [inner_eps, 1 - inner_eps] for vertex-band protection
+        local_tau1_clamped = torch.clamp(local_tau1, self.inner_eps, 1 - self.inner_eps)  # [B, 1]
+        local_tau2_clamped = torch.clamp(local_tau2, self.inner_eps, 1 - self.inner_eps)  # [B, 1]
 
-        # drift and derivative for leg 2
-        mu_leg2 = (1 - t2_local) * xstar + t2_local * x1      # [B, D]
-        Delta_leg2 = (x1 - xstar) / (1 - self.vertex)         # [B, D]
+        # delegate to sb_bridge_target for each leg
+        x_tau1, target_local1, lambda_t_local1 = sb_bridge_target(
+            x_start=x0,
+            x_end=xstar,
+            sigma=self.sigma,
+            tau=local_tau1_clamped,
+            epsilon=epsilon
+        )  # all [B, D] or [B, 1]
 
-        # hard switch: boolean mask tau < vertex (shape [B, 1] broadcasts over [B, D])
-        mask = tau < self.vertex                              # [B, 1]
+        x_tau2, target_local2, lambda_t_local2 = sb_bridge_target(
+            x_start=xstar,
+            x_end=x1,
+            sigma=self.sigma,
+            tau=local_tau2_clamped,
+            epsilon=epsilon
+        )  # all [B, D] or [B, 1]
 
-        # sample point (x_tau is NOT detached)
-        x_tau = torch.where(
-            mask,
-            mu_leg1 + std_leg1 * epsilon,
-            mu_leg2 + std_leg2 * epsilon
-        )                                                      # [B, D]
+        # apply chain-rule scaling to target only (not lambda_t or x_tau)
+        # chain rule: d/dtau = (1/vertex) * d/dt_local for leg 1
+        target_scaled1 = target_local1 * (1.0 / self.vertex)   # [B, 1]
+        # chain rule: d/dtau = (1/(1-vertex)) * d/dt_local for leg 2
+        target_scaled2 = target_local2 * (1.0 / (1 - self.vertex))  # [B, 1]
 
-        # closed-form target computation (per-leg).
-        #
-        # data-bounded normalization (mirrors plain CTSM):
-        #   target_leg = T_raw_leg / temp_leg,  lambda_t_leg = var_leg / temp_leg
-        # where temp_leg = sqrt(2 ||Delta_leg||^2 + 1e-8). per-leg Delta is
-        # constant and bounded (Delta_leg1 = (x_*-x_0)/v, Delta_leg2 =
-        # (x_1-x_*)/(1-v)), so temp_leg never vanishes. the prior version
-        # used `target = T_raw_leg / var_leg, lambda_t = 1`, which made the
-        # network chase infinite targets at the leg endpoints (tau=0, vertex,
-        # and tau=1) -- a triple-singularity that empirically collapsed
-        # the predicted std to ~0 (network learned a near-constant). bayes-
-        # optimal predictor pred = T_raw / var is unchanged at the optimum.
-        epsilon_sq = (epsilon ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
-        dim = epsilon.shape[-1]
-
-        delta_sq_leg1 = (Delta_leg1 ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
-        temp_leg1 = torch.sqrt(2 * delta_sq_leg1 + 1e-8)             # [B, 1]
-        delta_sq_leg2 = (Delta_leg2 ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
-        temp_leg2 = torch.sqrt(2 * delta_sq_leg2 + 1e-8)             # [B, 1]
-
-        delta_dot_eps_leg1 = (Delta_leg1 * epsilon).sum(dim=-1, keepdim=True)
-        target_leg1 = (
-            dvar_leg1_dtau * (epsilon_sq - dim) / 2.0
-            + std_leg1 * delta_dot_eps_leg1
-        ) / temp_leg1                                          # [B, 1]
-
-        delta_dot_eps_leg2 = (Delta_leg2 * epsilon).sum(dim=-1, keepdim=True)
-        target_leg2 = (
-            dvar_leg2_dtau * (epsilon_sq - dim) / 2.0
-            + std_leg2 * delta_dot_eps_leg2
-        ) / temp_leg2                                          # [B, 1]
-
-        target = torch.where(mask, target_leg1, target_leg2)   # [B, 1]
-        lam_leg1 = var_leg1 / temp_leg1                        # [B, 1]
-        lam_leg2 = var_leg2 / temp_leg2                        # [B, 1]
-        lambda_t = torch.where(mask, lam_leg1, lam_leg2)       # [B, 1]
+        # hard switch to select per-sample outputs (no crossfade)
+        x_tau = torch.where(mask_leg1, x_tau1, x_tau2)        # [B, D]
+        target = torch.where(mask_leg1, target_scaled1, target_scaled2)  # [B, 1]
+        lambda_t = torch.where(mask_leg1, lambda_t_local1, lambda_t_local2)  # [B, 1]
 
         return x_tau, target.detach(), lambda_t.detach()
 

@@ -1,3 +1,11 @@
+import warnings as _deprecation_warnings
+_deprecation_warnings.warn(
+    "src.density_ratio_estimation.triangular_tdre is deprecated and will be removed "
+    "in a future cycle. Migration: use src.density_ratio_estimation.mh_triangular_tdre.MultiHeadTriangularTDRE.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator

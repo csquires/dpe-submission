@@ -6,11 +6,13 @@ flow matching, then integrates a ratio ode during inference to estimate log dens
 """
 
 from typing import Optional
+import warnings
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation._losses import flow_matching_loss
+from src.density_ratio_estimation._trainer import train_score_flow
 from src.models.flow.cond_vel_score_mlp import CondVelScoreMLP
-from src.models.flow.train_conditional import train_conditional_flow
 from src.models.flow.ratio_ode import ratio_ode
 
 
@@ -77,6 +79,15 @@ class FMDRE(DensityRatioEstimator):
         self.log_every = log_every
         self.n_hidden_layers = n_hidden_layers
 
+        if verbose:
+            warnings.warn(
+                "verbose=True is deprecated in FMDRE; the new train_score_flow trainer "
+                "does not support per-epoch logging. To monitor training, inspect the "
+                "model's output directly or add a custom callback.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -94,31 +105,48 @@ class FMDRE(DensityRatioEstimator):
         procedure:
           1. call init_model() to instantiate the model
           2. convert inputs to float32
-          3. call train_conditional_flow with hyperparameters
-          4. print completion message if verbose
-          5. set model to eval mode
+          3. create adam optimizer with self.lr
+          4. define time_sampler lambda that samples tau uniformly in [eps, 1-eps]
+          5. call train_score_flow with flow_matching_loss and hyperparameters
+          6. set model to eval mode
+
+        args:
+            samples_p0: [N0, D] samples from source distribution
+            samples_p1: [N1, D] samples from target distribution
+
+        returns:
+            None
         """
         self.init_model()
 
         samples_p0 = samples_p0.float()
         samples_p1 = samples_p1.float()
 
-        self.model = train_conditional_flow(
-            self.model,
-            samples_p0,
-            samples_p1,
-            n_epochs=self.n_epochs,
-            batch_size=self.batch_size,
-            lr=self.lr,
-            score_weight=self.score_weight,
-            eps=self.eps,
-            device=str(self.device),
-            verbose=self.verbose,
-            log_every=self.log_every,
-        )
+        optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        if self.verbose:
-            print("[FMDRE] Training complete")
+        def time_sampler(B, eps, dev):
+            """sample tau uniformly in [eps, 1-eps] with unit importance weights."""
+            tau = torch.rand(B, 1, device=dev) * (1.0 - 2 * eps) + eps
+            iw = torch.ones(B, 1, device=dev)
+            return tau, iw
+
+        train_score_flow(
+            model=self.model,
+            samples_p0=samples_p0,
+            samples_p1=samples_p1,
+            samples_pstar=None,
+            loss_fn=flow_matching_loss,
+            optim=optim,
+            n_steps=self.n_epochs,
+            batch_size=self.batch_size,
+            time_sampler=time_sampler,
+            eps=self.eps,
+            loss_kwargs={
+                "score_weight": self.score_weight,
+                "p_uncond": 0.0,
+                "sentinel_cond": -1.0,
+            },
+        )
 
         self.model.eval()
 
@@ -155,45 +183,3 @@ class FMDRE(DensityRatioEstimator):
         )
 
         return ldr.detach().cpu()
-
-
-if __name__ == '__main__':
-    from torch.distributions import MultivariateNormal
-    from experiments.utils.prescribed_kls import create_two_gaussians_kl
-
-    DIM = 2
-    NSAMPLES_TRAIN = 1000
-    NSAMPLES_TEST = 1000
-    KL_DIVERGENCE = 5
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # === CREATE SYNTHETIC DATA ===
-    gaussian_pair = create_two_gaussians_kl(DIM, KL_DIVERGENCE, beta=0.5)
-    mu0, Sigma0 = gaussian_pair['mu0'].to(DEVICE), gaussian_pair['Sigma0'].to(DEVICE)
-    mu1, Sigma1 = gaussian_pair['mu1'].to(DEVICE), gaussian_pair['Sigma1'].to(DEVICE)
-    p0 = MultivariateNormal(mu0, covariance_matrix=Sigma0)
-    p1 = MultivariateNormal(mu1, covariance_matrix=Sigma1)
-
-    samples_p0 = p0.sample((NSAMPLES_TRAIN,))
-    samples_p1 = p1.sample((NSAMPLES_TRAIN,))
-    samples_test = p0.sample((NSAMPLES_TEST,))
-
-    # === TRUE LDR ===
-    true_ldrs = p0.log_prob(samples_test) - p1.log_prob(samples_test)
-    print(f"True LDR range: [{true_ldrs.min().item():.4f}, {true_ldrs.max().item():.4f}]")
-    print(f"True LDR mean: {true_ldrs.mean().item():.4f}")
-    print()
-
-    # === FMDRE TRAINING AND EVALUATION ===
-    print("=" * 50)
-    print("FMDRE (Flow Matching Density Ratio Estimator)")
-    print("=" * 50)
-    estimator = FMDRE(DIM, verbose=True)
-    estimator.fit(samples_p0.to(DEVICE), samples_p1.to(DEVICE))
-
-    est_ldrs = estimator.predict_ldr(samples_test.to(DEVICE))
-    true_ldrs_cpu = true_ldrs.to(DEVICE)
-    mae = torch.mean(torch.abs(est_ldrs.cpu() - true_ldrs_cpu.cpu()))
-    print(f"FMDRE MAE: {mae.item():.4f}")
-    print(f"FMDRE LDR range: [{est_ldrs.min().item():.4f}, {est_ldrs.max().item():.4f}]")
-    print()
