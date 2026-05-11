@@ -6,10 +6,14 @@ log(p0/p1) by integrating -score along a 1D curve in the (t_1, t_2) square.
 from typing import Optional
 
 import torch
-import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
-from src.density_ratio_estimation._ema import EMA, maybe_clip_grad, sample_time_and_iw
+from src.density_ratio_estimation._cfgs import (
+    OptimCfg, SchedCfg, EmaCfg, TimeCfg,
+    make_optim, make_sched, make_ema, make_time_sampler,
+)
+from src.density_ratio_estimation._ema import maybe_clip_grad
+from src.density_ratio_estimation._weighting import resolve_outer_lambda
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
 from src.waypoints.curve_2d import Curve2D
 from src.waypoints.path_2d import CtsmPath2D
@@ -19,23 +23,10 @@ from src.waypoints.triangular_continuous_2d import Stacked2DCtsm
 class TriangularCTSM2D(DensityRatioEstimator):
     """CTSM with 2D-time stacked interpolant path.
 
-    Constructor:
-      input_dim: int, feature dimension D.
-      path: optional CtsmPath2D; defaults to Stacked2DCtsm(sigma=1.0, gamma_schedule="sqrt", eps=eps).
-      curve: optional Curve2D; defaults to Curve2D(path_height=1.0).
-      hidden_dim: int, score network hidden width.
-      n_hidden_layers: int, number of hidden layers in score network backbone (default 3).
-      n_epochs: int, training epochs (one minibatch step per epoch).
-      batch_size: int, minibatch size.
-      lr: float, Adam learning rate.
-      eps: float, boundary epsilon for tau and (t_1, t_2) sampling.
-      device: optional str; auto-resolves to cuda or cpu.
-      integration_steps: int, number of tau quadrature points for predict_ldr.
-      log_every: int, log per-head losses every N epochs (0 = disabled).
-      ema_decay: optional float, exponential moving average decay (e.g. 0.999).
-      grad_clip_norm: optional float, max gradient norm for clipping.
-      time_dist: str in {"uniform", "beta_2_2", "beta_5_5"}, time sampling distribution.
-      activation: str in {"elu", "gelu", "silu"}, score network activation.
+    Trains a 2-vector score network on closed-form Stacked2DCtsm target via
+    inline bespoke training loop (not train_loop). Constructor surface migrated
+    to cfg objects; per-step loss plumbed with importance weighting and
+    reweight outer lambda.
     """
 
     def __init__(
@@ -47,24 +38,40 @@ class TriangularCTSM2D(DensityRatioEstimator):
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
-        lr: float = 1e-3,
-        eps: float = 1e-3,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: TimeCfg = TimeCfg(),
         device: Optional[str] = None,
         integration_steps: int = 200,
-        log_every: int = 100,
-        ema_decay: Optional[float] = None,
-        grad_clip_norm: Optional[float] = None,
-        time_dist: str = "uniform",
         activation: str = "elu",
+        reweight: bool = False,
     ) -> None:
+        """Construct TriangularCTSM2D with cfg-based optimization surface.
+
+        Args:
+            input_dim: dimensionality of data.
+            path: optional CtsmPath2D; defaults to Stacked2DCtsm(sigma=1.0, gamma_schedule="sqrt", eps=time.eps).
+            curve: optional Curve2D; defaults to Curve2D(path_height=1.0).
+            hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training shape.
+            optim: required OptimCfg (optimizer config with lr, grad_clip_norm, etc.).
+            sched: SchedCfg for learning rate schedule (default SchedCfg()).
+            ema: EmaCfg for exponential moving average (default EmaCfg()).
+            time: TimeCfg for time sampling and eps (default TimeCfg()).
+            device: torch device (defaults to cuda if available, else cpu).
+            integration_steps: number of tau quadrature points for predict_ldr.
+            activation: score network activation in {'elu', 'gelu', 'silu'}.
+            reweight: whether to apply outer path-variance weight to loss.
+
+        Raises:
+            ValueError: if activation invalid.
+            ValueError: if path provides sample_tau and time.dist != 'uniform'.
+            ValueError: if curve.peak_t2() exceeds path.t2_max.
+        """
         super().__init__(input_dim)
 
-        # validate and store hyperparameters
-        if time_dist not in {"uniform", "beta_2_2", "beta_5_5"}:
-            raise ValueError(
-                f"time_dist must be in {{'uniform', 'beta_2_2', 'beta_5_5'}}; "
-                f"got {time_dist!r}"
-            )
+        # validate activation
         if activation not in ("elu", "gelu", "silu"):
             raise ValueError(
                 f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
@@ -74,29 +81,42 @@ class TriangularCTSM2D(DensityRatioEstimator):
         self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.lr = lr
-        self.eps = eps
+        self.optim = optim
+        self.sched = sched
+        self.ema = ema
+        self.time = time
         self.integration_steps = integration_steps
-        self.log_every = log_every
-        self.ema_decay = ema_decay
-        self.grad_clip_norm = grad_clip_norm
-        self.time_dist = time_dist
         self.activation = activation
+        self.reweight = reweight
 
-        # device resolution
+        # resolve device
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = torch.device(device)
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
 
-        # initialize path and curve with defaults
-        self.path = path if path is not None else Stacked2DCtsm(
-            sigma=1.0, gamma_schedule="sqrt", eps=eps
-        )
+        # resolve path with time.eps default
+        if path is None:
+            self.path = Stacked2DCtsm(
+                sigma=1.0, gamma_schedule="sqrt", eps=self.time.eps
+            )
+        else:
+            self.path = path
+
+        # resolve curve
         self.curve = curve if curve is not None else Curve2D(path_height=1.0)
+
+        # path/timecfg conflict check: if path provides sample_tau, enforce time.dist == "uniform"
+        has_path_sampler = callable(getattr(self.path, "sample_tau", None))
+        if has_path_sampler and self.time.dist != "uniform":
+            raise ValueError(
+                "time.dist must be 'uniform' when path provides sample_tau "
+                f"(got dist={self.time.dist!r}; path is {type(self.path).__name__})"
+            )
 
         # coverage check: ensure inference curve peak_t2 is within training range
         peak = float(self.curve.peak_t2())
-        t2_max = float(getattr(self.path, "t2_max", 1.0 - self.eps))
+        t2_max = float(getattr(self.path, "t2_max", 1.0 - self.time.eps))
         if peak > t2_max:
             raise ValueError(
                 f"curve.peak_t2() = {peak} exceeds path.t2_max = {t2_max}; "
@@ -107,16 +127,17 @@ class TriangularCTSM2D(DensityRatioEstimator):
         # lazy initialization placeholders
         self.model = None
         self.optimizer = None
-        self.ema: Optional[EMA] = None
+        self.scheduler = None
+        self.ema_obj = None
 
     def init_model(self) -> None:
-        """Construct ScoreNetwork2D + Adam optimizer on self.device.
+        """Construct ScoreNetwork2D and build optimizer/scheduler/ema from cfgs.
 
         Procedure:
-          - create ScoreNetwork2D with stored hyperparams.
-          - move to device.
-          - create Adam optimizer.
-          - if ema_decay is set, create EMA; else set self.ema = None.
+          - create ScoreNetwork2D with stored hyperparams and move to device.
+          - create optimizer via make_optim(self.optim).
+          - create scheduler via make_sched(self.sched).
+          - create ema via make_ema(self.ema).
         """
         self.model = ScoreNetwork2D(
             self.input_dim,
@@ -124,17 +145,11 @@ class TriangularCTSM2D(DensityRatioEstimator):
             n_hidden_layers=self.n_hidden_layers,
             activation=self.activation,
         ).to(self.device)
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=self.lr,
-            betas=(0.9, 0.999),
-            eps=1e-8,
+        self.optimizer = make_optim(self.model.parameters(), self.optim)
+        self.scheduler = make_sched(
+            self.optimizer, self.n_epochs, self.optim.lr, self.sched
         )
-        self.ema = (
-            EMA(self.model, self.ema_decay)
-            if self.ema_decay is not None
-            else None
-        )
+        self.ema_obj = make_ema(self.model, self.ema)
 
     def fit(
         self,
@@ -142,21 +157,19 @@ class TriangularCTSM2D(DensityRatioEstimator):
         samples_p1: torch.Tensor,  # [N1, D]
         samples_pstar: torch.Tensor,  # [Nstar, D]
     ) -> None:
-        """Train ScoreNetwork2D on the closed-form 2-vector target from self.path.
+        """Train ScoreNetwork2D via bespoke inline loop on closed-form 2-vector target.
 
         Procedure:
           - init_model + train mode.
           - Move samples to device, cast to float.
-          - Read t2_max from self.path (defaults to 1 - eps if path lacks the attribute).
+          - Build time_sampler: if path.sample_tau exists, defer to it; else make_time_sampler(time).
           - For each of n_epochs:
               bootstrap minibatches (x0, x1, xstar) [B, D].
-              sample t1 ~ time_dist with importance weights, t2 ~ U(eps, t2_max).
-              sample noise epsilon ~ N(0, I).
-              compute closed-form 2-vector target via self.path.sample_and_target.
-              forward through model: pred = model(x, t1, t2) -> [B, 2].
-              compute mse loss with importance weighting over both heads.
-              backward; step; optionally update EMA.
-              log per-head losses every log_every epochs (if > 0).
+              sample t1, iw via time_sampler; sample t2 ~ U(eps, t2_max).
+              compute closed-form 2-vector target via path.sample_and_target.
+              forward through model; compute err = target - lambda_t * pred.
+              compose loss = (iw * outer_lambda * err^2).mean().
+              backward; clip grad; step; step scheduler; update ema.
           - eval mode.
 
         Args:
@@ -168,37 +181,44 @@ class TriangularCTSM2D(DensityRatioEstimator):
         self.model.train()
 
         # move to device and cast to float
-        samples_p0 = samples_p0.to(self.device).float()
-        samples_p1 = samples_p1.to(self.device).float()
-        samples_pstar = samples_pstar.to(self.device).float()
+        samples_p0 = samples_p0.to(self.device).float()  # [N0, D]
+        samples_p1 = samples_p1.to(self.device).float()  # [N1, D]
+        samples_pstar = samples_pstar.to(self.device).float()  # [Nstar, D]
 
         n0 = samples_p0.shape[0]
         n1 = samples_p1.shape[0]
         n_star = samples_pstar.shape[0]
 
         # restrict training t_2 range to overlap inference curve
-        t2_max = float(getattr(self.path, "t2_max", 1.0 - self.eps))
+        t2_max = float(getattr(self.path, "t2_max", 1.0 - self.time.eps))
+
+        # time sampler: if path has sample_tau, defer to it; else use timecfg-based sampler.
+        # path-conflict guard in __init__ ensures time.dist == "uniform" when sample_tau exists.
+        if callable(getattr(self.path, "sample_tau", None)):
+            def time_sampler(B, eps, device):
+                tau = self.path.sample_tau(B, eps, device)
+                return tau, torch.ones(B, 1, device=device)
+        else:
+            time_sampler = make_time_sampler(self.time)
 
         for epoch_idx in range(self.n_epochs):
             # bootstrap minibatches
-            idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
-            idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
+            idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)  # [B]
+            idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)  # [B]
             idx_star = torch.randint(
                 0, n_star, (self.batch_size,), device=self.device
-            )
+            )  # [B]
 
             x0 = samples_p0[idx0]  # [B, D]
             x1 = samples_p1[idx1]  # [B, D]
             xstar = samples_pstar[idx_star]  # [B, D]
 
             # sample t1 with importance weighting; t2 uniform in [eps, t2_max]
-            t1, iw = sample_time_and_iw(
-                self.time_dist, self.batch_size, self.eps, self.device
-            )  # [B, 1], [B, 1]
+            t1, iw = time_sampler(self.batch_size, self.time.eps, self.device)  # [B, 1], [B, 1]
             t2 = (
                 torch.rand(self.batch_size, 1, device=self.device)
-                * (t2_max - self.eps)
-                + self.eps
+                * (t2_max - self.time.eps)
+                + self.time.eps
             )  # [B, 1]
 
             # noise
@@ -207,33 +227,25 @@ class TriangularCTSM2D(DensityRatioEstimator):
             # closed-form 2-vector target from path
             x, target, lambda_t = self.path.sample_and_target(
                 x0, x1, xstar, t1, t2, epsilon
-            )
-            # x: [B, D], target: [B, 2], lambda_t: [B, 2]
+            )  # x: [B, D], target: [B, 2], lambda_t: [B, 2]
 
             # forward through model
             pred = self.model(x, t1, t2)  # [B, 2]
 
-            # mse loss with importance weighting; mean over batch and both heads
+            # mse loss with importance weighting and optional outer reweight lambda
             err = target - lambda_t * pred  # [B, 2]
-            loss = (iw * (err ** 2)).mean()  # broadcast iw [B, 1] over [B, 2]
-
-            # diagnostic: per-head losses (if logging enabled)
-            if self.log_every > 0 and (epoch_idx + 1) % self.log_every == 0:
-                with torch.no_grad():
-                    loss_h1 = (err[:, 0] ** 2).mean().item()
-                    loss_h2 = (err[:, 1] ** 2).mean().item()
-                print(
-                    f"epoch {epoch_idx + 1}: loss={loss.item():.4f} "
-                    f"(head1={loss_h1:.4f}, head2={loss_h2:.4f})"
-                )
+            outer = resolve_outer_lambda(self.reweight, t1)  # [B]
+            loss = (iw.squeeze(-1) * outer * (err ** 2).mean(dim=1)).mean()  # scalar
 
             # backward + step
             self.optimizer.zero_grad()
             loss.backward()
-            maybe_clip_grad(self.model.parameters(), self.grad_clip_norm)
+            maybe_clip_grad(self.model.parameters(), self.optim.grad_clip_norm)
             self.optimizer.step()
-            if self.ema is not None:
-                self.ema.update(self.model)
+            if self.scheduler is not None:
+                self.scheduler.step()
+            if self.ema_obj is not None:
+                self.ema_obj.update(self.model)
 
         self.model.eval()
 
@@ -243,7 +255,7 @@ class TriangularCTSM2D(DensityRatioEstimator):
         Procedure:
           1. Validate model is trained; set eval mode; move xs to device.
           2. If EMA active, swap in shadow weights.
-          3. Create uniform tau grid in [eps, 1-eps].
+          3. Create uniform tau grid in [time.eps, 1-time.eps].
           4. For each tau:
                query curve for (t1, t2, dt1, dt2).
                forward through model: s = model(xs, t1, t2) -> [n, 2].
@@ -268,16 +280,16 @@ class TriangularCTSM2D(DensityRatioEstimator):
             )
 
         self.model.eval()
-        xs = xs.to(self.device).float()
+        xs = xs.to(self.device).float()  # [n, D]
         n = xs.shape[0]
         dtype = next(self.model.parameters()).dtype
 
-        if self.ema is not None:
-            self.ema.apply_to(self.model)
+        if self.ema_obj is not None:
+            self.ema_obj.apply_to(self.model)
         try:
             ts = torch.linspace(
-                self.eps, 1.0 - self.eps, self.integration_steps, device=self.device
-            )
+                self.time.eps, 1.0 - self.time.eps, self.integration_steps, device=self.device
+            )  # [integration_steps]
             with torch.no_grad():
                 integrand_rows = []
                 for t in ts:
@@ -286,15 +298,15 @@ class TriangularCTSM2D(DensityRatioEstimator):
                     t2_v = float(self.curve.t2(tau_v))
                     dt1_v = float(self.curve.dt1(tau_v))
                     dt2_v = float(self.curve.dt2(tau_v))
-                    t1_t = torch.full((n, 1), t1_v, dtype=dtype, device=self.device)
-                    t2_t = torch.full((n, 1), t2_v, dtype=dtype, device=self.device)
+                    t1_t = torch.full((n, 1), t1_v, dtype=dtype, device=self.device)  # [n, 1]
+                    t2_t = torch.full((n, 1), t2_v, dtype=dtype, device=self.device)  # [n, 1]
                     s = self.model(xs, t1_t, t2_t)  # [n, 2]
                     dy = -(s[:, 0] * dt1_v + s[:, 1] * dt2_v)  # [n]
-                    dy = torch.nan_to_num(dy, nan=0.0, posinf=1e6, neginf=-1e6)
+                    dy = torch.nan_to_num(dy, nan=0.0, posinf=1e6, neginf=-1e6)  # [n]
                     integrand_rows.append(dy)
                 vals = torch.stack(integrand_rows)  # [integration_steps, n]
-            dt = (1.0 - 2.0 * self.eps) / (self.integration_steps - 1)
-            return torch.trapezoid(vals, dx=dt, dim=0).cpu()
+            dt = (1.0 - 2.0 * self.time.eps) / (self.integration_steps - 1)
+            return torch.trapezoid(vals, dx=dt, dim=0).cpu()  # [n]
         finally:
-            if self.ema is not None:
-                self.ema.restore(self.model)
+            if self.ema_obj is not None:
+                self.ema_obj.restore(self.model)

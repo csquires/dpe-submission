@@ -40,6 +40,7 @@ class FMDRE(DensityRatioEstimator):
         score_weight: float = 1.0,
         div_method: str = "hutch_rademacher",
         integration_steps: int = 10000,
+        reweight: bool = False,
     ) -> None:
         """construct an FMDRE estimator with cfg-based hyperparameters.
 
@@ -69,6 +70,7 @@ class FMDRE(DensityRatioEstimator):
         self.time = time
         self.score_weight = score_weight
         self.div_method = div_method
+        self.reweight = reweight
         self.integration_steps = integration_steps
 
         if device is None:
@@ -115,7 +117,7 @@ class FMDRE(DensityRatioEstimator):
             ema=ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
-            loss_kwargs={"score_weight": self.score_weight, "p_uncond": 0.0, "sentinel_cond": -1.0},
+            loss_kwargs={"score_weight": self.score_weight, "p_uncond": 0.0, "sentinel_cond": -1.0, "reweight": self.reweight},
         )
         self.model.eval()
 

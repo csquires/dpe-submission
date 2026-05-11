@@ -46,6 +46,7 @@ class TriangularFMDRE(DensityRatioEstimator):
         integration_steps: int = 10000,
         triangular_p_uncond: float = 0.0,
         layernorm: str = "off",
+        reweight: bool = False,
     ) -> None:
         """construct estimator with cfg-based optimizer, scheduler, EMA, time-sampler.
 
@@ -90,6 +91,7 @@ class TriangularFMDRE(DensityRatioEstimator):
         if layernorm not in ("off", "pre", "post"):
             raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
         self.layernorm = layernorm
+        self.reweight = reweight
 
         # device
         if device is None:
@@ -138,6 +140,7 @@ class TriangularFMDRE(DensityRatioEstimator):
             loss_kwargs={
                 "score_weight": self.score_weight,
                 "triangular_p_uncond": self.triangular_p_uncond,
+                "reweight": self.reweight,
             },
             model_module=self.model,
         )

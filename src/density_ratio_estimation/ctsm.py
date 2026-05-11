@@ -37,6 +37,7 @@ class CTSM(DensityRatioEstimator):
         sigma: float = 1.0,
         activation: str = "elu",
         integration_steps: int = 200,
+        reweight: bool = False,
     ) -> None:
         """cfg-based constructor for conditional time-score matching DRE.
 
@@ -62,6 +63,7 @@ class CTSM(DensityRatioEstimator):
         self.batch_size = batch_size
         self.sigma = sigma
         self.integration_steps = integration_steps
+        self.reweight = reweight
 
         # cfg objects
         self.optim = optim
@@ -120,7 +122,7 @@ class CTSM(DensityRatioEstimator):
             ema=self.ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
-            loss_kwargs={"sigma": self.sigma, "path": None},
+            loss_kwargs={"sigma": self.sigma, "path": None, "reweight": self.reweight},
         )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:

@@ -17,6 +17,7 @@ from src.density_ratio_estimation._cfgs import (
     make_optim, make_sched, make_ema, make_time_sampler
 )
 from src.density_ratio_estimation._trainer import train_two_phase
+from src.density_ratio_estimation._weighting import resolve_outer_lambda
 # VFM exposes inline gamma / dgamma_dt rather than a Path object, so it bypasses
 # velo_loss / denoiser_loss from `_losses` (which expect a path). fit() defines
 # inline closures with the same loss math.
@@ -49,6 +50,7 @@ class VFM(DRE):
         integration_steps: int = 10000,
         integration_type: Literal['1', '2', '3'] = '1',
         activation: str = "silu",
+        reweight: bool = False,
     ) -> None:
         super().__init__(input_dim)
         self.integration_type = integration_type
@@ -64,6 +66,7 @@ class VFM(DRE):
         self.n_t = n_t
         self.antithetic = antithetic
         self.integration_steps = integration_steps
+        self.reweight = reweight
         if div_method not in ('hutchinson', 'exact'):
             raise ValueError(f"div_method must be 'hutchinson' or 'exact'; got {div_method!r}")
         if div_noise not in ('rademacher', 'gaussian'):
@@ -153,6 +156,7 @@ class VFM(DRE):
 
         time_sampler = make_time_sampler(self.time)
         antithetic = self.antithetic
+        reweight = self.reweight
 
         def loss_b(model, batch, tau, iw):
             x0, x1 = batch["x0"], batch["x1"]
@@ -161,6 +165,8 @@ class VFM(DRE):
             dg = self.dgamma_dt(tau)
             mu = (1 - tau) * x0 + tau * x1
             delta = x1 - x0
+            # outer path_var lambda when reweight=True; composes with iw
+            outer = resolve_outer_lambda(reweight, tau)
             if antithetic:
                 b_p = model(tau, mu + g * z)
                 b_m = model(tau, mu - g * z)
@@ -168,10 +174,10 @@ class VFM(DRE):
                 v_m = delta - dg * z
                 lp = 0.5 * (b_p ** 2).sum(-1) - (v_p * b_p).sum(-1)
                 lm = 0.5 * (b_m ** 2).sum(-1) - (v_m * b_m).sum(-1)
-                return (0.5 * (lp + lm) * iw.squeeze(-1)).mean()
+                return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
             b = model(tau, mu + g * z)
             v_star = delta + dg * z
-            return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * iw.squeeze(-1)).mean()
+            return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss_b.required_keys = frozenset({"x0", "x1"})
         loss_b.requires_tau_grad = False
@@ -181,7 +187,8 @@ class VFM(DRE):
             z = torch.randn_like(x0)
             x_t = (1 - tau) * x0 + tau * x1 + self.gamma(tau) * z
             eta = model(tau, x_t)
-            return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * iw.squeeze(-1)).mean()
+            outer = resolve_outer_lambda(reweight, tau)
+            return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss_eta.required_keys = frozenset({"x0", "x1"})
         loss_eta.requires_tau_grad = False

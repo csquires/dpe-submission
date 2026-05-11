@@ -47,6 +47,7 @@ class TriangularVFM(DensityRatioEstimator):
         integration_type: Literal['1', '2', '3'] = '2',
         activation: str = "gelu",
         layernorm: str = "off",
+        reweight: bool = False,
     ) -> None:
         """two-phase triangular vfm with cfg-based optimization surface.
 
@@ -112,6 +113,7 @@ class TriangularVFM(DensityRatioEstimator):
         if layernorm not in ("off", "pre", "post"):
             raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
         self.layernorm = layernorm
+        self.reweight = reweight
 
         # resolve device
         if device is None:
@@ -235,8 +237,8 @@ class TriangularVFM(DensityRatioEstimator):
             grad_clip_norm_b=self.optim.grad_clip_norm,
             grad_clip_norm_eta=self.optim.grad_clip_norm,
             eps=self.time.eps,
-            loss_kwargs_b={"path": self.path, "antithetic": self.antithetic},
-            loss_kwargs_eta={"path": self.path},
+            loss_kwargs_b={"path": self.path, "antithetic": self.antithetic, "reweight": self.reweight},
+            loss_kwargs_eta={"path": self.path, "reweight": self.reweight},
         )
 
         self.net_b.eval()

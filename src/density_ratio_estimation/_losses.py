@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from src.waypoints.path_1d import Path1D
 
 from src.waypoints.sb_bridge import sb_target
+from src.density_ratio_estimation._weighting import resolve_lambdas, resolve_outer_lambda
 
 
 def _score_dt(
@@ -50,7 +51,10 @@ def tsm_loss(
       term3 = 2 d_tau model(x_tau, tau) \\lambda_t
       term4 = model(x_tau, tau) \\lambda_{dt}
       term5 = model(x_tau, tau)^2 \\lambda_t
-    weights default to 1; reweight=True picks lambda_t=1-tau^2, lambda_{dt}=-2 tau.
+    weights default to 1 (reweight=False -> identity_lambdas);
+    reweight=True picks path_var_lambdas (lambda_t=1-tau^2, lambda_{dt}=-2 tau).
+    delegated to `_weighting.resolve_lambdas`; mirrors the
+    `prob_path.get_time_weighting_quantities` contract from dre-prob-paths.
 
     Args:
         model: f(x [B,D], t [B,1]) -> [B,1].
@@ -68,24 +72,19 @@ def tsm_loss(
     t0 = torch.zeros((x0.shape[0], 1), device=x0.device, dtype=x0.dtype) + eps
     t1 = torch.ones((x1.shape[0], 1), device=x1.device, dtype=x1.dtype)
 
-    if reweight:
-        lam_t = (1 - tau ** 2).squeeze()
-        lam_t0 = (1 - t0.squeeze() ** 2)
-        lam_t1 = (1 - t1.squeeze() ** 2 + eps ** 2)
-        lam_dt = (-2 * tau).squeeze()
-    else:
-        lam_t = lam_t0 = lam_t1 = 1.0
-        lam_dt = 0.0
+    # lambda quadruple delegated to _weighting (dummy when reweight=False, path_var otherwise);
+    # mirrors prob_path.get_time_weighting_quantities from dre-prob-paths.
+    lam = resolve_lambdas(reweight, tau, t0, t1, eps=eps)
 
-    term1 = (2 * model(x0, t0)).squeeze() * lam_t0
-    term2 = (2 * model(x1, t1)).squeeze() * lam_t1
+    term1 = (2 * model(x0, t0)).squeeze() * lam.lam_t0
+    term2 = (2 * model(x1, t1)).squeeze() * lam.lam_t1
 
     x_tau = torch.sqrt(1 - tau ** 2) * x0 + tau * x1
     score, dscore = _score_dt(model, x_tau, tau)
 
-    term3 = (2 * dscore).squeeze() * lam_t
-    term4 = score.squeeze() * lam_dt
-    term5 = (score ** 2).squeeze() * lam_t
+    term3 = (2 * dscore).squeeze() * lam.lam_t
+    term4 = score.squeeze() * lam.lam_dt
+    term5 = (score ** 2).squeeze() * lam.lam_t
 
     # separate boundary (t0, t1) and interior (tau) terms; iw applied to interior only
     # when iw == ones(B,1), this is identical to mean(term1 - term2 + term3 + term4 + term5)
@@ -106,6 +105,7 @@ def sb_loss(
     *,
     sigma: float = 1.0,
     path: Optional["Path1D"] = None,
+    reweight: bool = False,
 ) -> torch.Tensor:
     """closed-form Schroedinger-bridge regression loss (CTSM family).
 
@@ -153,7 +153,10 @@ def sb_loss(
         x_tau, target, lam_t = path.sample_and_target(x0, x1, xstar, tau, epsilon)
 
     err = target - lam_t * model(x_tau, tau)
-    return torch.mean(iw * err ** 2)
+    # outer path_var lambda (1-tau^2) inverts per-tau objective scale when reweight=True;
+    # composes multiplicatively with iw. when reweight=False, outer == 1 (no-op).
+    outer = resolve_outer_lambda(reweight, tau).unsqueeze(-1)
+    return torch.mean(iw * outer * err ** 2)
 
 
 sb_loss.required_keys = frozenset({"x0", "x1"})
@@ -168,6 +171,7 @@ def velo_loss(
     *,
     path,
     antithetic: bool = False,
+    reweight: bool = False,
 ) -> torch.Tensor:
     """VFM velocity (b-phase) loss on a stochastic interpolant.
 
@@ -193,20 +197,22 @@ def velo_loss(
     z = torch.randn_like(x0)
     v_star = (x1 - x0) + dg * z
 
+    # outer path_var lambda (1-tau^2) inverts per-tau variance when reweight=True;
+    # composes multiplicatively with iw. when reweight=False, outer == 1 (no-op).
+    outer = resolve_outer_lambda(reweight, tau)
+
     if not antithetic:
         b = model(tau, mu + g * z)
-        # per-sample loss with iw applied; when iw == ones(B,1) is identical to original mean
         loss_per_sample = 0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)
-        return (loss_per_sample * iw.squeeze(-1)).mean()
+        return (loss_per_sample * outer * iw.squeeze(-1)).mean()
 
     b_p = model(tau, mu + g * z)
     b_m = model(tau, mu - g * z)
     v_star_m = (x1 - x0) - dg * z
-    # compute loss per pair and apply iw
     lp = 0.25 * (b_p ** 2).sum(-1) - 0.5 * (v_star * b_p).sum(-1)
     lm = 0.25 * (b_m ** 2).sum(-1) - 0.5 * (v_star_m * b_m).sum(-1)
     loss_per_pair = 0.5 * (lp + lm)
-    return (loss_per_pair * iw.squeeze(-1)).mean()
+    return (loss_per_pair * outer * iw.squeeze(-1)).mean()
 
 
 velo_loss.required_keys = frozenset({"x0", "x1"})
@@ -220,6 +226,7 @@ def denoiser_loss(
     iw: torch.Tensor,
     *,
     path,
+    reweight: bool = False,
 ) -> torch.Tensor:
     """VFM denoiser (eta-phase) loss.
 
@@ -239,9 +246,10 @@ def denoiser_loss(
     z = torch.randn_like(x0)
     x_t = (1 - tau) * x0 + tau * x1 + path.gamma(tau) * z
     eta = model(tau, x_t)
-    # per-sample loss with iw applied; when iw == ones(B,1) is identical to original mean
+    # outer path_var lambda when reweight=True; composes with iw.
+    outer = resolve_outer_lambda(reweight, tau)
     loss_per_sample = 0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)
-    return (loss_per_sample * iw.squeeze(-1)).mean()
+    return (loss_per_sample * outer * iw.squeeze(-1)).mean()
 
 
 denoiser_loss.required_keys = frozenset({"x0", "x1"})
@@ -257,6 +265,7 @@ def fm_loss(
     score_weight: float = 1.0,
     p_uncond: float = 0.0,
     sentinel_cond: float = -1.0,
+    reweight: bool = False,
 ) -> torch.Tensor:
     """conditional flow-matching loss with optional CFG dropout (2 classes).
 
@@ -297,10 +306,12 @@ def fm_loss(
     s_star = -z / (1 - tau)
 
     v, s = model(tau, x_t, c)
-    # manual mse to apply per-sample iw; when iw == ones(B,1) is identical to F.mse_loss
+    # outer path_var lambda (1-tau^2) per-tau when reweight=True; composes with tiled iw.
+    # tau here is already tiled to [2B, 1]; resolve_outer_lambda yields [2B].
+    outer = resolve_outer_lambda(reweight, tau)
     v_err = ((v - v_star) ** 2).mean(dim=-1)  # [2B]
     s_err = ((s - s_star) ** 2).mean(dim=-1)  # [2B]
-    return (v_err * iw_tiled).mean() + score_weight * (s_err * iw_tiled).mean()
+    return (v_err * outer * iw_tiled).mean() + score_weight * (s_err * outer * iw_tiled).mean()
 
 
 fm_loss.required_keys = frozenset({"x0", "x1"})
@@ -315,6 +326,7 @@ def tri_fm_loss(
     *,
     score_weight: float = 1.0,
     triangular_p_uncond: float = 0.0,
+    reweight: bool = False,
 ) -> torch.Tensor:
     """3-class flow-matching loss with masked score term.
 
@@ -358,12 +370,13 @@ def tri_fm_loss(
 
     v, s = model.forward_from_onehot(tau, x_t, y_oh)
 
-    # velocity term: manual mse with iw; when iw == ones(B,1) is identical to F.mse_loss
+    # outer path_var lambda when reweight=True; tau is already tiled to [3B, 1] -> outer [3B].
+    outer = resolve_outer_lambda(reweight, tau)
     v_err = ((v - v_star) ** 2).mean(dim=-1)  # [3B]
-    loss_v = (v_err * iw_tiled).mean()
-    # score term: apply iw before masking; normalize by n_active
+    loss_v = (v_err * outer * iw_tiled).mean()
+    # score term: apply outer*iw before masking; normalize by n_active.
     s_mask = (y_idx != 2).to(x_data.dtype).unsqueeze(-1)
-    diff = ((s - s_star) ** 2) * s_mask * iw_tiled.unsqueeze(-1)
+    diff = ((s - s_star) ** 2) * s_mask * (outer * iw_tiled).unsqueeze(-1)
     n_active = s_mask.sum() * x_data.shape[1]
     loss_s = diff.sum() / n_active.clamp(min=1.0)
 
@@ -395,7 +408,8 @@ def tri_tsm_loss(
     Args:
         model: f(x [B,D], t [B,1], t' [B,1]) -> [B,1].
         batch: requires "x0", "x1", "xstar".
-        tau, iw: [B,1]; iw unused.
+        tau: [B,1] sampled time.
+        iw: [B,1] importance weight, applied to interior (sampled-tau) terms only.
         reweight, eps, vertex, peak_max: as documented.
 
     Returns: scalar loss.
@@ -414,17 +428,11 @@ def tri_tsm_loss(
     tp0 = torch.zeros_like(tau) + eps
     tp1 = torch.ones_like(tau)
 
-    if reweight:
-        lam_t = (1 - t ** 2).squeeze(-1)
-        lam_t0 = (1 - t0.squeeze(-1) ** 2)
-        lam_t1 = (1 - t1.squeeze(-1) ** 2 + eps ** 2)
-        lam_dt = (-2 * t).squeeze(-1)
-    else:
-        lam_t = lam_t0 = lam_t1 = 1.0
-        lam_dt = 0.0
+    # lambdas via _weighting helper; uses interior t = clamp(tau, eps, 1)
+    lam = resolve_lambdas(reweight, t, t0, t1, eps=eps)
 
-    term1 = 2 * model(x0, t0, tp0).squeeze(-1) * lam_t0
-    term2 = 2 * model(x1, t1, tp1).squeeze(-1) * lam_t1
+    term1 = 2 * model(x0, t0, tp0).squeeze(-1) * lam.lam_t0
+    term2 = 2 * model(x1, t1, tp1).squeeze(-1) * lam.lam_t1
 
     sqrt_t = torch.sqrt(torch.clamp(1.0 - t ** 2, min=eps))
     sqrt_tp = torch.sqrt(torch.clamp(1.0 - t_prime ** 2, min=eps))
@@ -432,11 +440,15 @@ def tri_tsm_loss(
     x_tau = sqrt_tp * x_t + t_prime * xstar
 
     score, dscore = _score_dt(model, x_tau, tau, t_prime)
-    term3 = (2 * dscore).squeeze(-1) * lam_t
-    term4 = score.squeeze(-1) * lam_dt
-    term5 = (score ** 2).squeeze(-1) * lam_t
+    term3 = (2 * dscore).squeeze(-1) * lam.lam_t
+    term4 = score.squeeze(-1) * lam.lam_dt
+    term5 = (score ** 2).squeeze(-1) * lam.lam_t
 
-    return (term1 - term2 + term3 + term4 + term5).mean()
+    # boundary (term1, term2) at fixed t={eps,1}; interior (terms 3-5) at sampled tau.
+    # iw applies only to interior; when iw == ones(B,1) this matches the un-split form.
+    boundary = (term1 - term2).mean()
+    interior = (iw.squeeze(-1) * (term3 + term4 + term5)).mean()
+    return boundary + interior
 
 
 tri_tsm_loss.required_keys = frozenset({"x0", "x1", "xstar"})
