@@ -7,12 +7,13 @@ estimators that fit a velocity network then a denoiser.
 also hosts `maybe_clip_grad`, a small gradient-clipping helper used by the inner
 loop and by estimators with bespoke training bodies (TriangularCTSM2D, TriangularVFM2D).
 """
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 import torch
 from torch import nn, optim
 
 from ._ema import EMA
+from ...common._report import _make_report
 
 
 def _noop() -> None:
@@ -96,6 +97,9 @@ def train_loop(
     eps: float = 1e-3,
     loss_kwargs: dict | None = None,
     model_module: nn.Module | None = None,
+    step_cb: Callable[[int, float], None] | None = None,
+    eval_fn: Callable[[Any], torch.Tensor] | None = None,
+    step_cb_interval: int = 50,
 ) -> None:
     """train one network for `n_steps` mini-batch steps.
 
@@ -107,14 +111,17 @@ def train_loop(
     procedure:
       1. validate samples + loss_fn contract.
       2. cast samples to float on model device.
-      3. pre-bind hot-path callables (build_batch, do_clip, do_sched, do_ema) so
-         the inner loop performs no `is not None` checks.
+      3. pre-bind hot-path callables (build_batch, do_clip, do_sched, do_ema, do_report)
+         so the inner loop performs no `is not None` checks.
       4. model.train(); for n_steps:
            - build_batch() draws (x0, x1[, xstar]).
            - draw (tau, iw) from time_sampler.
            - loss = loss_fn(model, batch, tau, iw, **loss_kwargs); .backward();
-             do_clip(); optim.step(); do_sched(); do_ema().
-      5. model.eval().
+             do_clip(); optim.step(); do_sched(); do_ema(); do_report().
+      5. on every step_cb_interval steps (starting from step_cb_interval, not step 0),
+         invoke do_report() to sample eval_fn, compute score, and forward to step_cb.
+         TrialPruned and any other exception propagate uncaught.
+      6. model.eval().
 
     Args:
         model: trainable callable; if not an nn.Module, pass `model_module`.
@@ -125,6 +132,10 @@ def train_loop(
         scheduler, ema, grad_clip_norm, loss_kwargs: optional auxiliaries.
         eps: tau-domain margin forwarded to time_sampler.
         model_module: nn.Module backing `model` (required when model is a closure).
+        step_cb, eval_fn, step_cb_interval: enable periodic held-out evaluation
+        for Optuna trial pruning. step_cb=None (default) disables instrumentation;
+        method's training loop performs zero-overhead no-op call per step.
+        when step_cb is not None, eval_fn must also be provided.
     """
     if samples_p0.shape[1] != samples_p1.shape[1]:
         raise ValueError(
@@ -182,6 +193,7 @@ def train_loop(
     do_clip = _make_clip(model_module.parameters(), grad_clip_norm)
     do_sched = scheduler.step if scheduler is not None else _noop
     do_ema = (lambda: ema.update(model_module)) if ema is not None else _noop
+    do_report = _make_report(step_cb, step_cb_interval, eval_fn, model, model_module)
 
     for _ in range(n_steps):
         batch = build_batch()
@@ -195,6 +207,7 @@ def train_loop(
         optim.step()
         do_sched()
         do_ema()
+        do_report()
 
     if isinstance(model, nn.Module):
         model.eval()
