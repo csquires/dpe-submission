@@ -3,13 +3,26 @@
 `train_loop` drives a single network through (sample, time, loss, step) iterations.
 `train_two_phase` orchestrates two sequential `train_loop` calls for VFM-family
 estimators that fit a velocity network then a denoiser.
+
+also hosts `maybe_clip_grad`, a small gradient-clipping helper used by the inner
+loop and by estimators with bespoke training bodies (TriangularCTSM2D, TriangularVFM2D).
 """
-from typing import Callable
+from typing import Callable, Iterable
 
 import torch
 from torch import nn, optim
 
-from ._ema import EMA, maybe_clip_grad
+from ._ema import EMA
+
+
+def maybe_clip_grad(
+    params: Iterable[torch.nn.Parameter],
+    max_norm: float | None,
+) -> None:
+    """clip gradient norm in-place if `max_norm` is set; no-op otherwise."""
+    if max_norm is None or max_norm <= 0:
+        return
+    torch.nn.utils.clip_grad_norm_(list(params), max_norm=max_norm)
 
 
 def train_loop(

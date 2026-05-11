@@ -13,7 +13,7 @@ from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema,
 )
-from src.density_ratio_estimation._ema import maybe_clip_grad
+from src.density_ratio_estimation._trainer import maybe_clip_grad
 from src.density_ratio_estimation._weighting import resolve_outer_lambda
 from src.models.flow.div_estimators import exact_div, hutch_div
 from src.waypoints.path_2d import VfmPath2D
@@ -79,7 +79,6 @@ class TriangularVFM2D(DensityRatioEstimator):
 
         raises:
             valueerror: if time.eps < 1e-3 (boundary regularity requirement).
-            valueerror: if path provides sample_tau and time.dist != 'uniform'.
             valueerror: if div_method, div_noise, activation invalid.
         """
         # validate time.eps >= 1e-3
@@ -136,14 +135,8 @@ class TriangularVFM2D(DensityRatioEstimator):
         else:
             self.path = path
 
-        # path/timecfg conflict check:
-        # if path provides sample_tau, enforce time.dist == "uniform"
-        has_path_sampler = callable(getattr(self.path, "sample_tau", None))
-        if has_path_sampler and self.time.dist != "uniform":
-            raise ValueError(
-                "timecfg.dist must be 'uniform' when path provides sample_tau "
-                f"(got dist={self.time.dist!r}; path is {type(self.path).__name__})"
-            )
+        # no path-conflict guard: timecfg holds an explicit timesampler instance.
+        # users who want path-driven sampling pass timecfg(sampler=pathsampler(path)).
 
         # resolve curve default
         self.curve = curve if curve is not None else Curve2D(path_height=1.0)

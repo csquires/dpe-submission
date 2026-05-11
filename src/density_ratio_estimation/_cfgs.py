@@ -1,12 +1,13 @@
 """configuration dataclasses and factory functions for optimizer, scheduler, ema, and time-sampling hyperparameters."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import torch
 from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR
 from torch import Tensor
 
-from ._ema import EMA, sample_time_and_iw
+from ._ema import EMA
+from ._time_samplers import TimeSampler, UniformSampler, BetaSampler, PathSampler, sampler_from_dist
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -58,17 +59,50 @@ class EmaCfg:
 
 @dataclass(frozen=True, kw_only=True)
 class TimeCfg:
-    """time-sampling hyperparameters. instantiate via make_time_sampler factory."""
+    """time-sampling cfg: holds a TimeSampler instance.
 
-    dist: str = "uniform"
-    eps: float = 1e-3
+    the sampler abstracts the (q, iw) pair; concrete samplers in
+    `_time_samplers.py` cover uniform, Beta, and path-driven cases, and the
+    surface is open to user-supplied samplers (any TimeSampler subclass).
+
+    legacy string-based construction is available via TimeCfg.from_dist for
+    convenience and HPO migration.
+    """
+
+    sampler: TimeSampler = field(default_factory=UniformSampler)
 
     def __post_init__(self) -> None:
-        """validate time-sampling hyperparameters."""
-        if self.dist not in {"uniform", "beta_2_2", "beta_5_5"}:
-            raise ValueError(f"dist must be in {{'uniform', 'beta_2_2', 'beta_5_5'}}; got {self.dist!r}")
-        if self.eps <= 0.0:
-            raise ValueError(f"eps must be > 0; got {self.eps}")
+        """validate sampler type."""
+        if not isinstance(self.sampler, TimeSampler):
+            raise TypeError(
+                f"sampler must be a TimeSampler instance; got {type(self.sampler).__name__}"
+            )
+
+    @classmethod
+    def from_dist(cls, dist: str = "uniform", eps: float = 1e-3) -> "TimeCfg":
+        """legacy convenience constructor: TimeCfg.from_dist('beta_2_2', eps=1e-3)."""
+        return cls(sampler=sampler_from_dist(dist, eps))
+
+    @property
+    def eps(self) -> float:
+        """forward the sampler's eps for trainer/loss eps argument needs."""
+        return float(getattr(self.sampler, "eps", 1e-3))
+
+    @property
+    def dist(self) -> str:
+        """diagnostic label of the underlying sampler; not used by the trainer.
+
+        returns the legacy enum string when the sampler is one of the canonical
+        ones, otherwise a class-name-derived label.
+        """
+        s = self.sampler
+        if isinstance(s, UniformSampler):
+            return "uniform"
+        if isinstance(s, BetaSampler):
+            return f"beta_{int(s.a)}_{int(s.b)}"
+        if isinstance(s, PathSampler):
+            return f"path:{type(s.path).__name__}"
+        return type(s).__name__
 
 
 def make_optim(params, cfg: OptimCfg) -> torch.optim.Adam:
@@ -78,7 +112,7 @@ def make_optim(params, cfg: OptimCfg) -> torch.optim.Adam:
     eps is hardcoded to 1e-8 per codebase convention.
 
     note: cfg.grad_clip_norm is not applied here; caller reads and applies
-    separately via maybe_clip_grad from _ema.
+    separately via maybe_clip_grad from _trainer.
     """
     return torch.optim.Adam(
         params,
@@ -119,18 +153,19 @@ def make_ema(model, cfg: EmaCfg) -> EMA | None:
 
 
 def make_time_sampler(cfg: TimeCfg) -> Callable[[int, float, torch.device], tuple[Tensor, Tensor]]:
-    """return a closure that samples time and importance weights on demand.
+    """return a callable that delegates to cfg.sampler.sample(B, device).
 
-    the returned callable has signature (batch_size, eps, device) and forwards
-    all three to sample_time_and_iw(cfg.dist, ...). eps is passed at call time
-    (from trainer), not from cfg.eps; cfg.eps is the per-estimator default that
-    trainer reads and forwards to the sampler.
+    signature is kept as (batch_size, eps, device) for backward compat with the
+    trainer's existing call shape; the eps argument is ignored (the sampler owns
+    its own eps and uses it internally).
 
     returns:
         callable with signature (batch_size: int, eps: float, device: torch.device)
         -> tuple[Tensor, Tensor] yielding (tau [B,1], iw [B,1]).
     """
+    sampler_obj = cfg.sampler
+
     def sampler(batch_size: int, eps: float, device: torch.device) -> tuple[Tensor, Tensor]:
-        return sample_time_and_iw(cfg.dist, batch_size, eps, device)
+        return sampler_obj.sample(batch_size, device)
 
     return sampler

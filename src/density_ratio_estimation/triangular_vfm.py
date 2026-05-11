@@ -127,14 +127,8 @@ class TriangularVFM(DensityRatioEstimator):
         else:
             self.path = path
 
-        # path/timecfg conflict check:
-        # if path provides sample_tau, enforce time.dist == "uniform"
-        has_path_sampler = callable(getattr(self.path, "sample_tau", None))
-        if has_path_sampler and self.time.dist != "uniform":
-            raise ValueError(
-                "timecfg.dist must be 'uniform' when path provides sample_tau "
-                f"(got dist={self.time.dist!r}; path is {type(self.path).__name__})"
-            )
+        # no path-conflict guard: timecfg holds an explicit timesampler instance.
+        # users who want path-driven sampling pass timecfg(sampler=pathsampler(path)).
 
         # initialize network placeholders
         self.net_b = None
@@ -208,13 +202,9 @@ class TriangularVFM(DensityRatioEstimator):
         self.ema_eta = ema_eta
 
         # time sampler: if path has sample_tau, defer to it; else use timecfg-based sampler.
-        # path-conflict guard in __init__ ensures timecfg.dist == "uniform" when sample_tau exists.
-        if callable(getattr(self.path, "sample_tau", None)):
-            def time_sampler(B, eps, device):
-                tau = self.path.sample_tau(B, eps, device)
-                return tau, torch.ones(B, 1, device=device)
-        else:
-            time_sampler = make_time_sampler(self.time)
+        # time sampler comes from cfg; users pick pathsampler(self.path) explicitly
+        # if they want path-driven sampling.
+        time_sampler = make_time_sampler(self.time)
 
         train_two_phase(
             model_b=self.net_b,

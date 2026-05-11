@@ -8,11 +8,8 @@ training weights for any further training/diagnostics.
 Standard recipe from EDM / score-based diffusion. Decay 0.999 is the toy
 default; 0.9999 is canonical for production-scale runs.
 """
-from typing import Iterable
-
 import torch
 from torch import nn
-from torch.distributions import Beta
 
 
 class EMA:
@@ -69,74 +66,3 @@ class EMA:
         self._backup = None
 
 
-def maybe_clip_grad(
-    params: Iterable[torch.nn.Parameter],
-    max_norm: float | None,
-) -> None:
-    """clip gradient norm in-place if `max_norm` is set."""
-    if max_norm is None or max_norm <= 0:
-        return
-    torch.nn.utils.clip_grad_norm_(list(params), max_norm=max_norm)
-
-
-def sample_time_and_iw(
-    time_dist: str,
-    batch_size: int,
-    eps: float,
-    device: str | torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """sample tau and compute importance weights for unbiased IS estimator.
-
-    sample tau and return (tau [B,1], iw [B,1]) where iw is per-sample
-    importance weight = p_uniform(tau) / q(tau).
-
-    Args:
-        time_dist: in {"uniform", "beta_2_2", "beta_5_5"}.
-        batch_size: B, number of samples.
-        eps: margin for tau bounds [eps, 1-eps].
-        device: torch device.
-
-    Returns:
-        tuple (tau [B,1], iw [B,1]). for time_dist="uniform", iw=1.
-        otherwise, tau ~ Beta(a,b) clamped to [eps, 1-eps] and iw =
-        p_uniform(tau) / q(tau) where q is the truncated Beta pdf
-        (approximated as untruncated for small eps).
-    """
-    if time_dist == "uniform":
-        tau = torch.rand(batch_size, 1, device=device) * (1.0 - 2.0 * eps) + eps
-        iw = torch.ones(batch_size, 1, device=device)
-        return tau, iw
-
-    # parse Beta(a, b) from time_dist string
-    if time_dist == "beta_2_2":
-        a, b = 2, 2
-    elif time_dist == "beta_5_5":
-        a, b = 5, 5
-    else:
-        raise ValueError(
-            f"time_dist must be in {{'uniform', 'beta_2_2', 'beta_5_5'}}; "
-            f"got {time_dist!r}"
-        )
-
-    # sample from Beta(a, b) on [0, 1]; instantiate concentration tensors on
-    # `device` so subsequent dist.log_prob(tau) does not cross the cpu/cuda
-    # boundary (was: cpu Beta + cuda tau -> RuntimeError on the dirichlet
-    # internal xlogy when log_prob received a cuda input).
-    dist = Beta(
-        torch.tensor(float(a), device=device),
-        torch.tensor(float(b), device=device),
-    )
-    tau_unclamped = dist.sample((batch_size,))  # [B], already on device
-
-    # clamp to [eps, 1-eps] and reshape
-    tau = torch.clamp(tau_unclamped, eps, 1.0 - eps).unsqueeze(-1)  # [B, 1]
-
-    # compute importance weights: p_uniform(tau) / q(tau)
-    # p_uniform = 1 / (1 - 2*eps)
-    # q(tau) = pdf_Beta(tau; a, b)
-    p_uniform = 1.0 / (1.0 - 2.0 * eps)
-    log_q = dist.log_prob(tau.squeeze(-1))  # [B]
-    q = torch.exp(log_q)  # [B]
-    iw = (p_uniform / q).unsqueeze(-1)  # [B, 1]
-
-    return tau, iw

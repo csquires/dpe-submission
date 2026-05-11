@@ -101,12 +101,8 @@ class TriangularCTSM(DensityRatioEstimator):
         else:
             self.path = path
 
-        # path-conflict guard: sample_tau requires uniform time distribution
-        if callable(getattr(self.path, "sample_tau", None)) and self.time.dist != "uniform":
-            raise ValueError(
-                f"TimeCfg.dist must be 'uniform' when path provides sample_tau "
-                f"(got dist={self.time.dist!r}; path is {type(self.path).__name__})"
-            )
+        # no path-conflict guard: timecfg holds an explicit timesampler instance.
+        # users who want path-driven sampling pass timecfg(sampler=pathsampler(path)).
 
         # model and EMA instance attributes (set by init_model/fit)
         self.model = None
@@ -131,13 +127,9 @@ class TriangularCTSM(DensityRatioEstimator):
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         self.ema_obj = make_ema(self.model, self.ema)
 
-        # defer to path.sample_tau if available, else use factory
-        sampler = getattr(self.path, "sample_tau", None)
-        if callable(sampler):
-            def time_sampler(B: int, eps: float, device) -> tuple[torch.Tensor, torch.Tensor]:
-                return sampler(B, eps, device), torch.ones(B, 1, device=device)
-        else:
-            time_sampler = make_time_sampler(self.time)
+        # time sampler comes from cfg; users pick pathsampler(self.path) explicitly
+        # if they want path-driven sampling (e.g. piecewisesb with inner_eps > 0).
+        time_sampler = make_time_sampler(self.time)
 
         train_loop(
             model=self.model,

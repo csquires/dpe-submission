@@ -12,7 +12,7 @@ from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema, make_time_sampler,
 )
-from src.density_ratio_estimation._ema import maybe_clip_grad
+from src.density_ratio_estimation._trainer import maybe_clip_grad
 from src.density_ratio_estimation._weighting import resolve_outer_lambda
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
 from src.waypoints.curve_2d import Curve2D
@@ -106,13 +106,8 @@ class TriangularCTSM2D(DensityRatioEstimator):
         # resolve curve
         self.curve = curve if curve is not None else Curve2D(path_height=1.0)
 
-        # path/timecfg conflict check: if path provides sample_tau, enforce time.dist == "uniform"
-        has_path_sampler = callable(getattr(self.path, "sample_tau", None))
-        if has_path_sampler and self.time.dist != "uniform":
-            raise ValueError(
-                "time.dist must be 'uniform' when path provides sample_tau "
-                f"(got dist={self.time.dist!r}; path is {type(self.path).__name__})"
-            )
+        # no path-conflict guard: timecfg holds an explicit timesampler instance.
+        # users who want path-driven sampling pass timecfg(sampler=pathsampler(path)).
 
         # coverage check: ensure inference curve peak_t2 is within training range
         peak = float(self.curve.peak_t2())
@@ -193,13 +188,9 @@ class TriangularCTSM2D(DensityRatioEstimator):
         t2_max = float(getattr(self.path, "t2_max", 1.0 - self.time.eps))
 
         # time sampler: if path has sample_tau, defer to it; else use timecfg-based sampler.
-        # path-conflict guard in __init__ ensures time.dist == "uniform" when sample_tau exists.
-        if callable(getattr(self.path, "sample_tau", None)):
-            def time_sampler(B, eps, device):
-                tau = self.path.sample_tau(B, eps, device)
-                return tau, torch.ones(B, 1, device=device)
-        else:
-            time_sampler = make_time_sampler(self.time)
+        # time sampler comes from cfg; users pick pathsampler(self.path) explicitly
+        # if they want path-driven sampling.
+        time_sampler = make_time_sampler(self.time)
 
         for epoch_idx in range(self.n_epochs):
             # bootstrap minibatches
