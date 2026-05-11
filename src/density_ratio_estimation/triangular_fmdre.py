@@ -12,7 +12,16 @@ from src.models.flow.multiclass_vel_score_mlp import MultiClassVelScoreMLP
 from src.density_ratio_estimation._trainer import train_loop
 from src.density_ratio_estimation._losses import tri_fm_loss
 from src.models.flow.ratio_ode import ratio_ode_triangular
-from src.models.flow.time_sampler import UniformSampler
+from src.density_ratio_estimation._cfgs import (
+    OptimCfg,
+    SchedCfg,
+    EmaCfg,
+    TimeCfg,
+    make_optim,
+    make_sched,
+    make_ema,
+    make_time_sampler,
+)
 
 
 class TriangularFMDRE(DensityRatioEstimator):
@@ -22,49 +31,67 @@ class TriangularFMDRE(DensityRatioEstimator):
         self,
         input_dim: int,
         hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
-        lr: float = 2e-3,
-        score_weight: float = 1.0,
-        eps: float = 0.01,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: TimeCfg = TimeCfg(),
         device: Optional[str] = None,
-        integration_steps: int = 10000,
+        # TriFMDRE-specific (explicit)
+        score_weight: float = 1.0,
         div_method: str = "hutch_rademacher",
-        verbose: bool = False,
-        log_every: int = 100,
-        n_hidden_layers: int = 3,
-        adam_betas: tuple = (0.9, 0.999),
-        weight_decay: float = 0.0,
-        cosine_min_factor: float = 1.0,
+        integration_steps: int = 10000,
         triangular_p_uncond: float = 0.0,
         layernorm: str = "off",
     ) -> None:
-        """cosine_min_factor=1.0 disables LR annealing; triangular_p_uncond drops the one-hot
-        class condition with the given probability."""
+        """construct estimator with cfg-based optimizer, scheduler, EMA, time-sampler.
+
+        Args:
+            input_dim: data feature dimension.
+            hidden_dim: MLP hidden dimension (default 256).
+            n_hidden_layers: number of hidden layers (default 3).
+            n_epochs: training steps (default 1000).
+            batch_size: mini-batch size (default 512).
+            optim: optimizer config (required, no default).
+            sched: scheduler config (default SchedCfg() disables annealing).
+            ema: EMA config (default EmaCfg() disables EMA).
+            time: time-sampler config (default TimeCfg() uses uniform dist, eps=1e-3).
+            device: torch device string (default auto-detect cuda).
+            score_weight: weight for score-matching loss term (default 1.0).
+            div_method: divergence estimator method (default "hutch_rademacher").
+            integration_steps: ODE solver steps at predict time (default 10000).
+            triangular_p_uncond: probability of dropping class condition (default 0.0).
+            layernorm: layer norm mode in {"off", "pre", "post"} (default "off").
+        """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.lr = lr
         self.score_weight = score_weight
-        self.eps = eps
         self.integration_steps = integration_steps
         self.div_method = div_method
-        self.verbose = verbose
-        self.log_every = log_every
         self.n_hidden_layers = n_hidden_layers
-        self.adam_betas = tuple(adam_betas)
-        self.weight_decay = float(weight_decay)
-        if not (0.0 <= cosine_min_factor <= 1.0):
-            raise ValueError(f"cosine_min_factor must be in [0, 1], got {cosine_min_factor}")
-        self.cosine_min_factor = float(cosine_min_factor)
+
+        # cfg-based attributes
+        self.optim = optim
+        self.sched = sched
+        self.ema = ema
+        self.time = time
+
+        # validate triangular_p_uncond
         if not (0.0 <= triangular_p_uncond <= 1.0):
             raise ValueError(f"triangular_p_uncond must be in [0, 1], got {triangular_p_uncond}")
         self.triangular_p_uncond = float(triangular_p_uncond)
+
+        # validate layernorm
         if layernorm not in ("off", "pre", "post"):
             raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
         self.layernorm = layernorm
 
+        # device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -82,32 +109,17 @@ class TriangularFMDRE(DensityRatioEstimator):
             layernorm=self.layernorm,
         ).to(self.device)
 
-    def fit(
-        self,
-        samples_p0: Tensor,
-        samples_p1: Tensor,
-        samples_pstar: Tensor,
-    ) -> None:
-        """init model + optimizer (+ optional cosine), then delegate to `train_loop`
-        with `tri_fm_loss`."""
+    def fit(self, samples_p0: Tensor, samples_p1: Tensor, samples_pstar: Tensor) -> None:
+        """init model + cfg-based optimizer, scheduler, EMA, time-sampler; delegate to train_loop."""
         self.init_model()
         samples_p0 = samples_p0.float().to(self.device)
         samples_p1 = samples_p1.float().to(self.device)
         samples_pstar = samples_pstar.float().to(self.device)
 
-        opt = torch.optim.Adam(
-            self.model.parameters(),
-            lr=self.lr,
-            betas=self.adam_betas,
-            eps=1e-8,
-            weight_decay=self.weight_decay,
-        )
-
-        scheduler = None
-        if self.cosine_min_factor < 1.0:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                opt, T_max=self.n_epochs, eta_min=self.lr * self.cosine_min_factor
-            )
+        optim_obj = make_optim(self.model.parameters(), self.optim)
+        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        ema_obj = make_ema(self.model, self.ema)
+        time_sampler = make_time_sampler(self.time)
 
         train_loop(
             model=self.model,
@@ -115,21 +127,20 @@ class TriangularFMDRE(DensityRatioEstimator):
             samples_p1=samples_p1,
             samples_pstar=samples_pstar,
             loss_fn=tri_fm_loss,
-            optim=opt,
+            optim=optim_obj,
             n_steps=self.n_epochs,
             batch_size=self.batch_size,
-            time_sampler=UniformSampler(eps=self.eps),
-            scheduler=scheduler,
+            time_sampler=time_sampler,
+            scheduler=sched_obj,
+            ema=ema_obj,
+            grad_clip_norm=self.optim.grad_clip_norm,
+            eps=self.time.eps,
             loss_kwargs={
                 "score_weight": self.score_weight,
                 "triangular_p_uncond": self.triangular_p_uncond,
             },
-            eps=self.eps,
             model_module=self.model,
         )
-
-        if self.verbose:
-            print("[TriangularFMDRE] training complete")
         self.model.eval()
 
     def predict_ldr(self, xs: Tensor) -> Tensor:
@@ -147,7 +158,7 @@ class TriangularFMDRE(DensityRatioEstimator):
             self.model,
             samples,
             steps=self.integration_steps,
-            eps=self.eps,
+            eps=self.time.eps,
             device=str(self.device),
             div_method=self.div_method,
         )

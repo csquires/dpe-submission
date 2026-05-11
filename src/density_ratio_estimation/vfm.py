@@ -12,7 +12,10 @@ import torch.optim as optim
 from scipy import integrate
 
 from src.density_ratio_estimation.base import DRE
-from src.density_ratio_estimation._ema import EMA, maybe_clip_grad
+from src.density_ratio_estimation._cfgs import (
+    OptimCfg, SchedCfg, EmaCfg, TimeCfg,
+    make_optim, make_sched, make_ema, make_time_sampler
+)
 from src.density_ratio_estimation._trainer import train_two_phase
 # VFM exposes inline gamma / dgamma_dt rather than a Path object, so it bypasses
 # velo_loss / denoiser_loss from `_losses` (which expect a path). fit() defines
@@ -30,37 +33,37 @@ class VFM(DRE):
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
-        lr: float = 2e-3,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: TimeCfg = TimeCfg(),
+        device: Optional[str] = None,
+        # VFM-specific (explicit)
         k: float = 0.5,
         n_t: int = 50,
-        eps: float = 0.01,
-        device: Optional[str] = None,
-        integration_steps: int = 10000,
-        integration_type: Literal['1', '2', '3'] = '1',
-        verbose: bool = False,
-        log_every: int = 100,
         antithetic: bool = False,
         div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
         div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
         n_hutch_samples: int = 1,
-        ema_decay: Optional[float] = None,
-        grad_clip_norm: Optional[float] = None,
+        integration_steps: int = 10000,
+        integration_type: Literal['1', '2', '3'] = '1',
         activation: str = "silu",
-    ):
+    ) -> None:
         super().__init__(input_dim)
         self.integration_type = integration_type
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.lr = lr
+        self.optim = optim
+        self.sched = sched
+        self.ema = ema
+        self.time = time
         self.k = k
         self.n_t = n_t
-        self.eps = eps
-        self.integration_steps = integration_steps
-        self.verbose = verbose
-        self.log_every = log_every
         self.antithetic = antithetic
+        self.integration_steps = integration_steps
         if div_method not in ('hutchinson', 'exact'):
             raise ValueError(f"div_method must be 'hutchinson' or 'exact'; got {div_method!r}")
         if div_noise not in ('rademacher', 'gaussian'):
@@ -70,8 +73,6 @@ class VFM(DRE):
         self.div_method = div_method
         self.div_noise = div_noise
         self.n_hutch_samples = n_hutch_samples
-        self.ema_decay = ema_decay
-        self.grad_clip_norm = grad_clip_norm
         if activation not in ("elu", "gelu", "silu"):
             raise ValueError(
                 f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
@@ -85,11 +86,11 @@ class VFM(DRE):
 
         self.net_b = None
         self.net_eta = None
-        self.ema_b: Optional[EMA] = None
-        self.ema_eta: Optional[EMA] = None
+        self.ema_b = None
+        self.ema_eta = None
 
     def init_model(self) -> None:
-        """instantiate net_b (velocity) and net_eta (denoiser) MLPs, plus optional EMA wrappers."""
+        """instantiate net_b (velocity) and net_eta (denoiser) MLPs on device."""
         self.net_b = MLP(self.input_dim, self.hidden_dim,
                          output_dim=self.input_dim,
                          n_hidden_layers=self.n_hidden_layers,
@@ -98,8 +99,6 @@ class VFM(DRE):
                            output_dim=self.input_dim,
                            n_hidden_layers=self.n_hidden_layers,
                            activation=self.activation).to(self.device)
-        self.ema_b = EMA(self.net_b, self.ema_decay) if self.ema_decay is not None else None
-        self.ema_eta = EMA(self.net_eta, self.ema_decay) if self.ema_decay is not None else None
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """gamma(t) = (1 - exp(-k t)) (1 - exp(-k (1-t)))."""
@@ -138,22 +137,21 @@ class VFM(DRE):
         return -div_b + b_dot_eta / gamma_t
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
-        """train b then eta sequentially via `train_two_phase`."""
+        """train b then eta sequentially via `train_two_phase` with cfg-based setup."""
         self.init_model()
 
         samples_p0 = samples_p0.float().to(self.device)
         samples_p1 = samples_p1.float().to(self.device)
 
-        if self.verbose:
-            print(f"[VFM] starting train_two_phase.")
-            print(f"[VFM] gamma range: [{self.gamma(torch.tensor(self.eps)).item():.4f}, {self.gamma(torch.tensor(0.5)).item():.4f}]")
+        optim_b = make_optim(self.net_b.parameters(), self.optim)
+        optim_eta = make_optim(self.net_eta.parameters(), self.optim)
+        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
+        ema_b = make_ema(self.net_b, self.ema)
+        ema_eta = make_ema(self.net_eta, self.ema)
+        self.ema_b, self.ema_eta = ema_b, ema_eta
 
-        optim_b = optim.Adam(self.net_b.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
-        optim_eta = optim.Adam(self.net_eta.parameters(), lr=self.lr, betas=(0.9, 0.999), eps=1e-8)
-
-        def time_sampler(B, eps, device):
-            return torch.rand(B, 1, device=device) * (1 - 2 * eps) + eps, torch.ones(B, 1, device=device)
-
+        time_sampler = make_time_sampler(self.time)
         antithetic = self.antithetic
 
         def loss_b(model, batch, tau, iw):
@@ -170,10 +168,10 @@ class VFM(DRE):
                 v_m = delta - dg * z
                 lp = 0.5 * (b_p ** 2).sum(-1) - (v_p * b_p).sum(-1)
                 lm = 0.5 * (b_m ** 2).sum(-1) - (v_m * b_m).sum(-1)
-                return 0.5 * (lp + lm).mean()
+                return (0.5 * (lp + lm) * iw.squeeze(-1)).mean()
             b = model(tau, mu + g * z)
             v_star = delta + dg * z
-            return (0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)).mean()
+            return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * iw.squeeze(-1)).mean()
 
         loss_b.required_keys = frozenset({"x0", "x1"})
         loss_b.requires_tau_grad = False
@@ -183,7 +181,7 @@ class VFM(DRE):
             z = torch.randn_like(x0)
             x_t = (1 - tau) * x0 + tau * x1 + self.gamma(tau) * z
             eta = model(tau, x_t)
-            return (0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)).mean()
+            return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * iw.squeeze(-1)).mean()
 
         loss_eta.required_keys = frozenset({"x0", "x1"})
         loss_eta.requires_tau_grad = False
@@ -202,15 +200,14 @@ class VFM(DRE):
             n_steps_eta=self.n_epochs,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
-            ema_b=self.ema_b,
-            ema_eta=self.ema_eta,
-            grad_clip_norm_b=self.grad_clip_norm,
-            grad_clip_norm_eta=self.grad_clip_norm,
-            eps=self.eps,
+            scheduler_b=sched_b,
+            scheduler_eta=sched_eta,
+            ema_b=ema_b,
+            ema_eta=ema_eta,
+            grad_clip_norm_b=self.optim.grad_clip_norm,
+            grad_clip_norm_eta=self.optim.grad_clip_norm,
+            eps=self.time.eps,
         )
-
-        if self.verbose:
-            print("[VFM] training complete")
 
         self.net_b.eval()
         self.net_eta.eval()
@@ -231,7 +228,7 @@ class VFM(DRE):
         n_points = self.integration_steps
         if n_points % 2 == 0:
             n_points += 1
-        t_vals = torch.linspace(self.eps, 1 - self.eps, n_points, device=self.device)
+        t_vals = torch.linspace(self.time.eps, 1 - self.time.eps, n_points, device=self.device)
 
         if self.ema_b is not None:
             self.ema_b.apply_to(self.net_b)

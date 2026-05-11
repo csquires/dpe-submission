@@ -1,14 +1,22 @@
 """TriangularTSM: time-score matching DRE on a bell-shaped path."""
-import warnings
 from typing import Optional, Tuple
 from math import ceil
 
 import torch
-import torch.optim as optim
 
 from src.density_ratio_estimation.base import ELDR
 from src.density_ratio_estimation._trainer import train_loop
 from src.density_ratio_estimation._losses import tri_tsm_loss
+from src.density_ratio_estimation._cfgs import (
+    OptimCfg,
+    SchedCfg,
+    EmaCfg,
+    TimeCfg,
+    make_optim,
+    make_sched,
+    make_ema,
+    make_time_sampler,
+)
 from src.models.time_score_matching.time_score_net_2d import TimeScoreNetwork2D
 
 
@@ -23,24 +31,39 @@ class TriangularTSM(ELDR):
         self,
         input_dim: int,
         hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
-        lr: float = 1e-3,
-        reweight: bool = False,
-        eps: float = 1e-5,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: TimeCfg = TimeCfg(),
         device: Optional[str] = None,
-        rtol: float = 1e-6,
-        atol: float = 1e-6,
+        # TriTSM-specific (explicit kwargs)
+        reweight: bool = False,
         vertex: float = 0.5,
         peak_max: float = 1.0,
-        n_hidden_layers: int = 3,
-        adam_betas: Tuple[float, float] = (0.9, 0.999),
-        weight_decay: float = 0.0,
-        cosine_min_factor: float = 1.0,
         activation: str = "silu",
     ) -> None:
-        """vertex / peak_max define the bell path; cosine_min_factor=1.0 disables LR annealing;
-        rtol/atol kept for HPO compatibility but ignored (warning emitted)."""
+        """bell path: t' = peak_max (1 - ((tau - vertex)/scale)^2) on (0, vertex) and (vertex, 1).
+
+        args:
+            input_dim: feature dimension.
+            hidden_dim: width of hidden layers. default 256.
+            n_hidden_layers: depth. default 3.
+            n_epochs: training epochs. default 1000.
+            batch_size: batch size. default 512.
+            optim: optimizer config (lr, weight_decay, grad_clip_norm, etc).
+            sched: scheduler config (name, cosine_min_factor, etc). default SchedCfg().
+            ema: exponential moving average config. default EmaCfg().
+            time: time sampling config (eps, flavor). default TimeCfg().
+            device: torch device string. auto-detect if None.
+            reweight: whether to reweight loss. default False.
+            vertex: peak location in (0, 1). default 0.5.
+            peak_max: peak height in (0, 1]. default 1.0.
+            activation: nonlinearity in {'elu', 'gelu', 'silu'}. default 'silu'.
+        """
         super().__init__(input_dim)
 
         # validate params
@@ -48,35 +71,24 @@ class TriangularTSM(ELDR):
             raise ValueError(f"vertex must be in (0, 1), got {vertex}")
         if not 0.0 < peak_max <= 1.0:
             raise ValueError(f"peak_max must be in (0, 1], got {peak_max}")
-        if not 0.0 <= cosine_min_factor <= 1.0:
-            raise ValueError(f"cosine_min_factor must be in [0, 1], got {cosine_min_factor}")
         if activation not in ("elu", "gelu", "silu"):
             raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}, got {activation!r}")
 
-        # emit deprecation warning for rtol/atol
-        if rtol != 1e-6 or atol != 1e-6:
-            warnings.warn(
-                "rtol and atol are deprecated; torch.trapezoid integration does not use them.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        # store all hyperparameters
+        # store hyperparameters
         self.hidden_dim = hidden_dim
+        self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.lr = lr
         self.reweight = reweight
-        self.eps = eps
-        self.rtol = rtol
-        self.atol = atol
         self.vertex = vertex
         self.peak_max = peak_max
-        self.n_hidden_layers = n_hidden_layers
-        self.adam_betas = tuple(adam_betas)
-        self.weight_decay = float(weight_decay)
-        self.cosine_min_factor = float(cosine_min_factor)
         self.activation = activation
+
+        # store cfg objects
+        self.optim = optim
+        self.sched = sched
+        self.ema = ema
+        self.time = time
 
         # device handling
         if device is None:
@@ -84,12 +96,11 @@ class TriangularTSM(ELDR):
         else:
             self.device = torch.device(device)
 
-        # model and optimizer (lazy-initialized in _init_model)
+        # model (lazy-initialized in _init_model)
         self.model = None
-        self.optimizer = None
 
     def _init_model(self) -> None:
-        """instantiate TimeScoreNetwork2D and Adam optimizer."""
+        """instantiate TimeScoreNetwork2D. optimizer created in fit via factory."""
         self.model = TimeScoreNetwork2D(
             self.input_dim,
             self.hidden_dim,
@@ -97,17 +108,9 @@ class TriangularTSM(ELDR):
             activation=self.activation,
         ).to(self.device)
 
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=self.lr,
-            betas=self.adam_betas,
-            eps=1e-8,
-            weight_decay=self.weight_decay,
-        )
-
     def _path_t_tprime(self, tau: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """piecewise-quadratic bell at tau: t' is 0 at endpoints and peak_max at vertex."""
-        t = torch.clamp(tau, min=self.eps, max=1.0)
+        t = torch.clamp(tau, min=self.time.eps, max=1.0)
         v, m = self.vertex, self.peak_max
         left = m * (2.0 * (tau / v) - (tau / v) ** 2)
         right = m * (1.0 - ((tau - v) / (1.0 - v)) ** 2)
@@ -120,24 +123,19 @@ class TriangularTSM(ELDR):
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
     ) -> None:
-        """init model, optional cosine scheduler, then delegate to `train_loop` with `tri_tsm_loss`."""
+        """init model, build optim/scheduler/ema/time_sampler from cfg, then delegate to train_loop."""
         self._init_model()
         self.model.train()
 
-        scheduler = None
-        if self.cosine_min_factor < 1.0:
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=self.n_epochs,
-                eta_min=self.lr * self.cosine_min_factor,
-            )
-
-        def time_sampler(B: int, eps: float, device: torch.device):
-            tau = eps + torch.rand(B, 1, device=device) * (1.0 - 2.0 * eps)
-            return tau, torch.ones(B, 1, device=device)
-
-        min_size = min(len(samples_p0), len(samples_p1), len(samples_pstar))
+        # TriTSM-specific n_steps formula: based on smallest sample set
+        min_size = min(samples_p0.shape[0], samples_p1.shape[0], samples_pstar.shape[0])
         n_steps = self.n_epochs * ceil(min_size / self.batch_size)
+
+        # build optimizer, scheduler, ema, time_sampler from cfg
+        optim_obj = make_optim(self.model.parameters(), self.optim)
+        sched_obj = make_sched(optim_obj, n_steps, self.optim.lr, self.sched)
+        ema_obj = make_ema(self.model, self.ema)
+        time_sampler = make_time_sampler(self.time)
 
         train_loop(
             model=self.model,
@@ -145,15 +143,17 @@ class TriangularTSM(ELDR):
             samples_p1=samples_p1,
             samples_pstar=samples_pstar,
             loss_fn=tri_tsm_loss,
-            optim=self.optimizer,
+            optim=optim_obj,
             n_steps=n_steps,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
-            scheduler=scheduler,
-            eps=self.eps,
+            scheduler=sched_obj,
+            ema=ema_obj,
+            grad_clip_norm=self.optim.grad_clip_norm,
+            eps=self.time.eps,
             loss_kwargs={
                 "reweight": self.reweight,
-                "eps": self.eps,
+                "eps": self.time.eps,
                 "vertex": self.vertex,
                 "peak_max": self.peak_max,
             },
@@ -171,7 +171,7 @@ class TriangularTSM(ELDR):
             return torch.zeros(0, dtype=samples.dtype, device=self.device)
 
         with torch.no_grad():
-            tau_grid = torch.linspace(self.eps, 1.0, 100, device=self.device)
+            tau_grid = torch.linspace(self.time.eps, 1.0, 100, device=self.device)
             scores = []
             for tau_scalar in tau_grid:
                 t, t_prime = self._path_t_tprime(tau_scalar.view(1, 1))

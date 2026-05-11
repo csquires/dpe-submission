@@ -1,13 +1,14 @@
 """TriangularVFM: VFM DRE on a barycentric path p0 -> p* -> p1."""
-from typing import Optional, Literal, Tuple, Callable
+from typing import Optional, Literal
 import warnings
 
-import numpy as np
 import torch
-import torch.optim as optim
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
-from src.density_ratio_estimation._ema import EMA, maybe_clip_grad
+from src.density_ratio_estimation._cfgs import (
+    OptimCfg, SchedCfg, EmaCfg, TimeCfg,
+    make_optim, make_sched, make_ema, make_time_sampler,
+)
 from src.density_ratio_estimation._trainer import train_two_phase
 from src.density_ratio_estimation._losses import velo_loss, denoiser_loss
 from src.models.common.mlp import MLP
@@ -31,45 +32,67 @@ class TriangularVFM(DensityRatioEstimator):
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
-        lr: float = 1.3e-3,
-        eps: float = 1e-3,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: TimeCfg = TimeCfg(),
         device: Optional[str] = None,
-        integration_steps: int = 3000,
-        integration_type: Literal['1', '2', '3'] = '2',
+        # TriVFM-specific (explicit)
         antithetic: bool = True,
         div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
         div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
         n_hutch_samples: int = 1,
-        verbose: bool = False,
-        log_every: int = 100,
-        ema_decay: Optional[float] = None,
-        grad_clip_norm: Optional[float] = None,
+        integration_steps: int = 3000,
+        integration_type: Literal['1', '2', '3'] = '2',
         activation: str = "gelu",
-        adam_betas: Tuple[float, float] = (0.9, 0.999),
-        weight_decay: float = 0.0,
-        cosine_min_factor: float = 1.0,
         layernorm: str = "off",
     ) -> None:
-        """path defaults to BarycentricVfm1D(k=20.0, vertex=0.5, eps=eps);
-        eps must be >= 1e-3 for boundary regularity of b eta / gamma."""
-        if eps < 1e-3:
+        """two-phase triangular vfm with cfg-based optimization surface.
+
+        args:
+            input_dim: dimensionality of data.
+            path: optional vfmpath1d; defaults to barycentricvfm1d(k=20.0, vertex=0.5, eps=time.eps).
+                  must be positional-or-keyword before * to reflect estimator identity.
+            hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training shape.
+            optim: required optimcfg (optimizer config with lr, grad_clip_norm, etc.).
+            sched: schedcfg for learning rate schedule (default schedcfg()).
+            ema: emacfg for exponential moving average (default emacfg()).
+            time: timecfg for time sampling and eps (default timecfg()).
+            device: torch device (defaults to cuda if available, else cpu).
+            antithetic: whether to use antithetic sampling in velo_loss.
+            div_method, div_noise, n_hutch_samples: divergence estimation config.
+            integration_steps, integration_type: numerical integration at inference.
+            activation, layernorm: mlp architecture choices.
+
+        raises:
+            valueerror: if time.eps < 1e-3 (boundary regularity requirement).
+            valueerror: if path provides sample_tau and time.dist != 'uniform'.
+            valueerror: if div_method, div_noise, activation, layernorm invalid.
+        """
+        # validate time.eps >= 1e-3
+        if time.eps < 1e-3:
             raise ValueError(
-                f"eps must be >= 1e-3 for boundary regularity of b*eta/gamma "
-                f"; got eps={eps}"
+                f"timecfg.eps must be >= 1e-3 for boundary regularity of b*eta/gamma; "
+                f"got eps={time.eps}"
             )
 
         super().__init__(input_dim)
 
-        # store all constructor args
+        # store cfg objects and scalar hyperparams
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.lr = lr
-        self.eps = eps
+        self.optim = optim
+        self.sched = sched
+        self.ema = ema
+        self.time = time
         self.integration_steps = integration_steps
         self.integration_type = integration_type
         self.antithetic = antithetic
+
+        # validate div_method, div_noise, n_hutch_samples
         if div_method not in ('hutchinson', 'exact'):
             raise ValueError(f"div_method must be 'hutchinson' or 'exact'; got {div_method!r}")
         if div_noise not in ('rademacher', 'gaussian'):
@@ -79,20 +102,13 @@ class TriangularVFM(DensityRatioEstimator):
         self.div_method = div_method
         self.div_noise = div_noise
         self.n_hutch_samples = n_hutch_samples
-        self.verbose = verbose
-        self.log_every = log_every
-        self.ema_decay = ema_decay
-        self.grad_clip_norm = grad_clip_norm
+
+        # validate activation, layernorm
         if activation not in ("elu", "gelu", "silu"):
             raise ValueError(
                 f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
             )
         self.activation = activation
-        self.adam_betas = tuple(adam_betas)
-        self.weight_decay = float(weight_decay)
-        if not (0.0 <= cosine_min_factor <= 1.0):
-            raise ValueError(f"cosine_min_factor must be in [0, 1], got {cosine_min_factor}")
-        self.cosine_min_factor = float(cosine_min_factor)
         if layernorm not in ("off", "pre", "post"):
             raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
         self.layernorm = layernorm
@@ -105,22 +121,43 @@ class TriangularVFM(DensityRatioEstimator):
 
         # resolve path (default to BarycentricVfm1D if not provided)
         if path is None:
-            self.path = BarycentricVfm1D(k=20.0, vertex=0.5, eps=eps)
+            self.path = BarycentricVfm1D(k=20.0, vertex=0.5, eps=time.eps)
         else:
             self.path = path
+
+        # path/timecfg conflict check:
+        # if path provides sample_tau, enforce time.dist == "uniform"
+        has_path_sampler = callable(getattr(self.path, "sample_tau", None))
+        if has_path_sampler and self.time.dist != "uniform":
+            raise ValueError(
+                "timecfg.dist must be 'uniform' when path provides sample_tau "
+                f"(got dist={self.time.dist!r}; path is {type(self.path).__name__})"
+            )
 
         # initialize network placeholders
         self.net_b = None
         self.net_eta = None
-        self.ema_b: Optional[EMA] = None
-        self.ema_eta: Optional[EMA] = None
+        self.ema_b: Optional[object] = None  # type will be emaWrapper from make_ema
+        self.ema_eta: Optional[object] = None
 
     def init_model(self) -> None:
-        """instantiate net_b, net_eta, and optional EMA wrappers."""
-        self.net_b = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation, layernorm=self.layernorm).to(self.device)
-        self.net_eta = MLP(self.input_dim, self.hidden_dim, output_dim=self.input_dim, n_hidden_layers=self.n_hidden_layers, activation=self.activation, layernorm=self.layernorm).to(self.device)
-        self.ema_b = EMA(self.net_b, self.ema_decay) if self.ema_decay is not None else None
-        self.ema_eta = EMA(self.net_eta, self.ema_decay) if self.ema_decay is not None else None
+        """instantiate net_b and net_eta as mlps; drop inline ema construction."""
+        self.net_b = MLP(
+            self.input_dim,
+            self.hidden_dim,
+            output_dim=self.input_dim,
+            n_hidden_layers=self.n_hidden_layers,
+            activation=self.activation,
+            layernorm=self.layernorm
+        ).to(self.device)
+        self.net_eta = MLP(
+            self.input_dim,
+            self.hidden_dim,
+            output_dim=self.input_dim,
+            n_hidden_layers=self.n_hidden_layers,
+            activation=self.activation,
+            layernorm=self.layernorm
+        ).to(self.device)
 
     def fit(
         self,
@@ -128,8 +165,11 @@ class TriangularVFM(DensityRatioEstimator):
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
     ) -> None:
-        """init b/eta nets and Adam+cosine optimizers, then delegate to `train_two_phase`
-        with `velo_loss` (b-phase) and `denoiser_loss` (eta-phase)."""
+        """init b/eta nets and build optimizers/schedulers/emas from cfgs, then train.
+
+        uses shared cfg objects (optim, sched, ema) to create separate optimizer,
+        scheduler, and ema for each phase (b and eta).
+        """
         n0 = samples_p0.shape[0]
         n1 = samples_p1.shape[0]
         n_star = samples_pstar.shape[0]
@@ -151,53 +191,28 @@ class TriangularVFM(DensityRatioEstimator):
         # initialize model
         self.init_model()
 
-        # set up optimizers
-        optim_b = optim.Adam(
-            self.net_b.parameters(),
-            lr=self.lr,
-            betas=self.adam_betas,
-            eps=1e-8,
-            weight_decay=self.weight_decay,
-        )
+        # create optimizers from shared cfg
+        optim_b = make_optim(self.net_b.parameters(), self.optim)
+        optim_eta = make_optim(self.net_eta.parameters(), self.optim)
 
-        scheduler_b = (
-            None
-            if self.cosine_min_factor == 1.0
-            else optim.lr_scheduler.CosineAnnealingLR(
-                optim_b, T_max=self.n_epochs, eta_min=self.lr * self.cosine_min_factor
-            )
-        )
+        # create schedulers from shared cfg
+        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
 
-        optim_eta = optim.Adam(
-            self.net_eta.parameters(),
-            lr=self.lr,
-            betas=self.adam_betas,
-            eps=1e-8,
-            weight_decay=self.weight_decay,
-        )
+        # create emas from shared cfg
+        ema_b = make_ema(self.net_b, self.ema)
+        ema_eta = make_ema(self.net_eta, self.ema)
+        self.ema_b = ema_b
+        self.ema_eta = ema_eta
 
-        scheduler_eta = (
-            None
-            if self.cosine_min_factor == 1.0
-            else optim.lr_scheduler.CosineAnnealingLR(
-                optim_eta, T_max=self.n_epochs, eta_min=self.lr * self.cosine_min_factor
-            )
-        )
-
-        # set up EMA helpers
-        ema_b = EMA(self.net_b, self.ema_decay) if self.ema_decay is not None else None
-        ema_eta = EMA(self.net_eta, self.ema_decay) if self.ema_decay is not None else None
-
-        def time_sampler(B: int, eps: float, device) -> tuple[torch.Tensor, torch.Tensor]:
-            sampler = getattr(self.path, "sample_tau", None)
-            if callable(sampler):
-                tau = sampler(B, eps, device)
-            else:
-                tau = torch.rand(B, 1, device=device) * (1 - 2 * eps) + eps
-            return tau, torch.ones(B, 1, device=device)
-
-        if self.verbose:
-            print("[TriangularVFM] starting train_two_phase")
+        # time sampler: if path has sample_tau, defer to it; else use timecfg-based sampler.
+        # path-conflict guard in __init__ ensures timecfg.dist == "uniform" when sample_tau exists.
+        if callable(getattr(self.path, "sample_tau", None)):
+            def time_sampler(B, eps, device):
+                tau = self.path.sample_tau(B, eps, device)
+                return tau, torch.ones(B, 1, device=device)
+        else:
+            time_sampler = make_time_sampler(self.time)
 
         train_two_phase(
             model_b=self.net_b,
@@ -213,13 +228,13 @@ class TriangularVFM(DensityRatioEstimator):
             n_steps_eta=self.n_epochs,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
-            scheduler_b=scheduler_b,
-            scheduler_eta=scheduler_eta,
+            scheduler_b=sched_b,
+            scheduler_eta=sched_eta,
             ema_b=ema_b,
             ema_eta=ema_eta,
-            grad_clip_norm_b=self.grad_clip_norm,
-            grad_clip_norm_eta=self.grad_clip_norm,
-            eps=self.eps,
+            grad_clip_norm_b=self.optim.grad_clip_norm,
+            grad_clip_norm_eta=self.optim.grad_clip_norm,
+            eps=self.time.eps,
             loss_kwargs_b={"path": self.path, "antithetic": self.antithetic},
             loss_kwargs_eta={"path": self.path},
         )
@@ -230,7 +245,7 @@ class TriangularVFM(DensityRatioEstimator):
 
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """integrate the time-score over tau in [eps, 1-eps] (chunked vmap); return -integral on CPU."""
+        """integrate the time-score over tau in [eps, 1-eps] (chunked vmap); return -integral on cpu."""
         if self.net_b is None or self.net_eta is None:
             raise RuntimeError("TriangularVFM model is not trained. Call fit() before predict_ldr().")
 
@@ -243,9 +258,9 @@ class TriangularVFM(DensityRatioEstimator):
         n_points = self.integration_steps
         if n_points % 2 == 0:
             n_points += 1
-        t_vals = torch.linspace(self.eps, 1.0 - self.eps, steps=n_points, device=self.device)
+        t_vals = torch.linspace(self.time.eps, 1.0 - self.time.eps, steps=n_points, device=self.device)
 
-        # if EMA is active, swap in shadow weights
+        # if ema is active, swap in shadow weights
         if self.ema_b is not None:
             self.ema_b.apply_to(self.net_b)
         if self.ema_eta is not None:
@@ -283,7 +298,7 @@ class TriangularVFM(DensityRatioEstimator):
                 self.ema_eta.restore(self.net_eta)
 
     def _compute_time_score_single(self, t_scalar: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """time-score at a single tau: -div(b) + <b, eta> / gamma; vmap-ready."""
+        """time-score at a single t: -div(b) + <b, eta> / gamma; vmap-ready."""
         n = x.shape[0]
         t_batch = t_scalar.expand(n, 1)
 

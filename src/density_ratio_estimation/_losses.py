@@ -56,7 +56,7 @@ def tsm_loss(
         model: f(x [B,D], t [B,1]) -> [B,1].
         batch: requires "x0", "x1".
         tau: [B,1].
-        iw: unused (signature parity with trainer).
+        iw: importance weight, applied to interior (sampled-tau) terms only.
         reweight: enable time-dependent weighting.
         eps: tau=0 boundary value.
 
@@ -87,7 +87,11 @@ def tsm_loss(
     term4 = score.squeeze() * lam_dt
     term5 = (score ** 2).squeeze() * lam_t
 
-    return (term1 - term2 + term3 + term4 + term5).mean()
+    # separate boundary (t0, t1) and interior (tau) terms; iw applied to interior only
+    # when iw == ones(B,1), this is identical to mean(term1 - term2 + term3 + term4 + term5)
+    boundary = (term1 - term2).mean()
+    interior = (iw.squeeze(-1) * (term3 + term4 + term5)).mean()
+    return boundary + interior
 
 
 tsm_loss.required_keys = frozenset({"x0", "x1"})
@@ -175,7 +179,7 @@ def velo_loss(
     Args:
         model: f(t [B,1], x [B,D]) -> [B,D].
         batch: requires "x0", "x1".
-        tau, iw: [B,1]; iw unused.
+        tau, iw: [B,1]; iw is importance weight applied to per-sample loss.
         path: object with gamma(tau), dgamma_dtau(tau) returning [B,1].
         antithetic: enable (z, -z) variance reduction.
 
@@ -191,17 +195,18 @@ def velo_loss(
 
     if not antithetic:
         b = model(tau, mu + g * z)
-        return (0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)).mean()
+        # per-sample loss with iw applied; when iw == ones(B,1) is identical to original mean
+        loss_per_sample = 0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)
+        return (loss_per_sample * iw.squeeze(-1)).mean()
 
     b_p = model(tau, mu + g * z)
     b_m = model(tau, mu - g * z)
     v_star_m = (x1 - x0) - dg * z
-    return (
-        0.25 * (b_p ** 2).sum(-1)
-        - 0.5 * (v_star * b_p).sum(-1)
-        + 0.25 * (b_m ** 2).sum(-1)
-        - 0.5 * (v_star_m * b_m).sum(-1)
-    ).mean()
+    # compute loss per pair and apply iw
+    lp = 0.25 * (b_p ** 2).sum(-1) - 0.5 * (v_star * b_p).sum(-1)
+    lm = 0.25 * (b_m ** 2).sum(-1) - 0.5 * (v_star_m * b_m).sum(-1)
+    loss_per_pair = 0.5 * (lp + lm)
+    return (loss_per_pair * iw.squeeze(-1)).mean()
 
 
 velo_loss.required_keys = frozenset({"x0", "x1"})
@@ -224,7 +229,7 @@ def denoiser_loss(
     Args:
         model: f(t [B,1], x [B,D]) -> [B,D].
         batch: requires "x0", "x1".
-        tau, iw: [B,1]; iw unused.
+        tau, iw: [B,1]; iw is importance weight applied to per-sample loss.
         path: object with gamma(tau) returning [B,1].
 
     Returns: scalar loss.
@@ -234,7 +239,9 @@ def denoiser_loss(
     z = torch.randn_like(x0)
     x_t = (1 - tau) * x0 + tau * x1 + path.gamma(tau) * z
     eta = model(tau, x_t)
-    return (0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)).mean()
+    # per-sample loss with iw applied; when iw == ones(B,1) is identical to original mean
+    loss_per_sample = 0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)
+    return (loss_per_sample * iw.squeeze(-1)).mean()
 
 
 denoiser_loss.required_keys = frozenset({"x0", "x1"})
@@ -262,7 +269,7 @@ def fm_loss(
     Args:
         model: f(t [B,1], x [B,D], c [B,1]) -> (v [B,D], s [B,D]).
         batch: requires "x0", "x1". trainer passes equal-size halves.
-        tau, iw: [B,1]; iw unused.
+        tau, iw: [B,1]; iw is importance weight, tiled to 2B and applied per-sample.
         score_weight, p_uncond, sentinel_cond: as documented.
 
     Returns: scalar loss.
@@ -277,6 +284,7 @@ def fm_loss(
         ],
         dim=0,
     )
+    iw_tiled = iw.repeat(2, 1).squeeze(-1)  # [2B] importance weight, tiled to match tau.repeat
     tau = tau.repeat(2, 1)
 
     if p_uncond > 0.0:
@@ -289,7 +297,10 @@ def fm_loss(
     s_star = -z / (1 - tau)
 
     v, s = model(tau, x_t, c)
-    return F.mse_loss(v, v_star) + score_weight * F.mse_loss(s, s_star)
+    # manual mse to apply per-sample iw; when iw == ones(B,1) is identical to F.mse_loss
+    v_err = ((v - v_star) ** 2).mean(dim=-1)  # [2B]
+    s_err = ((s - s_star) ** 2).mean(dim=-1)  # [2B]
+    return (v_err * iw_tiled).mean() + score_weight * (s_err * iw_tiled).mean()
 
 
 fm_loss.required_keys = frozenset({"x0", "x1"})
@@ -314,7 +325,7 @@ def tri_fm_loss(
     Args:
         model: must expose `forward_from_onehot(t, x, y_onehot)` -> (v, s).
         batch: requires "x0", "x1", "xstar".
-        tau, iw: [B,1]; iw unused.
+        tau, iw: [B,1]; iw is importance weight, tiled to 3B and applied per-sample.
         score_weight, triangular_p_uncond: as documented.
 
     Returns: scalar loss.
@@ -333,6 +344,7 @@ def tri_fm_loss(
         dim=0,
     )
     y_oh = F.one_hot(y_idx, num_classes=3).to(x_data.dtype)
+    iw_tiled = iw.repeat(3, 1).squeeze(-1)  # [3B] importance weight, tiled to match tau.repeat
     tau = tau.repeat(3, 1)
 
     if triangular_p_uncond > 0.0:
@@ -346,9 +358,12 @@ def tri_fm_loss(
 
     v, s = model.forward_from_onehot(tau, x_t, y_oh)
 
-    loss_v = F.mse_loss(v, v_star)
+    # velocity term: manual mse with iw; when iw == ones(B,1) is identical to F.mse_loss
+    v_err = ((v - v_star) ** 2).mean(dim=-1)  # [3B]
+    loss_v = (v_err * iw_tiled).mean()
+    # score term: apply iw before masking; normalize by n_active
     s_mask = (y_idx != 2).to(x_data.dtype).unsqueeze(-1)
-    diff = ((s - s_star) ** 2) * s_mask
+    diff = ((s - s_star) ** 2) * s_mask * iw_tiled.unsqueeze(-1)
     n_active = s_mask.sum() * x_data.shape[1]
     loss_s = diff.sum() / n_active.clamp(min=1.0)
 
