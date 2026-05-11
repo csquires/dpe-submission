@@ -17,7 +17,7 @@ import warnings
 
 import torch
 
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import ELDR
 from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema, make_time_sampler,
@@ -32,7 +32,7 @@ from src.waypoints.triangular_continuous import BarycentricVfm1D
 from src.waypoints.piecewise_sb import PiecewiseSBVfm1D
 
 
-class _TriangularVFMBase(DensityRatioEstimator):
+class _TriangularVFMBase(ELDR):
     """shared two-phase fit + time-score integration for the triangular VFM variants.
 
     constructors of V1 / V2 build their own path and resolve TimeCfg before

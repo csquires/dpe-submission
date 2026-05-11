@@ -8,12 +8,12 @@ _deprecation_warnings.warn(
 
 import torch
 
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import ELDR
 from src.models.binary_classification.binary_classifier import BinaryClassifier
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 
-class TriangularTDRE(DensityRatioEstimator):
+class TriangularTDRE(ELDR):
     """
     TDRE variant that builds waymarks along a triangular path p0 -> p* -> p1.
     """

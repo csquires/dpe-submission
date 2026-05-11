@@ -8,7 +8,7 @@ import warnings
 
 import torch
 
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import ELDR
 from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema,
@@ -21,7 +21,7 @@ from src.waypoints.curve_2d import Curve2D
 from src.models.time_score_matching.velocity_network_2d import MLP2D
 
 
-class TriangularVFM2D(DensityRatioEstimator):
+class TriangularVFM2D(ELDR):
     """vfm dre with 2d-time stacked interpolant path.
 
     trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially

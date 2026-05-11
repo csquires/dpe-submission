@@ -7,7 +7,7 @@ from typing import Optional
 import torch
 from torch import Tensor
 
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import ELDR
 from src.models.flow.multiclass_vel_score_mlp import MultiClassVelScoreMLP
 from src.density_ratio_estimation._trainer import train_loop
 from src.density_ratio_estimation._losses import make_tri_fm_loss
@@ -24,7 +24,7 @@ from src.density_ratio_estimation._cfgs import (
 )
 
 
-class TriangularFMDRE(DensityRatioEstimator):
+class TriangularFMDRE(ELDR):
     """3-class flow-matching DRE under `tri_fm_loss`; predict_ldr runs the triangular ratio ODE."""
 
     def __init__(

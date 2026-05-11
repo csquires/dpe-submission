@@ -7,7 +7,7 @@ from typing import Optional
 
 import torch
 
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import ELDR
 from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema, make_time_sampler,
@@ -19,7 +19,7 @@ from src.waypoints.path_2d import CtsmPath2D
 from src.waypoints.triangular_continuous_2d import Stacked2DCtsm
 
 
-class TriangularCTSM2D(DensityRatioEstimator):
+class TriangularCTSM2D(ELDR):
     """CTSM with 2D-time stacked interpolant path.
 
     Trains a 2-vector score network on closed-form Stacked2DCtsm target via

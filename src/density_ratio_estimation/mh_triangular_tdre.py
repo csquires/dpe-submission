@@ -1,13 +1,13 @@
 import torch
 
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import ELDR
 from src.models.binary_classification.multi_head_binary_classifier import (
     MultiHeadBinaryClassifier,
 )
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 
-class MultiHeadTriangularTDRE(DensityRatioEstimator):
+class MultiHeadTriangularTDRE(ELDR):
     """
     TDRE variant using single multi-head binary classifier instead of list of classifiers.
     builds waypoints along triangular path p0 -> p* -> p1, then trains all heads simultaneously.

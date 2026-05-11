@@ -1,12 +1,12 @@
 import torch
 from einops import rearrange
 
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.density_ratio_estimation.base import ELDR
 from src.models.multiclass_classification.multiclass_classifier import MulticlassClassifier
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 
-class TriangularMDRE(DensityRatioEstimator):
+class TriangularMDRE(ELDR):
     """
     MDRE variant that builds waymarks along a triangular path p0 -> p* -> p1.
     """
