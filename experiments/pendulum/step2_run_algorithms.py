@@ -3,7 +3,7 @@ import h5py
 import numpy as np
 import os
 import torch
-from src.density_ratio_estimation import (
+from src.methods import (
     BDRE, MDRE, TSM, CTSM, TriangularMDRE, MultiHeadTriangularTDRE,
     TriangularCTSM, TriangularVFM,
 )

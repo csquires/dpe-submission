@@ -4,7 +4,7 @@ import numpy as np
 import os
 import torch
 import yaml
-from src.density_ratio_estimation import (
+from src.methods import (
     BDRE, MDRE, TSM, CTSM, TriangularMDRE, MultiHeadTriangularTDRE,
     TriangularCTSM, TriangularVFM, TabularPluginDRE, SmoothedTabularPluginDRE,
 )

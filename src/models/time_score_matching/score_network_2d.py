@@ -7,7 +7,7 @@ class ScoreNetwork2D(nn.Module):
 
     Produces a 2-vector score (s_1, s_2) where component i estimates
     \\partial_{t_i} \\log \\rho(x | t_1, t_2). Used by TriangularCTSM2D in
-    src/density_ratio_estimation/triangular_ctsm_2d.py.
+    src/methods/triangular_ctsm_2d.py.
 
     Distinct from time_score_net_2d.py in this directory: that file has SCALAR
     output and is used by TriangularTSM. This file has VECTOR output [B, 2] and

@@ -1,13 +1,13 @@
 import torch
 
 from src.eig_estimation.base import EIGEstimation
-from src.density_ratio_estimation.base import DensityRatioEstimator
+from src.methods.common.base import DRE
 
 
 class EIGPlugin(EIGEstimation):
     def __init__(
         self,
-        density_ratio_estimator: DensityRatioEstimator,
+        density_ratio_estimator: DRE,
         train_ratio: float = None,
     ):
         """
@@ -59,7 +59,7 @@ class EIGPlugin(EIGEstimation):
 
 
 if __name__ == "__main__":
-    from src.density_ratio_estimation import BDRE
+    from src.methods import BDRE
     from src.models.binary_classification import make_binary_classifier
 
     DATA_DIM = 2

@@ -18,14 +18,14 @@ Distribution types (from experiments.utils.hpo.sample):
 
 import torch
 
-from src.density_ratio_estimation.bdre import BDRE
-from src.density_ratio_estimation.mdre import MDRE
-from src.density_ratio_estimation.mh_tdre import MultiHeadTDRE
-from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.ctsm import CTSM
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.density_ratio_estimation.fmdre import FMDRE
-from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
+from src.methods.cls.bdre import BDRE
+from src.methods.cls.mdre import MDRE
+from src.methods.cls.tdre.mh import MultiHeadTDRE
+from src.methods.reg.tsm import TSM
+from src.methods.reg.ctsm import CTSM
+from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.fmdre import FMDRE
+from src.methods.reg.fmdre.s2 import FMDRE_S2
 
 from src.models.binary_classification import make_binary_classifier
 from src.models.binary_classification.multi_head_binary_classifier import make_multi_head_binary_classifier

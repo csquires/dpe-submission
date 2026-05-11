@@ -34,7 +34,7 @@ torch.manual_seed(SEED)
 
 # import delayed modules
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
+from src.methods.cls.mdre.tri import TriangularMDRE
 from src.eig_estimation.plugin import EIGPlugin
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 

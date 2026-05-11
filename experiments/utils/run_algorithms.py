@@ -102,7 +102,7 @@ def create_estimator(method, config, device, search_spaces, alpha_idx=0, winners
 
     elif method == "TriangularMDRE":
         from src.models.multiclass_classification import make_multiclass_classifier
-        from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
+        from src.methods.cls.mdre.tri import TriangularMDRE
         classifier = make_multiclass_classifier(
             name="default",
             input_dim=input_dim,
@@ -112,7 +112,7 @@ def create_estimator(method, config, device, search_spaces, alpha_idx=0, winners
 
     elif method == "MultiHeadTriangularTDRE":
         from src.models.binary_classification import make_multi_head_binary_classifier
-        from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
+        from src.methods.cls.tdre.mh_tri import MultiHeadTriangularTDRE
         classifier = make_multi_head_binary_classifier(
             input_dim=input_dim,
             num_heads=num_waypoints - 1,
@@ -124,12 +124,12 @@ def create_estimator(method, config, device, search_spaces, alpha_idx=0, winners
         )
 
     elif method == "TriangularFMDRE":
-        from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
+        from src.methods.reg.fmdre.tri import TriangularFMDRE
         return TriangularFMDRE(input_dim=input_dim, device=device)
 
     elif method == "BDRE":
         from src.models.binary_classification import make_binary_classifier
-        from src.density_ratio_estimation import BDRE
+        from src.methods import BDRE
         classifier = make_binary_classifier(
             name="default",
             input_dim=input_dim
@@ -138,7 +138,7 @@ def create_estimator(method, config, device, search_spaces, alpha_idx=0, winners
 
     elif method == "MDRE":
         from src.models.multiclass_classification import make_multiclass_classifier
-        from src.density_ratio_estimation import MDRE
+        from src.methods import MDRE
         classifier = make_multiclass_classifier(
             name="default",
             input_dim=input_dim,

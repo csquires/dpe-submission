@@ -278,7 +278,7 @@ def per_cell(
         return False
 
     # pack returns [N, T+1, 3] float32 (no flatten). store flat [N, (T+1)*3] in HDF5
-    # to match the [N, D] shape that downstream src/density_ratio_estimation/* consumers expect.
+    # to match the [N, D] shape that downstream src/methods/* consumers expect.
     # step2 will reshape back to [N, T+1, 3] only if it needs the structured form.
     samples_pstar = pack(states_pstar, actions_pstar).reshape(N, -1)
     samples_p0    = pack(states_p0,    actions_p0).reshape(N, -1)

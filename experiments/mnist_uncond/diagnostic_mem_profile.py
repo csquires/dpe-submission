@@ -10,10 +10,10 @@ import h5py
 import torch
 import yaml
 
-from src.density_ratio_estimation import TSM
-from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
-from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from src.methods import TSM
+from src.methods.cls.mdre.tri import TriangularMDRE
+from src.methods.cls.tdre.mh_tri import MultiHeadTriangularTDRE
+from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
 from src.models.binary_classification import make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
 

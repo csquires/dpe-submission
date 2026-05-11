@@ -1,7 +1,7 @@
 """universal builder functions for all DRE methods sampled from HPO.
 
 maps flat scalar hyperparameter dicts (from hpo_search_spaces.py) into
-fully-instantiated DensityRatioEstimator instances. each builder corresponds
+fully-instantiated DRE instances. each builder corresponds
 to one method and encapsulates estimator instantiation, classifier construction,
 path/curve assembly, and hyperparameter routing. all builders are pure functions
 with uniform signature: build_X(input_dim, device, num_waypoints, **flat_hp)
@@ -10,27 +10,27 @@ with uniform signature: build_X(input_dim, device, num_waypoints, **flat_hp)
 
 import torch
 
-from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.ctsm import CTSM
-from src.density_ratio_estimation.triangular_tsm import TriangularTSM
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
-from src.density_ratio_estimation.fmdre import FMDRE
-from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
-from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
-from src.density_ratio_estimation.bdre import BDRE
-from src.density_ratio_estimation.mdre import MDRE
-from src.density_ratio_estimation.mh_tdre import MultiHeadTDRE
-from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
-from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
-from src.density_ratio_estimation.tabular_plugin import (
+from src.methods.reg.tsm import TSM
+from src.methods.reg.ctsm import CTSM
+from src.methods.reg.tsm.tri import TriangularTSM
+from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.fmdre import FMDRE
+from src.methods.reg.fmdre.s2 import FMDRE_S2
+from src.methods.reg.fmdre.tri import TriangularFMDRE
+from src.methods.cls.bdre import BDRE
+from src.methods.cls.mdre import MDRE
+from src.methods.cls.tdre.mh import MultiHeadTDRE
+from src.methods.cls.mdre.tri import TriangularMDRE
+from src.methods.cls.tdre.mh_tri import MultiHeadTriangularTDRE
+from src.methods.cls.tabular_plugin import (
     TabularPluginDRE,
     SmoothedTabularPluginDRE,
 )
 
-from src.density_ratio_estimation.triangular_ctsm import TriangularCTSM
-from src.density_ratio_estimation.triangular_ctsm_2d import TriangularCTSM2D
-from src.density_ratio_estimation.triangular_vfm import TriangularVFM
-from src.density_ratio_estimation.triangular_vfm_2d import TriangularVFM2D
+from src.methods.reg.ctsm.tri import TriangularCTSM
+from src.methods.reg.ctsm.tri.v3 import TriangularCTSM2D
+from src.methods.reg.vfm.tri import TriangularVFM
+from src.methods.reg.vfm.tri.v3 import TriangularVFM2D
 
 from src.waypoints.piecewise_sb import PiecewiseSBCtsm1D, PiecewiseSBVfm1D
 from src.waypoints.triangular_continuous import BarycentricCtsm1D, BarycentricVfm1D

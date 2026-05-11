@@ -10,7 +10,7 @@ dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipy
 ## Organization
 
 - `src/` - implementations of algorithms, models, and their APIs for our tasks
-  - `density_ratio_estimation/` - Density Ratio Estimation methods (BDRE, TDRE, MDRE, TSM, triangular/spatial variants thereof)
+  - `methods/` - Density Ratio Estimation methods (BDRE, TDRE, MDRE, TSM, triangular/spatial variants thereof). Split into `cls/` (classification-based: BDRE/TDRE/MDRE family) and `reg/` (regression / score-based: TSM/CTSM/FMDRE/VFM family); shared base classes in `common/`.
   - `eldr_estimation/` - ELDR methods that accept samples from three distributions
   - `eig_estimation/` - EIG estimation APIs
   - `waypoints/` - waypoint generation for telescoping methods
@@ -29,7 +29,7 @@ dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipy
 
 ## Core Abstractions
 
-**DensityRatioEstimator** (`src/density_ratio_estimation/base.py`)
+**DRE** (`src/methods/common/base.py`)
 - `fit(samples_p0, samples_p1)` - train on samples from two distributions
 - `predict_ldr(xs)` - predict log density ratio at points xs
 
@@ -45,7 +45,7 @@ dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipy
 **Plugin estimation** (`src/eldr_estimation/plugins.py`, `src/eig_estimation/plugin.py`): Non-triangular methods compose DRE methods for higher-level estimation
 - ELDR plugin: fits any dre method on (p0, p1), evaluates ldr on samples from base distribution, returns empirical mean (monte carlo estimate of expected ldr)
 - EIG plugin: constructs joint samples (theta, y) as p0 and shuffled marginals as p1, fits dre, returns mean ldr (mutual information via kl between joint and product of marginals)
-- implementation: accepts any `DensityRatioEstimator` as dependency injection, enabling comparison of bdre/tdre/mdre/tsm/vfm as subroutines
+- implementation: accepts any `DRE` as dependency injection, enabling comparison of bdre/tdre/mdre/tsm/vfm as subroutines
 
 ## DRE methods
 
@@ -132,7 +132,7 @@ mdre_waypoints: [15]                             # waypoint counts for mdre
 main modules have `__main__` blocks for standalone testing:
 
 ```bash
-python -m src.density_ratio_estimation.tdre
-python -m src.density_ratio_estimation.mdre
-python -m src.density_ratio_estimation.bdre
+python -m src.methods.cls.tdre
+python -m src.methods.cls.mdre
+python -m src.methods.cls.bdre
 ```

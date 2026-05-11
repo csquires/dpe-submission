@@ -18,14 +18,14 @@ Distribution types (from experiments.utils.hpo.sample):
   ("choice", [v1, v2, ...])    discrete uniform over list
 """
 
-from src.density_ratio_estimation.mh_triangular_tdre import MultiHeadTriangularTDRE
-from src.density_ratio_estimation.triangular_ctsm import TriangularCTSM
-from src.density_ratio_estimation.triangular_ctsm_2d import TriangularCTSM2D
-from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
-from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
-from src.density_ratio_estimation.triangular_tsm import TriangularTSM
-from src.density_ratio_estimation.triangular_vfm import TriangularVFM
-from src.density_ratio_estimation.triangular_vfm_2d import TriangularVFM2D
+from src.methods.cls.tdre.mh_tri import MultiHeadTriangularTDRE
+from src.methods.reg.ctsm.tri import TriangularCTSM
+from src.methods.reg.ctsm.tri.v3 import TriangularCTSM2D
+from src.methods.reg.fmdre.tri import TriangularFMDRE
+from src.methods.cls.mdre.tri import TriangularMDRE
+from src.methods.reg.tsm.tri import TriangularTSM
+from src.methods.reg.vfm.tri import TriangularVFM
+from src.methods.reg.vfm.tri.v3 import TriangularVFM2D
 
 from src.models.binary_classification import make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier

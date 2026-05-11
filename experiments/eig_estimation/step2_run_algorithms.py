@@ -13,10 +13,10 @@ args = parser.parse_args()
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM, TriangularTSM
-from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
+from src.methods import BDRE, MDRE, TDRE, TSM, TriangularTSM
+from src.methods.cls.mdre.tri import TriangularMDRE
 from src.eig_estimation.plugin import EIGPlugin
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
 
 
 class TriangularTSMEIGAdapter:

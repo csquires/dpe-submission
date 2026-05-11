@@ -176,7 +176,7 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
 
     # tabular methods take encoding_cfg / mdp shape, not flat hp dict
     if method == "TabularPluginDRE":
-        from src.density_ratio_estimation import TabularPluginDRE
+        from src.methods import TabularPluginDRE
         decode = "argmax" if encoding_type.startswith("onehot") else "nn"
         estimator = TabularPluginDRE(
             n_states=encoding_cfg["n_states"],
@@ -186,7 +186,7 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
             device=device,
         )
     elif method == "SmoothedTabularPluginDRE":
-        from src.density_ratio_estimation import SmoothedTabularPluginDRE
+        from src.methods import SmoothedTabularPluginDRE
         estimator = SmoothedTabularPluginDRE(
             n_states=encoding_cfg["n_states"],
             n_actions=encoding_cfg["n_actions"],

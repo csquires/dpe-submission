@@ -15,7 +15,7 @@ class MLP2D(nn.Module):
     """
     Multi-layer perceptron for 2D-time vector field estimation.
 
-    Mirrors the 1D MLP at src/density_ratio_estimation/spatial_velo_denoiser2.py
+    Mirrors the 1D MLP at src/methods/spatial_velo_denoiser2.py
     line 18 (3 hidden Linear+GELU blocks, hardcoded). Differs only in the input
     projection: `+ 2` for two time scalars instead of `+ 1`.
 

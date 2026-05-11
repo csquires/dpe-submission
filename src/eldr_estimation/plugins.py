@@ -1,7 +1,7 @@
 import torch
 
 from src.eldr_estimation.base import ELDREstimator
-from src.density_ratio_estimation import BDRE, MDRE, TDRE, TSM
+from src.methods import BDRE, MDRE, TDRE, TSM
 
 
 

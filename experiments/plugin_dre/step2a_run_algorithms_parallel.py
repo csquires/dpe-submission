@@ -33,12 +33,12 @@ task_id = args.task_id if args.task_id is not None else int(os.environ.get('SLUR
 
 from src.models.binary_classification import make_binary_classifier, make_pairwise_binary_classifiers
 from src.models.multiclass_classification import make_multiclass_classifier
-from src.density_ratio_estimation.bdre import BDRE
-from src.density_ratio_estimation.tdre import TDRE
-from src.density_ratio_estimation.mdre import MDRE
-from src.density_ratio_estimation.tsm import TSM
-from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
-from src.density_ratio_estimation.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.cls.bdre import BDRE
+from src.methods.cls.tdre import TDRE
+from src.methods.cls.mdre import MDRE
+from src.methods.reg.tsm import TSM
+from src.methods.cls.mdre.tri import TriangularMDRE
+from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 config = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
