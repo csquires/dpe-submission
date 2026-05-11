@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR
 from torch import Tensor
 
 from ._ema import EMA
-from ._time_samplers import TimeSampler, UniformSampler, BetaSampler, PathSampler, sampler_from_dist
+from ._time_samplers import TimeSampler, UniformSampler, BetaSampler, PathSampler, NoIWSampler, sampler_from_dist
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,17 +59,23 @@ class EmaCfg:
 
 @dataclass(frozen=True, kw_only=True)
 class TimeCfg:
-    """time-sampling cfg: holds a TimeSampler instance.
+    """time-sampling cfg: holds a TimeSampler instance plus an iw toggle.
 
     the sampler abstracts the (q, iw) pair; concrete samplers in
     `_time_samplers.py` cover uniform, Beta, and path-driven cases, and the
     surface is open to user-supplied samplers (any TimeSampler subclass).
+
+    `apply_iw` (default True) controls whether the sampler's iw is honored.
+    when False, the sampler is wrapped with NoIWSampler so iw is forced to 1,
+    making the loss reflect the q distribution directly (biased against the
+    uniform integral; unbiased against the q-weighted integral).
 
     legacy string-based construction is available via TimeCfg.from_dist for
     convenience and HPO migration.
     """
 
     sampler: TimeSampler = field(default_factory=UniformSampler)
+    apply_iw: bool = True
 
     def __post_init__(self) -> None:
         """validate sampler type."""
@@ -79,9 +85,21 @@ class TimeCfg:
             )
 
     @classmethod
-    def from_dist(cls, dist: str = "uniform", eps: float = 1e-3) -> "TimeCfg":
+    def from_dist(cls, dist: str = "uniform", eps: float = 1e-3, apply_iw: bool = True) -> "TimeCfg":
         """legacy convenience constructor: TimeCfg.from_dist('beta_2_2', eps=1e-3)."""
-        return cls(sampler=sampler_from_dist(dist, eps))
+        return cls(sampler=sampler_from_dist(dist, eps), apply_iw=apply_iw)
+
+    @property
+    def effective_sampler(self) -> TimeSampler:
+        """the sampler actually used by make_time_sampler.
+
+        wraps the configured sampler with NoIWSampler when apply_iw is False.
+        UniformSampler always returns iw=1 anyway, so wrapping is a no-op there;
+        kept uniform for consistency / hashability.
+        """
+        if self.apply_iw:
+            return self.sampler
+        return NoIWSampler(base=self.sampler)
 
     @property
     def eps(self) -> float:
@@ -153,17 +171,20 @@ def make_ema(model, cfg: EmaCfg) -> EMA | None:
 
 
 def make_time_sampler(cfg: TimeCfg) -> Callable[[int, float, torch.device], tuple[Tensor, Tensor]]:
-    """return a callable that delegates to cfg.sampler.sample(B, device).
+    """return a callable that delegates to cfg.effective_sampler.sample(B, device).
 
     signature is kept as (batch_size, eps, device) for backward compat with the
     trainer's existing call shape; the eps argument is ignored (the sampler owns
     its own eps and uses it internally).
 
+    when cfg.apply_iw is False, effective_sampler wraps the configured sampler
+    with NoIWSampler to force iw=1.
+
     returns:
         callable with signature (batch_size: int, eps: float, device: torch.device)
         -> tuple[Tensor, Tensor] yielding (tau [B,1], iw [B,1]).
     """
-    sampler_obj = cfg.sampler
+    sampler_obj = cfg.effective_sampler
 
     def sampler(batch_size: int, eps: float, device: torch.device) -> tuple[Tensor, Tensor]:
         return sampler_obj.sample(batch_size, device)

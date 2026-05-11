@@ -140,6 +140,33 @@ class PathSampler(TimeSampler):
         return hash((type(self).__name__, id(self.path)))
 
 
+@dataclass(frozen=True)
+class NoIWSampler(TimeSampler):
+    """wraps any TimeSampler; forces iw=1 regardless of the base's iw.
+
+    use when non-uniform sampling is a deliberate loss-emphasis choice rather
+    than a variance-reduction technique: the resulting estimator is biased
+    against the uniform integral (the canonical CTSM / FM integrand) but
+    unbiased against the q-weighted integral the sampler defines. composes
+    with reweight (the lambda multiplier) the same way iw would.
+
+    constructed implicitly via ``TimeCfg(apply_iw=False)``; may also be used
+    directly: ``NoIWSampler(base=BetaSampler(a=2, b=2))``.
+    """
+
+    base: TimeSampler
+
+    @property
+    def eps(self) -> float:
+        return self.base.eps
+
+    def sample(self, batch_size: int, device) -> tuple[Tensor, Tensor]:
+        """delegate to base for tau; replace iw with ones."""
+        tau, _ = self.base.sample(batch_size, device)
+        iw = torch.ones(batch_size, 1, device=device)
+        return tau, iw
+
+
 def sampler_from_dist(dist: str, eps: float = 1e-3) -> TimeSampler:
     """legacy string -> TimeSampler factory for {uniform, beta_2_2, beta_5_5}.
 
