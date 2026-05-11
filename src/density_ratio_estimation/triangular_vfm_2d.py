@@ -1,12 +1,7 @@
-"""TriangularVFM2D: V3-VFM 2D-time stacked-interpolant density ratio estimator.
+"""TriangularVFM2D: VFM DRE with 2D-time stacked interpolant.
 
-Migrated per B13 spec. Trains two velocity heads (b_1, b_2) and one denoiser (eta)
-sequentially on a 2D-time stacked interpolant path via inline losses. Inference
-integrates the time-score along a Curve2D from tau=eps to 1-eps.
-
-Note: Inline losses used (not delegated to train_two_phase or train_score_flow).
-This is pragmatic (transparent, no closure overhead) until Scope A losses are
-extended with model_call kwarg.
+trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially on a
+2D-time stacked interpolant; integrates the time-score along a Curve2D at inference.
 """
 from typing import Optional, Literal, Callable
 import warnings
@@ -25,7 +20,7 @@ from src.models.time_score_matching.velocity_network_2d import MLP2D
 
 
 class TriangularVFM2D(DensityRatioEstimator):
-    """V3-VFM 2D-time triangular VFM density ratio estimator.
+    """VFM DRE with 2D-time stacked interpolant path.
 
     Trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially
     on three distributions p_0, p_1, p_*. Inference integrates the time-score
@@ -163,8 +158,8 @@ class TriangularVFM2D(DensityRatioEstimator):
             samples_pstar: [Nstar, D] samples from p_*.
 
         Procedure:
-            phase 1: joint b_1, b_2 optimizer (eta frozen) — velocity matching loss.
-            phase 2: eta optimizer (b_1, b_2 frozen) — denoising loss.
+            phase 1: joint (b_1, b_2) optimizer with eta frozen, velocity loss.
+            phase 2: eta optimizer with (b_1, b_2) frozen, denoiser loss.
         """
         n_star = samples_pstar.shape[0]
 
@@ -238,7 +233,7 @@ class TriangularVFM2D(DensityRatioEstimator):
             # sample noise
             z = torch.randn_like(x0)  # [B, D]
 
-            # compute path quantities (detached — no gradients through path)
+            # path quantities are detached; gradients flow only through the b/eta nets.
             mu = self.path.mu(x0, x1, xstar, t1, t2).detach()  # [B, D]
             dmu_dt1 = self.path.dmu_dt1(x0, x1, xstar, t1, t2).detach()  # [B, D]
             dmu_dt2 = self.path.dmu_dt2(x0, x1, xstar, t1, t2).detach()  # [B, D]
@@ -247,7 +242,7 @@ class TriangularVFM2D(DensityRatioEstimator):
             dgamma_dt2 = self.path.dgamma_dt2(t1, t2).detach()  # [B, 1]
 
             if self.antithetic:
-                # antithetic variance reduction: evaluate at ±z
+                # antithetic variance reduction: evaluate at +z and -z
                 x_t_plus = mu + gamma_t * z  # [B, D]
                 x_t_minus = mu - gamma_t * z  # [B, D]
 
@@ -261,7 +256,7 @@ class TriangularVFM2D(DensityRatioEstimator):
                 target_1_minus = dmu_dt1 - dgamma_dt1 * z  # [B, D]
                 target_2_minus = dmu_dt2 - dgamma_dt2 * z  # [B, D]
 
-                # half-norm-minus-dot per direction, averaged over ±z pair
+                # half-norm-minus-dot per direction, averaged over (z, -z)
                 loss_b1 = (
                     0.25 * (b1_plus ** 2).sum(dim=-1)
                     - 0.5 * (target_1_plus * b1_plus).sum(dim=-1)
@@ -373,10 +368,8 @@ class TriangularVFM2D(DensityRatioEstimator):
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """Estimate log p_0(x) / p_1(x) via time-score line integral on self.curve.
 
-        Computes TWO divergences (one per velocity head) per integration step.
-        The 2x cost is intentional: 2D-time decomposition splits time-score into
-        two directional components, each requiring its own div-of-velocity. Do
-        NOT collapse the two jacrev calls — they have different signatures.
+        Computes one divergence per velocity head (two total) per integration step.
+        The two jacrev calls have different signatures; do NOT collapse them.
 
         Args:
             xs: [N, D] test points (CPU or device); moved to self.device.
@@ -463,7 +456,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         Args:
             t_tau: [4] packed (t_1, t_2, dt_1/dtau, dt_2/dtau) as 0-d slices
                    produced by outer vmap over [n_points, 4].
-            x: [n_samples, D] test points (broadcast — not vmapped).
+            x: [n_samples, D] test points (broadcast, not vmapped).
 
         Returns:
             [n_samples] time scores at the current tau.
@@ -488,7 +481,7 @@ class TriangularVFM2D(DensityRatioEstimator):
         b2_pred = self.net_b2(t1_batch, t2_batch, x)  # [n_samples, D]
         eta_pred = self.net_eta(t1_batch, t2_batch, x)  # [n_samples, D]
 
-        # divergence via vmap(jacrev) per head — TWO separate calls, do NOT collapse
+        # divergence via vmap(jacrev) per head; two separate calls, do NOT collapse
         t1_one = t1_s.view(1, 1)
         t2_one = t2_s.view(1, 1)
 

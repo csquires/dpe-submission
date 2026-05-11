@@ -20,7 +20,6 @@ from src.density_ratio_estimation.triangular_ctsm_2d import TriangularCTSM2D
 from src.density_ratio_estimation.tabular_plugin import TabularPluginDRE, SmoothedTabularPluginDRE
 from src.density_ratio_estimation.vfm import VFM
 
-# backward-compat alias
 SpatialVeloDenoiser = VFM
 
 __all__ = [

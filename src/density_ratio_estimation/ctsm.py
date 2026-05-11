@@ -9,12 +9,10 @@ from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 
 
 class CTSM(DensityRatioEstimator):
-    """
-    Conditional Time Score Matching for density ratio estimation.
+    """conditional time-score matching DRE.
 
-    Uses Schrodinger Bridge path with closed-form conditional time score target.
-    Training: delegates to train_score_flow with closed_form_sb_loss (path=None).
-    Inference: ODE integration from t=eps to t=1-eps via torch.trapezoid.
+    trains s_phi(x, tau) under `sb_loss` (Schroedinger-bridge target, path=None);
+    integrates -score over tau in [eps, 1-eps] at inference.
     """
 
     def __init__(
@@ -34,18 +32,8 @@ class CTSM(DensityRatioEstimator):
         time_dist: str = "uniform",
         activation: str = "elu",
     ) -> None:
-        """
-        Initialize CTSM estimator.
-
-        Args mostly inherited from base. ema_decay (default None) enables EMA
-        of model parameters for inference; if set, must be in (0, 1).
-        grad_clip_norm (default None) clips gradient norm at the given value
-        before each optimizer step; None disables clipping.
-        time_dist: importance sampling time distribution. in {"uniform", "beta_2_2",
-        "beta_5_5"}; default "uniform" preserves current behavior.
-        activation: score network activation function {"elu", "gelu", "silu"};
-        default "elu" preserves byte-identical behavior.
-        """
+        """ema_decay in (0,1) enables EMA; grad_clip_norm clips per-step grad norm;
+        time_dist selects importance sampler; activation chooses the score MLP nonlinearity."""
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
         self.n_epochs = n_epochs
@@ -77,12 +65,7 @@ class CTSM(DensityRatioEstimator):
         self.ema: Optional[EMA] = None
 
     def init_model(self) -> None:
-        """
-        Initialize neural network and optimizer.
-
-        Instantiate TimeScoreNetwork1D on device, create Adam optimizer, and
-        optionally wrap in EMA if ema_decay is set.
-        """
+        """instantiate TimeScoreNetwork1D, Adam optimizer, and optional EMA."""
         self.model = TimeScoreNetwork1D(
             self.input_dim, self.hidden_dim,
             n_hidden_layers=self.n_hidden_layers,
@@ -94,47 +77,22 @@ class CTSM(DensityRatioEstimator):
         self.ema = EMA(self.model, self.ema_decay) if self.ema_decay is not None else None
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
-        """
-        Train CTSM on paired samples from p0 and p1.
-
-        Initializes model and delegates training to train_score_flow with
-        closed_form_sb_loss (path=None). Loss computes SB path via sb_bridge_target.
-
-        Procedure:
-          1. Call init_model() to instantiate TimeScoreNetwork1D, optimizer, EMA.
-          2. Define time_sampler as a lambda wrapping sample_time_and_iw.
-          3. Call train_score_flow(
-               model, samples_p0, samples_p1, samples_pstar=None,
-               loss_fn=closed_form_sb_loss,
-               optim, n_steps=self.n_epochs, batch_size=self.batch_size,
-               time_sampler, ema=self.ema, grad_clip_norm=self.grad_clip_norm,
-               eps=self.eps, loss_kwargs={"sigma": self.sigma, "path": None}
-             ).
-
-        Args:
-            samples_p0: [N0, D] samples from p0. Cast to float and moved to device.
-            samples_p1: [N1, D] samples from p1. Cast to float and moved to device.
-
-        Returns: None. After fit(), model is in .eval() mode.
-        """
-        from src.density_ratio_estimation._trainer import train_score_flow
-        from src.density_ratio_estimation._losses import closed_form_sb_loss
+        """init model + optimizer, then delegate to `train_loop` with `sb_loss(path=None)`."""
+        from src.density_ratio_estimation._trainer import train_loop
+        from src.density_ratio_estimation._losses import sb_loss
         from src.density_ratio_estimation._ema import sample_time_and_iw
 
         self.init_model()
-
-        train_score_flow(
+        train_loop(
             model=self.model,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=None,
-            loss_fn=closed_form_sb_loss,
+            loss_fn=sb_loss,
             optim=self.optimizer,
             n_steps=self.n_epochs,
             batch_size=self.batch_size,
-            time_sampler=lambda B, eps, dev: sample_time_and_iw(
-                self.time_dist, B, eps, dev
-            ),
+            time_sampler=lambda B, e, d: sample_time_and_iw(self.time_dist, B, e, d),
             ema=self.ema,
             grad_clip_norm=self.grad_clip_norm,
             eps=self.eps,
@@ -142,17 +100,7 @@ class CTSM(DensityRatioEstimator):
         )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """Estimate log density ratio via trapezoidal quadrature.
-
-        Procedure:
-            - verify model is fitted, set eval mode, move xs to device.
-            - build uniform tau grid of self.integration_steps points in [eps, 1-eps].
-            - evaluate -score(xs, tau) at each grid point (batched over xs).
-            - return torch.trapezoid along the tau axis.
-
-        Returns:
-            log density ratios as a 1D CPU tensor [N].
-        """
+        """trapezoid-integrate -model(xs, tau) over tau in [eps, 1-eps]; uses EMA shadow if set."""
         if self.model is None:
             raise RuntimeError("Model not fitted. Call fit() first.")
 
@@ -160,7 +108,6 @@ class CTSM(DensityRatioEstimator):
         xs = xs.to(self.device)
         n = xs.shape[0]
 
-        # if EMA is active, evaluate with the shadow weights and restore on exit
         if self.ema is not None:
             self.ema.apply_to(self.model)
         try:

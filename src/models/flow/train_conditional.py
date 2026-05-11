@@ -1,8 +1,4 @@
-"""DEPRECATED: train_conditional_flow is deprecated and will be removed in a future release.
-
-Migrate to train_score_flow with flow_matching_loss from _losses.py.
-See src/models/flow/train_score_flow.py for the new unified trainer.
-"""
+"""DEPRECATED: train_conditional_flow has been replaced by train_loop + fm_loss."""
 import warnings
 import torch
 import torch.nn as nn
@@ -27,82 +23,16 @@ def train_conditional_flow(
     p_uncond: float = 0.0,
     sentinel_cond: float = -1.0,
 ) -> nn.Module:
-    """DEPRECATED: train conditional flow matching with joint velocity + score targets.
+    """DEPRECATED: prefer `train_loop(..., fm_loss, ...)`.
 
-    .. deprecated:: (future)
-      This function is deprecated. Use train_score_flow with flow_matching_loss instead.
-      See src/models/flow/train_score_flow.py and src/models/flow/_losses.py.
-
-    trains model with mixed batches from two distributions (p0 and p1).
-    uses linear interpolation between noise and data with uniform time sampling
-    in [eps, 1-eps]. jointly optimizes velocity MSE and score MSE losses.
-
-    no learning rate scheduler, no EMA. follows simplicity of SpatialVeloDenoiser2
-    training pattern: single Adam optimizer, per-epoch batch construction,
-    direct loss backprop.
-
-    model interface: forward(t: [B,1], x: [B,D], c: [B,1]) ->
-      (velocity: [B,D], score: [B,D])
-
-    args:
-      model: nn.Module with forward signature (t, x, c) -> (v_pred, s_pred).
-             both outputs [B,D] tensors.
-      samples_p0: [N0, D] tensor of data from distribution p0.
-      samples_p1: [N1, D] tensor of data from distribution p1.
-      n_epochs: number of training epochs (full passes over sampled batches).
-      batch_size: total batch size per epoch.
-      lr: learning rate for Adam optimizer. default 2e-3.
-      score_weight: weight coefficient for score loss term. default 1.0.
-          overall loss = loss_v + score_weight * loss_s.
-      eps: clamp time to [eps, 1-eps] to avoid t=0 (zero noise) singularity.
-           default 0.01.
-      device: device string ('cuda', 'cpu'). if None, defaults to 'cuda' if available.
-      verbose: if True, print losses every log_every epochs.
-      log_every: epoch interval for verbose logging. default 100.
-      p_uncond: per-sample probability of replacing condition with sentinel value.
-          default 0.0 means no dropout (existing behavior preserved exactly).
-      sentinel_cond: the scalar value to substitute when dropping the condition.
-          must be distinct from 0.0 and 1.0 (normal condition range). default -1.0.
-
-    returns:
-      model in eval mode, moved to device, with trained parameters.
-
-    pseudocode:
-      1. resolve device (default cuda if available, else cpu)
-      2. move model, samples_p0, samples_p1 to device
-      3. set model.train()
-      4. initialize optimizer = Adam(params, lr=lr, betas=(0.9, 0.999), eps=1e-8)
-      5. for epoch in range(n_epochs):
-           a. sample n_p0 = batch_size // 2 random indices from p0
-           b. sample n_p1 = batch_size - n_p0 indices from p1
-           c. construct x_data = cat([p0_sampled, p1_sampled]) # [batch_size, D]
-           d. construct c = cat([zeros(n_p0, 1), ones(n_p1, 1)]) # [batch_size, 1]
-           d_cfg. if p_uncond > 0: per-sample condition dropout (replace with sentinel_cond)
-           e. sample z ~ N(0, I) same shape as x_data # [batch_size, D]
-           f. sample t ~ U[eps, 1-eps] # [batch_size, 1]
-           g. interpolate x_t = (1 - t) * z + t * x_data # [batch_size, D]
-           h. compute velocity target v_target = x_data - z # [batch_size, D]
-           i. compute score target s_target = -z / (1 - t) # [batch_size, D]
-           j. forward pass v_pred, s_pred = model(t, x_t, c)
-           k. loss_v = MSE(v_pred, v_target)
-           l. loss_s = MSE(s_pred, s_target)
-           m. loss_total = loss_v + score_weight * loss_s
-           n. optimizer.zero_grad()
-           o. loss_total.backward()
-           p. optimizer.step()
-           q. if verbose and (epoch+1) % log_every == 0:
-                print(epoch, loss_v, loss_s, loss_total)
-      6. model.eval()
-      7. return model
+    trains a (v, s) flow-matching head on mixed (p0, p1) batches with optional CFG
+    dropout. uses linear interpolation x_t = (1-t) z + t x_data with tau ~ U[eps, 1-eps];
+    minimises mse(v, x_data - z) + score_weight mse(s, -z / (1 - t)).
     """
     warnings.warn(
-        "train_conditional_flow is deprecated and will be removed in a future release. "
-        "Migrate to train_score_flow(model, p0, p1, None, flow_matching_loss, optim, "
-        "n_steps, batch_size, time_sampler, ..., loss_kwargs={'score_weight': ..., "
-        "'p_uncond': ..., 'sentinel_cond': ...}). "
-        "See src/models/flow/train_score_flow.py and _losses.py for details.",
+        "train_conditional_flow is deprecated; migrate to train_loop(..., fm_loss, ...).",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
 
     # resolve device

@@ -52,9 +52,9 @@ def hutch_div(
     """
     stochastic divergence via Hutchinson trace estimator.
 
-    approximates trace(Jacobian) via E[eps^T * J * eps] where eps is sampled
-    noise and J is the Jacobian. computes via VJP: (vjp(eps) · eps).
-    vmapped over batch with independent noise per sample.
+    approximates trace(Jacobian) via E[eps^T J eps] where eps is sampled noise
+    and J is the Jacobian; computed via VJP as <vjp(eps), eps>. vmapped over
+    batch with independent noise per sample.
 
     Inputs:
       vecfield: callable [D] -> [D], pure function representing velocity field
@@ -84,8 +84,8 @@ def hutch_div(
         _, vjp_func = torch.func.vjp(vecfield, z_single)  # vjp_func: [D] -> [D]
         grad_z = vjp_func(eps)[0]  # [D] (vjp_func returns tuple)
 
-        # dot product: (vjp(eps) · eps) is unbiased estimator of trace
-        return (grad_z * eps).sum()  # scalar
+        # <vjp(eps), eps> is an unbiased estimator of the trace
+        return (grad_z * eps).sum()
 
     # vmap over batch with independent noise per sample
     return torch.vmap(hutch_single, randomness='different')(x)  # [B]

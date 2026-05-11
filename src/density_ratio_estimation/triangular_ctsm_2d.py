@@ -1,14 +1,7 @@
-"""TriangularCTSM2D: V3 (2D-time stacked-interpolant) triangular CTSM density-ratio estimator.
+"""TriangularCTSM2D: CTSM DRE with 2D-time stacked interpolant.
 
-Trains a 2-vector score network on the closed-form regression target from
-Stacked2DCtsm, then performs density-ratio estimation via line integral along
-a 1D curve in the (t_1, t_2) square (default LowArc curve).
-
-Contract: fit(samples_p0, samples_p1, samples_pstar) with three [N, D] tensors.
-predict_ldr(xs) returns log density ratios as a 1D CPU tensor [N], following
-V2's sign convention dy/dtau = -score so the integral yields log(p_0 / p_1).
-
-Mirrors V2's TriangularCTSM in src/density_ratio_estimation/triangular_ctsm.py.
+trains a 2-vector score network on the closed-form Stacked2DCtsm target; predicts
+log(p0/p1) by integrating -score along a 1D curve in the (t_1, t_2) square.
 """
 from typing import Optional
 
@@ -24,7 +17,7 @@ from src.waypoints.triangular_continuous_2d import Stacked2DCtsm
 
 
 class TriangularCTSM2D(DensityRatioEstimator):
-    """V3 triangular CTSM with 2D-time stacked interpolant.
+    """CTSM with 2D-time stacked interpolant path.
 
     Constructor:
       input_dim: int, feature dimension D.
