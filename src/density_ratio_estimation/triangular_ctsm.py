@@ -1,4 +1,17 @@
-"""TriangularCTSM: continuous-time score matching DRE on a barycentric path."""
+"""TriangularCTSM V1/V2: continuous-time score matching DRE on a triangular path.
+
+two user-facing classes:
+  - ``TriangularCTSMV1``: barycentric path (``BarycentricCtsm1D``). default
+    sampler ``UniformSampler``; any TimeSampler is valid since the path has no
+    forbidden support.
+  - ``TriangularCTSMV2``: piecewise Schroedinger-bridge path (``PiecewiseSBCtsm1D``)
+    with a vertex-adjacent forbidden band. default sampler ``PathSampler`` so
+    the band exclusion is honored; user can override with any TimeSampler at
+    their own risk (sampling through the band yields biased gradients).
+
+the two classes share a private ``_TriangularCTSMBase`` for fit / predict_ldr;
+only the constructor differs (path construction and default TimeCfg).
+"""
 from typing import Optional
 
 import torch
@@ -6,68 +19,46 @@ import torch
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
-    make_optim, make_sched, make_ema, make_time_sampler
+    make_optim, make_sched, make_ema, make_time_sampler,
 )
 from src.density_ratio_estimation._ema import EMA
+from src.density_ratio_estimation._time_samplers import PathSampler
 from src.density_ratio_estimation._trainer import train_loop
 from src.density_ratio_estimation._losses import sb_loss
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
-from src.waypoints.path_1d import CtsmPath1D
 from src.waypoints.triangular_continuous import BarycentricCtsm1D
 from src.waypoints.piecewise_sb import PiecewiseSBCtsm1D
 
 
-class TriangularCTSM(DensityRatioEstimator):
-    """CTSM with path p0 -> p* -> p1 (supports barycentric, piecewise, or custom CtsmPath1D).
+class _TriangularCTSMBase(DensityRatioEstimator):
+    """shared fit / predict_ldr for the two triangular-CTSM variants.
 
-    trains s_phi(x, tau) under `sb_loss(path=self.path)`; integrates -score over
-    tau in [eps, 1-eps] at inference. if path exposes sample_tau, it overrides
-    time_dist at training time (guarded by path-conflict check).
+    constructors of V1 / V2 build their own path and pass it here along with
+    a resolved TimeCfg. base owns training and inference; subclasses own
+    construction.
     """
 
     def __init__(
         self,
         input_dim: int,
-        path: Optional[CtsmPath1D] = None,
-        hidden_dim: int = 256,
-        n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
-        batch_size: int = 512,
+        path,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_epochs: int,
+        batch_size: int,
         *,
         optim: OptimCfg,
-        sched: SchedCfg = SchedCfg(),
-        ema: EmaCfg = EmaCfg(),
-        time: TimeCfg = TimeCfg(),
-        device: Optional[str] = None,
-        # TriangularCTSM-specific (explicit)
-        sigma: float = 1.0,
-        activation: str = "elu",
-        integration_steps: int = 200,
-        reweight: bool = False,
+        sched: SchedCfg,
+        ema: EmaCfg,
+        time: TimeCfg,
+        device: Optional[str],
+        sigma: float,
+        activation: str,
+        integration_steps: int,
+        reweight: bool,
     ) -> None:
-        """cfg-based constructor for path-based continuous time-score matching DRE.
-
-        Args:
-            input_dim: feature dimension.
-            path: CtsmPath1D subclass (defaults to BarycentricCtsm1D with eps from TimeCfg).
-            hidden_dim: hidden layer width.
-            n_hidden_layers: count of hidden layers in TimeScoreNetwork1D.
-            n_epochs: training steps.
-            batch_size: batch size.
-            optim: optimizer config (required keyword-only).
-            sched: scheduler config (defaults to no scheduling).
-            ema: EMA config (defaults to no EMA).
-            time: time-sampling config (defaults to uniform).
-            device: torch device; auto-detects GPU if None.
-            sigma: noise scale for sb_loss.
-            activation: nonlinearity {"elu", "gelu", "silu"}.
-            integration_steps: discretization points for trapezoid integration [eps, 1-eps].
-            reweight: passed to sb_loss for path-aware reweighting.
-
-        Raises:
-            ValueError: if path.sample_tau is callable and time.dist != "uniform".
-        """
         super().__init__(input_dim)
+        self.path = path
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
@@ -76,59 +67,45 @@ class TriangularCTSM(DensityRatioEstimator):
         self.integration_steps = integration_steps
         self.reweight = reweight
 
-        # cfg objects
         self.optim = optim
         self.sched = sched
         self.ema = ema
         self.time = time
 
-        # activation validation
         if activation not in ("elu", "gelu", "silu"):
             raise ValueError(
                 f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
             )
         self.activation = activation
 
-        # device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        # path resolution: default to BarycentricCtsm1D with eps from TimeCfg
-        if path is None:
-            self.path = BarycentricCtsm1D(sigma=1.0, vertex=0.5, eps=self.time.eps)
-        else:
-            self.path = path
-
-        # no path-conflict guard: timecfg holds an explicit timesampler instance.
-        # users who want path-driven sampling pass timecfg(sampler=pathsampler(path)).
-
-        # model and EMA instance attributes (set by init_model/fit)
         self.model = None
         self.ema_obj: Optional[EMA] = None
 
     def init_model(self) -> None:
-        """build TimeScoreNetwork1D only; optimizer/EMA now created by fit."""
+        """build TimeScoreNetwork1D; optimizer/EMA are created in fit."""
         self.model = TimeScoreNetwork1D(
             self.input_dim,
             self.hidden_dim,
             n_hidden_layers=self.n_hidden_layers,
-            activation=self.activation
+            activation=self.activation,
         ).to(self.device)
 
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor, samples_pstar: torch.Tensor) -> None:
-        """build network, optimizer, scheduler, EMA, time sampler; delegate to train_loop.
-
-        if path.sample_tau is callable, time sampler defers to it; else uses make_time_sampler.
-        """
+    def fit(
+        self,
+        samples_p0: torch.Tensor,
+        samples_p1: torch.Tensor,
+        samples_pstar: torch.Tensor,
+    ) -> None:
+        """build network, optim/sched/ema/time-sampler from cfgs, delegate to train_loop."""
         self.init_model()
         optim_obj = make_optim(self.model.parameters(), self.optim)
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         self.ema_obj = make_ema(self.model, self.ema)
-
-        # time sampler comes from cfg; users pick pathsampler(self.path) explicitly
-        # if they want path-driven sampling (e.g. piecewisesb with inner_eps > 0).
         time_sampler = make_time_sampler(self.time)
 
         train_loop(
@@ -149,13 +126,9 @@ class TriangularCTSM(DensityRatioEstimator):
         )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """trapezoid-integrate -model(xs, tau) over tau in [eps, 1-eps]; uses EMA shadow if set.
-
-        Reads self.time.eps (not self.eps), self.ema_obj, self.integration_steps.
-        """
+        """trapezoid-integrate -model over tau in [eps, 1-eps]; uses EMA shadow if set."""
         if self.model is None:
-            raise RuntimeError("Model not fitted. Call fit() first.")
-
+            raise RuntimeError("model not fitted; call fit() first.")
         self.model.eval()
         xs = xs.to(self.device)
         n = xs.shape[0]
@@ -163,7 +136,9 @@ class TriangularCTSM(DensityRatioEstimator):
         if self.ema_obj is not None:
             self.ema_obj.apply_to(self.model)
         try:
-            ts = torch.linspace(self.time.eps, 1.0 - self.time.eps, self.integration_steps, device=self.device)
+            ts = torch.linspace(
+                self.time.eps, 1.0 - self.time.eps, self.integration_steps, device=self.device,
+            )
             with torch.no_grad():
                 vals = torch.stack([
                     -self.model(xs, torch.full((n, 1), float(t.item()), device=self.device)).squeeze(-1)
@@ -174,3 +149,114 @@ class TriangularCTSM(DensityRatioEstimator):
         finally:
             if self.ema_obj is not None:
                 self.ema_obj.restore(self.model)
+
+
+class TriangularCTSMV1(_TriangularCTSMBase):
+    """CTSM with a barycentric triangular path (p0 -> p* -> p1).
+
+    the path has no forbidden support; any TimeSampler in TimeCfg is valid.
+    default is uniform tau sampling.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
+        n_epochs: int = 1000,
+        batch_size: int = 512,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: TimeCfg = TimeCfg(),
+        device: Optional[str] = None,
+        sigma: float = 1.0,
+        vertex: float = 0.5,
+        activation: str = "elu",
+        integration_steps: int = 200,
+        reweight: bool = False,
+    ) -> None:
+        """barycentric CTSM with cfg surface; path constructed internally."""
+        path = BarycentricCtsm1D(sigma=sigma, vertex=vertex, eps=time.eps)
+        super().__init__(
+            input_dim=input_dim,
+            path=path,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+            optim=optim,
+            sched=sched,
+            ema=ema,
+            time=time,
+            device=device,
+            sigma=sigma,
+            activation=activation,
+            integration_steps=integration_steps,
+            reweight=reweight,
+        )
+        # expose path-specific knob for inspection (sigma already lives on base)
+        self.vertex = vertex
+
+
+class TriangularCTSMV2(_TriangularCTSMBase):
+    """CTSM with a piecewise-Schroedinger-bridge triangular path.
+
+    the path has a forbidden support band of width O(inner_eps) around tau=vertex
+    where sb_target clamping produces biased gradients. default TimeCfg uses
+    PathSampler so the band is automatically excluded at training time.
+
+    explicit ``time=TimeCfg(sampler=...)`` is allowed but the user takes the bias
+    if their sampler draws tau inside the band.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
+        n_epochs: int = 1000,
+        batch_size: int = 512,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: Optional[TimeCfg] = None,
+        device: Optional[str] = None,
+        sigma: float = 1.0,
+        vertex: float = 0.5,
+        inner_eps: float = 0.02,
+        activation: str = "elu",
+        integration_steps: int = 200,
+        reweight: bool = False,
+    ) -> None:
+        """piecewise-SB CTSM; default TimeCfg uses PathSampler for band safety.
+
+        time=None (default) auto-builds TimeCfg(sampler=PathSampler(path=self.path)).
+        pass time=TimeCfg(...) explicitly to override (e.g. for non-uniform
+        sampling on the safe support); the user is responsible for band handling.
+        """
+        eps = time.eps if time is not None else 1e-3
+        path = PiecewiseSBCtsm1D(sigma=sigma, vertex=vertex, eps=eps, inner_eps=inner_eps)
+        if time is None:
+            time = TimeCfg(sampler=PathSampler(path=path))
+        super().__init__(
+            input_dim=input_dim,
+            path=path,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+            optim=optim,
+            sched=sched,
+            ema=ema,
+            time=time,
+            device=device,
+            sigma=sigma,
+            activation=activation,
+            integration_steps=integration_steps,
+            reweight=reweight,
+        )
+        self.vertex = vertex
+        self.inner_eps = inner_eps

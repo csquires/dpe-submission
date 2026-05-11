@@ -13,9 +13,9 @@ from src.density_ratio_estimation.triangular_mdre import TriangularMDRE
 from src.density_ratio_estimation.fmdre import FMDRE
 from src.density_ratio_estimation.fmdre_s2 import FMDRE_S2
 from src.density_ratio_estimation.triangular_fmdre import TriangularFMDRE
-from src.density_ratio_estimation.triangular_vfm import TriangularVFM
+from src.density_ratio_estimation.triangular_vfm import TriangularVFMV1, TriangularVFMV2
 from src.density_ratio_estimation.triangular_vfm_2d import TriangularVFM2D
-from src.density_ratio_estimation.triangular_ctsm import TriangularCTSM
+from src.density_ratio_estimation.triangular_ctsm import TriangularCTSMV1, TriangularCTSMV2
 from src.density_ratio_estimation.triangular_ctsm_2d import TriangularCTSM2D
 from src.density_ratio_estimation.tabular_plugin import TabularPluginDRE, SmoothedTabularPluginDRE
 from src.density_ratio_estimation.vfm import VFM
@@ -25,10 +25,11 @@ SpatialVeloDenoiser = VFM
 __all__ = [
     "DRE", "ELDR", "DensityRatioEstimator",
     "BDRE", "MDRE", "TDRE", "MultiHeadTDRE",
-    "TSM", "CTSM", "TriangularTSM", "TriangularCTSM", "TriangularCTSM2D",
+    "TSM", "CTSM", "TriangularTSM",
+    "TriangularCTSMV1", "TriangularCTSMV2", "TriangularCTSM2D",
     "TriangularTDRE", "MultiHeadTriangularTDRE", "TriangularMDRE",
     "FMDRE", "FMDRE_S2", "TriangularFMDRE",
     "VFM", "SpatialVeloDenoiser",
-    "TriangularVFM", "TriangularVFM2D",
+    "TriangularVFMV1", "TriangularVFMV2", "TriangularVFM2D",
     "TabularPluginDRE", "SmoothedTabularPluginDRE",
 ]

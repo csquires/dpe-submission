@@ -1,4 +1,17 @@
-"""TriangularVFM: VFM DRE on a barycentric path p0 -> p* -> p1."""
+"""TriangularVFM V1/V2: velocity field matching DRE on a triangular path.
+
+two user-facing classes:
+  - ``TriangularVFMV1``: barycentric path (``BarycentricVfm1D``, gamma schedule
+    parameterized by k). default sampler ``UniformSampler``; any TimeSampler is
+    valid since the path has no forbidden support.
+  - ``TriangularVFMV2``: piecewise Schroedinger-bridge path (``PiecewiseSBVfm1D``,
+    floored gamma). default sampler ``PathSampler`` to honor the optional
+    inner_eps-wide forbidden band at tau=vertex.
+
+shared ``_TriangularVFMBase`` owns the two-phase fit and the time-score
+integration for predict_ldr; subclasses own constructor / path construction
+only.
+"""
 from typing import Optional, Literal
 import warnings
 
@@ -9,69 +22,46 @@ from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema, make_time_sampler,
 )
+from src.density_ratio_estimation._time_samplers import PathSampler
 from src.density_ratio_estimation._trainer import train_two_phase
 from src.density_ratio_estimation._losses import velo_loss, denoiser_loss
 from src.models.common.mlp import MLP
 from src.models.flow.div_estimators import exact_div, hutch_div
-from src.waypoints.path_1d import VfmPath1D
 from src.waypoints.triangular_continuous import BarycentricVfm1D
+from src.waypoints.piecewise_sb import PiecewiseSBVfm1D
 
 
-class TriangularVFM(DensityRatioEstimator):
-    """VFM with barycentric path p0 -> p* -> p1.
+class _TriangularVFMBase(DensityRatioEstimator):
+    """shared two-phase fit + time-score integration for the triangular VFM variants.
 
-    trains b and eta sequentially via `train_two_phase`; integrates the time-score
-    over tau in [eps, 1-eps] at inference.
+    constructors of V1 / V2 build their own path and resolve TimeCfg before
+    calling super().__init__. base owns net_b/net_eta training and inference.
     """
 
     def __init__(
         self,
         input_dim: int,
-        path: Optional[VfmPath1D] = None,
-        hidden_dim: int = 256,
-        n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
-        batch_size: int = 512,
+        path,
+        hidden_dim: int,
+        n_hidden_layers: int,
+        n_epochs: int,
+        batch_size: int,
         *,
         optim: OptimCfg,
-        sched: SchedCfg = SchedCfg(),
-        ema: EmaCfg = EmaCfg(),
-        time: TimeCfg = TimeCfg(),
-        device: Optional[str] = None,
-        # TriVFM-specific (explicit)
-        antithetic: bool = True,
-        div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
-        div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
-        n_hutch_samples: int = 1,
-        integration_steps: int = 3000,
-        integration_type: Literal['1', '2', '3'] = '2',
-        activation: str = "gelu",
-        layernorm: str = "off",
-        reweight: bool = False,
+        sched: SchedCfg,
+        ema: EmaCfg,
+        time: TimeCfg,
+        device: Optional[str],
+        antithetic: bool,
+        div_method: Literal["hutchinson", "exact"],
+        div_noise: Literal["rademacher", "gaussian"],
+        n_hutch_samples: int,
+        integration_steps: int,
+        integration_type: Literal["1", "2", "3"],
+        activation: str,
+        layernorm: str,
+        reweight: bool,
     ) -> None:
-        """two-phase triangular vfm with cfg-based optimization surface.
-
-        args:
-            input_dim: dimensionality of data.
-            path: optional vfmpath1d; defaults to barycentricvfm1d(k=20.0, vertex=0.5, eps=time.eps).
-                  must be positional-or-keyword before * to reflect estimator identity.
-            hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training shape.
-            optim: required optimcfg (optimizer config with lr, grad_clip_norm, etc.).
-            sched: schedcfg for learning rate schedule (default schedcfg()).
-            ema: emacfg for exponential moving average (default emacfg()).
-            time: timecfg for time sampling and eps (default timecfg()).
-            device: torch device (defaults to cuda if available, else cpu).
-            antithetic: whether to use antithetic sampling in velo_loss.
-            div_method, div_noise, n_hutch_samples: divergence estimation config.
-            integration_steps, integration_type: numerical integration at inference.
-            activation, layernorm: mlp architecture choices.
-
-        raises:
-            valueerror: if time.eps < 1e-3 (boundary regularity requirement).
-            valueerror: if path provides sample_tau and time.dist != 'uniform'.
-            valueerror: if div_method, div_noise, activation, layernorm invalid.
-        """
-        # validate time.eps >= 1e-3
         if time.eps < 1e-3:
             raise ValueError(
                 f"timecfg.eps must be >= 1e-3 for boundary regularity of b*eta/gamma; "
@@ -79,8 +69,7 @@ class TriangularVFM(DensityRatioEstimator):
             )
 
         super().__init__(input_dim)
-
-        # store cfg objects and scalar hyperparams
+        self.path = path
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
@@ -93,10 +82,9 @@ class TriangularVFM(DensityRatioEstimator):
         self.integration_type = integration_type
         self.antithetic = antithetic
 
-        # validate div_method, div_noise, n_hutch_samples
-        if div_method not in ('hutchinson', 'exact'):
+        if div_method not in ("hutchinson", "exact"):
             raise ValueError(f"div_method must be 'hutchinson' or 'exact'; got {div_method!r}")
-        if div_noise not in ('rademacher', 'gaussian'):
+        if div_noise not in ("rademacher", "gaussian"):
             raise ValueError(f"div_noise must be 'rademacher' or 'gaussian'; got {div_noise!r}")
         if n_hutch_samples < 1:
             raise ValueError(f"n_hutch_samples must be >= 1; got {n_hutch_samples}")
@@ -104,7 +92,6 @@ class TriangularVFM(DensityRatioEstimator):
         self.div_noise = div_noise
         self.n_hutch_samples = n_hutch_samples
 
-        # validate activation, layernorm
         if activation not in ("elu", "gelu", "silu"):
             raise ValueError(
                 f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
@@ -115,36 +102,25 @@ class TriangularVFM(DensityRatioEstimator):
         self.layernorm = layernorm
         self.reweight = reweight
 
-        # resolve device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        # resolve path (default to BarycentricVfm1D if not provided)
-        if path is None:
-            self.path = BarycentricVfm1D(k=20.0, vertex=0.5, eps=time.eps)
-        else:
-            self.path = path
-
-        # no path-conflict guard: timecfg holds an explicit timesampler instance.
-        # users who want path-driven sampling pass timecfg(sampler=pathsampler(path)).
-
-        # initialize network placeholders
         self.net_b = None
         self.net_eta = None
-        self.ema_b: Optional[object] = None  # type will be emaWrapper from make_ema
+        self.ema_b: Optional[object] = None
         self.ema_eta: Optional[object] = None
 
     def init_model(self) -> None:
-        """instantiate net_b and net_eta as mlps; drop inline ema construction."""
+        """build net_b and net_eta as MLPs; EMA is constructed in fit."""
         self.net_b = MLP(
             self.input_dim,
             self.hidden_dim,
             output_dim=self.input_dim,
             n_hidden_layers=self.n_hidden_layers,
             activation=self.activation,
-            layernorm=self.layernorm
+            layernorm=self.layernorm,
         ).to(self.device)
         self.net_eta = MLP(
             self.input_dim,
@@ -152,7 +128,7 @@ class TriangularVFM(DensityRatioEstimator):
             output_dim=self.input_dim,
             n_hidden_layers=self.n_hidden_layers,
             activation=self.activation,
-            layernorm=self.layernorm
+            layernorm=self.layernorm,
         ).to(self.device)
 
     def fit(
@@ -161,49 +137,31 @@ class TriangularVFM(DensityRatioEstimator):
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
     ) -> None:
-        """init b/eta nets and build optimizers/schedulers/emas from cfgs, then train.
-
-        uses shared cfg objects (optim, sched, ema) to create separate optimizer,
-        scheduler, and ema for each phase (b and eta).
-        """
-        n0 = samples_p0.shape[0]
-        n1 = samples_p1.shape[0]
+        """two-phase training: build optim/sched/ema/time-sampler from cfgs, then delegate."""
         n_star = samples_pstar.shape[0]
-
         if n_star < 1:
             raise ValueError(f"samples_pstar must have at least 1 row; got n_star={n_star}")
-
         if n_star < self.batch_size // 4:
             warnings.warn(
                 f"n_star={n_star} is small relative to batch_size={self.batch_size}; "
                 f"pstar bootstrap will sample with high replication"
             )
 
-        # move samples to device and cast to float
-        samples_p0 = samples_p0.float().to(self.device)  # [n0, D]
-        samples_p1 = samples_p1.float().to(self.device)  # [n1, D]
-        samples_pstar = samples_pstar.float().to(self.device)  # [n_star, D]
+        samples_p0 = samples_p0.float().to(self.device)
+        samples_p1 = samples_p1.float().to(self.device)
+        samples_pstar = samples_pstar.float().to(self.device)
 
-        # initialize model
         self.init_model()
 
-        # create optimizers from shared cfg
         optim_b = make_optim(self.net_b.parameters(), self.optim)
         optim_eta = make_optim(self.net_eta.parameters(), self.optim)
-
-        # create schedulers from shared cfg
         sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
         sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
-
-        # create emas from shared cfg
         ema_b = make_ema(self.net_b, self.ema)
         ema_eta = make_ema(self.net_eta, self.ema)
         self.ema_b = ema_b
         self.ema_eta = ema_eta
 
-        # time sampler: if path has sample_tau, defer to it; else use timecfg-based sampler.
-        # time sampler comes from cfg; users pick pathsampler(self.path) explicitly
-        # if they want path-driven sampling.
         time_sampler = make_time_sampler(self.time)
 
         train_two_phase(
@@ -234,25 +192,20 @@ class TriangularVFM(DensityRatioEstimator):
         self.net_b.eval()
         self.net_eta.eval()
 
-
-
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """integrate the time-score over tau in [eps, 1-eps] (chunked vmap); return -integral on cpu."""
         if self.net_b is None or self.net_eta is None:
-            raise RuntimeError("TriangularVFM model is not trained. Call fit() before predict_ldr().")
-
+            raise RuntimeError("triangular vfm not trained; call fit() before predict_ldr().")
         self.net_b.eval()
         self.net_eta.eval()
-        samples = xs.float().to(self.device)  # [n_samples, D]
+        samples = xs.float().to(self.device)
         n_samples = samples.shape[0]
 
-        # time grid (ensure odd for Simpson's rule)
         n_points = self.integration_steps
         if n_points % 2 == 0:
             n_points += 1
         t_vals = torch.linspace(self.time.eps, 1.0 - self.time.eps, steps=n_points, device=self.device)
 
-        # if ema is active, swap in shadow weights
         if self.ema_b is not None:
             self.ema_b.apply_to(self.net_b)
         if self.ema_eta is not None:
@@ -313,3 +266,136 @@ class TriangularVFM(DensityRatioEstimator):
             div_b = div_b / self.n_hutch_samples
         b_dot_eta = (b_pred * eta_pred).sum(dim=-1)
         return -div_b + b_dot_eta / gamma_t
+
+
+class TriangularVFMV1(_TriangularVFMBase):
+    """VFM with a barycentric triangular path (BarycentricVfm1D, k-parameterized gamma).
+
+    no forbidden support; any TimeSampler in TimeCfg is valid. default uniform.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
+        n_epochs: int = 1000,
+        batch_size: int = 512,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: TimeCfg = TimeCfg(),
+        device: Optional[str] = None,
+        k: float = 20.0,
+        vertex: float = 0.5,
+        antithetic: bool = True,
+        div_method: Literal["hutchinson", "exact"] = "hutchinson",
+        div_noise: Literal["rademacher", "gaussian"] = "rademacher",
+        n_hutch_samples: int = 1,
+        integration_steps: int = 3000,
+        integration_type: Literal["1", "2", "3"] = "2",
+        activation: str = "gelu",
+        layernorm: str = "off",
+        reweight: bool = False,
+    ) -> None:
+        """barycentric VFM; path constructed internally from k, vertex, time.eps."""
+        path = BarycentricVfm1D(k=k, vertex=vertex, eps=time.eps)
+        super().__init__(
+            input_dim=input_dim,
+            path=path,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+            optim=optim,
+            sched=sched,
+            ema=ema,
+            time=time,
+            device=device,
+            antithetic=antithetic,
+            div_method=div_method,
+            div_noise=div_noise,
+            n_hutch_samples=n_hutch_samples,
+            integration_steps=integration_steps,
+            integration_type=integration_type,
+            activation=activation,
+            layernorm=layernorm,
+            reweight=reweight,
+        )
+        self.k = k
+        self.vertex = vertex
+
+
+class TriangularVFMV2(_TriangularVFMBase):
+    """VFM with a piecewise-Schroedinger-bridge path (PiecewiseSBVfm1D, floored gamma).
+
+    when ``inner_eps > 0`` the path defines a forbidden support band around
+    tau=vertex. default TimeCfg uses PathSampler so the band is excluded.
+    user may override; in that case they take any band-related bias.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
+        n_epochs: int = 1000,
+        batch_size: int = 512,
+        *,
+        optim: OptimCfg,
+        sched: SchedCfg = SchedCfg(),
+        ema: EmaCfg = EmaCfg(),
+        time: Optional[TimeCfg] = None,
+        device: Optional[str] = None,
+        sigma: float = 1.0,
+        vertex: float = 0.5,
+        gamma_min: float = 5e-2,
+        inner_eps: float = 0.0,
+        antithetic: bool = True,
+        div_method: Literal["hutchinson", "exact"] = "hutchinson",
+        div_noise: Literal["rademacher", "gaussian"] = "rademacher",
+        n_hutch_samples: int = 1,
+        integration_steps: int = 3000,
+        integration_type: Literal["1", "2", "3"] = "2",
+        activation: str = "gelu",
+        layernorm: str = "off",
+        reweight: bool = False,
+    ) -> None:
+        """piecewise-SB VFM; default TimeCfg uses PathSampler for band safety.
+
+        time=None (default) auto-builds TimeCfg(sampler=PathSampler(path=self.path));
+        pass time=TimeCfg(...) explicitly to override.
+        """
+        eps = time.eps if time is not None else 1e-3
+        path = PiecewiseSBVfm1D(
+            sigma=sigma, vertex=vertex, gamma_min=gamma_min, eps=eps, inner_eps=inner_eps,
+        )
+        if time is None:
+            time = TimeCfg(sampler=PathSampler(path=path))
+        super().__init__(
+            input_dim=input_dim,
+            path=path,
+            hidden_dim=hidden_dim,
+            n_hidden_layers=n_hidden_layers,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+            optim=optim,
+            sched=sched,
+            ema=ema,
+            time=time,
+            device=device,
+            antithetic=antithetic,
+            div_method=div_method,
+            div_noise=div_noise,
+            n_hutch_samples=n_hutch_samples,
+            integration_steps=integration_steps,
+            integration_type=integration_type,
+            activation=activation,
+            layernorm=layernorm,
+            reweight=reweight,
+        )
+        self.sigma = sigma
+        self.vertex = vertex
+        self.gamma_min = gamma_min
+        self.inner_eps = inner_eps
