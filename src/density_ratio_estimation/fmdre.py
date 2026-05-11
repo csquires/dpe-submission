@@ -4,7 +4,7 @@ from typing import Optional
 import torch
 
 from src.density_ratio_estimation.base import DensityRatioEstimator
-from src.density_ratio_estimation._losses import fm_loss
+from src.density_ratio_estimation._losses import make_fm_loss
 from src.density_ratio_estimation._trainer import train_loop
 from src.density_ratio_estimation._cfgs import (
     OptimCfg,
@@ -102,13 +102,19 @@ class FMDRE(DensityRatioEstimator):
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
+        loss_fn = make_fm_loss(
+            score_weight=self.score_weight,
+            p_uncond=0.0,
+            sentinel_cond=-1.0,
+            reweight=self.reweight,
+        )
 
         train_loop(
             model=self.model,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=None,
-            loss_fn=fm_loss,
+            loss_fn=loss_fn,
             optim=optim_obj,
             n_steps=self.n_epochs,
             batch_size=self.batch_size,
@@ -117,7 +123,6 @@ class FMDRE(DensityRatioEstimator):
             ema=ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
-            loss_kwargs={"score_weight": self.score_weight, "p_uncond": 0.0, "sentinel_cond": -1.0, "reweight": self.reweight},
         )
         self.model.eval()
 

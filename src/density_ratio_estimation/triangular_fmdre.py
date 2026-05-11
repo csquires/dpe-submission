@@ -10,7 +10,7 @@ from torch import Tensor
 from src.density_ratio_estimation.base import DensityRatioEstimator
 from src.models.flow.multiclass_vel_score_mlp import MultiClassVelScoreMLP
 from src.density_ratio_estimation._trainer import train_loop
-from src.density_ratio_estimation._losses import tri_fm_loss
+from src.density_ratio_estimation._losses import make_tri_fm_loss
 from src.models.flow.ratio_ode import ratio_ode_triangular
 from src.density_ratio_estimation._cfgs import (
     OptimCfg,
@@ -122,13 +122,18 @@ class TriangularFMDRE(DensityRatioEstimator):
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
+        loss_fn = make_tri_fm_loss(
+            score_weight=self.score_weight,
+            triangular_p_uncond=self.triangular_p_uncond,
+            reweight=self.reweight,
+        )
 
         train_loop(
             model=self.model,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=samples_pstar,
-            loss_fn=tri_fm_loss,
+            loss_fn=loss_fn,
             optim=optim_obj,
             n_steps=self.n_epochs,
             batch_size=self.batch_size,
@@ -137,11 +142,6 @@ class TriangularFMDRE(DensityRatioEstimator):
             ema=ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
-            loss_kwargs={
-                "score_weight": self.score_weight,
-                "triangular_p_uncond": self.triangular_p_uncond,
-                "reweight": self.reweight,
-            },
             model_module=self.model,
         )
         self.model.eval()

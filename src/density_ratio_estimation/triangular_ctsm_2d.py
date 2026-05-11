@@ -12,7 +12,6 @@ from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema, make_time_sampler,
 )
-from src.density_ratio_estimation._trainer import maybe_clip_grad
 from src.density_ratio_estimation._weighting import resolve_outer_lambda
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
 from src.waypoints.curve_2d import Curve2D
@@ -187,10 +186,22 @@ class TriangularCTSM2D(DensityRatioEstimator):
         # restrict training t_2 range to overlap inference curve
         t2_max = float(getattr(self.path, "t2_max", 1.0 - self.time.eps))
 
-        # time sampler: if path has sample_tau, defer to it; else use timecfg-based sampler.
         # time sampler comes from cfg; users pick pathsampler(self.path) explicitly
         # if they want path-driven sampling.
         time_sampler = make_time_sampler(self.time)
+
+        # bind post-step callbacks once so the inner loop holds no `is not None` checks.
+        grad_clip = self.optim.grad_clip_norm
+        if grad_clip is not None and grad_clip > 0:
+            param_list = list(self.model.parameters())
+
+            def do_clip():
+                torch.nn.utils.clip_grad_norm_(param_list, max_norm=grad_clip)
+        else:
+            def do_clip():
+                return None
+        do_sched = self.scheduler.step if self.scheduler is not None else (lambda: None)
+        do_ema = (lambda: self.ema_obj.update(self.model)) if self.ema_obj is not None else (lambda: None)
 
         for epoch_idx in range(self.n_epochs):
             # bootstrap minibatches
@@ -231,12 +242,10 @@ class TriangularCTSM2D(DensityRatioEstimator):
             # backward + step
             self.optimizer.zero_grad()
             loss.backward()
-            maybe_clip_grad(self.model.parameters(), self.optim.grad_clip_norm)
+            do_clip()
             self.optimizer.step()
-            if self.scheduler is not None:
-                self.scheduler.step()
-            if self.ema_obj is not None:
-                self.ema_obj.update(self.model)
+            do_sched()
+            do_ema()
 
         self.model.eval()
 

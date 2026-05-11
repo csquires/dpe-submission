@@ -22,8 +22,9 @@ eliminating the numerator correction term.
 import torch
 import torch.nn as nn
 from torch import Tensor
-from functools import partial
 import warnings
+
+from src.models.flow.div_estimators import build_div_fn
 
 
 def ratio_ode(
@@ -67,8 +68,6 @@ def ratio_ode(
     returns:
         [B] tensor of log density ratios log(p(x|c0) / p(x|c1)) at query points.
     """
-    from src.models.flow.div_estimators import exact_div, hutch_div
-
     if device is None:
         device = xs.device.type if hasattr(xs.device, 'type') else str(xs.device)
 
@@ -81,18 +80,7 @@ def ratio_ode(
 
     model.eval()
 
-    # select divergence function once before loop
-    if div_method == "exact":
-        div_fn = exact_div
-    elif div_method == "hutch_gaussian":
-        div_fn = partial(hutch_div, noise="gaussian")
-    elif div_method == "hutch_rademacher":
-        div_fn = partial(hutch_div, noise="rademacher")
-    else:
-        raise ValueError(
-            f"unknown div_method: {div_method}. "
-            f"must be 'exact', 'hutch_gaussian', or 'hutch_rademacher'."
-        )
+    div_fn = build_div_fn(div_method)
 
     with torch.no_grad():
         for i in range(steps - 1):
@@ -168,8 +156,6 @@ def ratio_ode_s2(
 
     cost: 3 velocity + 2 score evaluations per step (plus divergence).
     """
-    from src.models.flow.div_estimators import exact_div, hutch_div
-
     if device is None:
         device = xs.device.type if hasattr(xs.device, 'type') else str(xs.device)
 
@@ -182,17 +168,7 @@ def ratio_ode_s2(
 
     model.eval()
 
-    if div_method == "exact":
-        div_fn = exact_div
-    elif div_method == "hutch_gaussian":
-        div_fn = partial(hutch_div, noise="gaussian")
-    elif div_method == "hutch_rademacher":
-        div_fn = partial(hutch_div, noise="rademacher")
-    else:
-        raise ValueError(
-            f"unknown div_method: {div_method}. "
-            f"must be 'exact', 'hutch_gaussian', or 'hutch_rademacher'."
-        )
+    div_fn = build_div_fn(div_method)
 
     if warn_uncond:
         warnings.warn(
@@ -286,8 +262,6 @@ def ratio_ode_triangular(
 
     cost: 3 velocity + 2 score evaluations per step (plus divergence).
     """
-    from src.models.flow.div_estimators import exact_div, hutch_div
-
     if device is None:
         device = xs.device.type if hasattr(xs.device, 'type') else str(xs.device)
 
@@ -303,18 +277,7 @@ def ratio_ode_triangular(
 
     model.eval()
 
-    # select divergence function once before loop
-    if div_method == "exact":
-        div_fn = exact_div
-    elif div_method == "hutch_gaussian":
-        div_fn = partial(hutch_div, noise="gaussian")
-    elif div_method == "hutch_rademacher":
-        div_fn = partial(hutch_div, noise="rademacher")
-    else:
-        raise ValueError(
-            f"unknown div_method: {div_method}. "
-            f"must be 'exact', 'hutch_gaussian', or 'hutch_rademacher'."
-        )
+    div_fn = build_div_fn(div_method)
 
     # build one-hot conditioning tensors once; eye[k] gives k-th standard basis row
     eye3 = torch.eye(3, device=device, dtype=xs.dtype)

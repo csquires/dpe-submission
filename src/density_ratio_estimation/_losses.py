@@ -3,6 +3,16 @@
 each loss exposes two module-level attributes used by `_trainer.train_loop`:
   - `required_keys`: subset of {"x0", "x1", "xstar"} the trainer must populate
   - `requires_tau_grad`: whether the loss enables autograd on tau internally
+
+losses with init-time choices (path vs sigma, antithetic on/off, cfg dropout
+on/off) are exposed as factory functions ``make_<name>``: the factory binds
+the choice once and returns a specialized closure with required_keys /
+requires_tau_grad pre-set. estimators call the factory inside ``fit`` so the
+hot-path loop sees a single specialized callable rather than re-checking the
+same flag per step.
+
+the two losses without init-time choices (``tsm_loss``, ``tri_tsm_loss``,
+``denoiser_loss``) remain module-level functions for convenience.
 """
 import torch
 import torch.autograd as autograd
@@ -72,8 +82,6 @@ def tsm_loss(
     t0 = torch.zeros((x0.shape[0], 1), device=x0.device, dtype=x0.dtype) + eps
     t1 = torch.ones((x1.shape[0], 1), device=x1.device, dtype=x1.dtype)
 
-    # lambda quadruple delegated to _weighting (dummy when reweight=False, path_var otherwise);
-    # mirrors prob_path.get_time_weighting_quantities from dre-prob-paths.
     lam = resolve_lambdas(reweight, tau, t0, t1, eps=eps)
 
     term1 = (2 * model(x0, t0)).squeeze() * lam.lam_t0
@@ -86,8 +94,7 @@ def tsm_loss(
     term4 = score.squeeze() * lam.lam_dt
     term5 = (score ** 2).squeeze() * lam.lam_t
 
-    # separate boundary (t0, t1) and interior (tau) terms; iw applied to interior only
-    # when iw == ones(B,1), this is identical to mean(term1 - term2 + term3 + term4 + term5)
+    # boundary (t0, t1) and interior (tau) terms; iw applied to interior only.
     boundary = (term1 - term2).mean()
     interior = (iw.squeeze(-1) * (term3 + term4 + term5)).mean()
     return boundary + interior
@@ -97,177 +104,143 @@ tsm_loss.required_keys = frozenset({"x0", "x1"})
 tsm_loss.requires_tau_grad = True
 
 
-def sb_loss(
-    model: Callable[..., torch.Tensor],
-    batch: dict[str, torch.Tensor],
-    tau: torch.Tensor,
-    iw: torch.Tensor,
+def make_sb_loss(
     *,
-    sigma: float = 1.0,
+    sigma: Optional[float] = None,
     path: Optional["Path1D"] = None,
     reweight: bool = False,
-) -> torch.Tensor:
-    """closed-form Schroedinger-bridge regression loss (CTSM family).
+) -> Callable:
+    """factory: closed-form Schroedinger-bridge regression loss with constants bound.
 
-    sampling/target:
-      path is None: (x_tau, target, lambda_t) = sb_target(x0, x1, sigma, tau, epsilon)
-      path given : (x_tau, target, lambda_t) = path.sample_and_target(x0, x1, xstar, tau, epsilon)
+    exactly one of ``sigma`` (CTSM, no triangular) or ``path`` (triangular CTSM)
+    must be supplied. the path branch reads xstar; required_keys is set
+    accordingly so the trainer can bootstrap the right batch contents.
 
-    when path exposes `sample_tau`, the trainer-provided (tau, iw) is overridden by
-    path.sample_tau(batch_size, path.eps, device).
+    bound at factory time:
+        sigma: noise amplitude for the sigma branch.
+        path: Path1D providing sample_and_target for the path branch.
+        reweight: outer path_var lambda (composes multiplicatively with iw).
 
-    loss = mean(iw * (target - lambda_t * model(x_tau, tau))^2).
-
-    Args:
-        model: f(x [B,D], t [B,1]) -> [B,1].
-        batch: requires "x0", "x1"; "xstar" when path is triangular.
-        tau, iw: [B,1] each; may be replaced if path.sample_tau exists.
-        sigma: noise amplitude when path is None.
-        path: None or a Path1D subclass.
-
-    Returns: scalar loss.
+    returns a callable with signature ``(model, batch, tau, iw) -> scalar`` and
+    module-level attributes ``required_keys`` and ``requires_tau_grad`` set.
     """
-    from src.waypoints.path_1d import Path1D
-
-    x0 = batch["x0"]
-    x1 = batch["x1"]
-
-    if path is not None and not isinstance(path, Path1D):
-        raise TypeError(f"path must be None or Path1D; got {type(path).__name__}")
-
-    sampler = getattr(path, "sample_tau", None) if path is not None else None
-    if sampler is not None:
-        sampled = sampler(tau.shape[0], path.eps, tau.device)
-        if isinstance(sampled, tuple):
-            tau, iw = sampled
-        else:
-            tau = sampled
-            iw = torch.ones_like(tau)
-
-    epsilon = torch.randn_like(x0)
-
+    if (sigma is None) == (path is None):
+        raise ValueError(
+            f"provide exactly one of sigma or path; got sigma={sigma}, path={path}"
+        )
     if path is None:
-        x_tau, target, lam_t = sb_target(x0, x1, sigma, tau, epsilon)
+        sigma_val = float(sigma)
+
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            epsilon = torch.randn_like(x0)
+            x_tau, target, lam_t = sb_target(x0, x1, sigma_val, tau, epsilon)
+            err = target - lam_t * model(x_tau, tau)
+            outer = resolve_outer_lambda(reweight, tau).unsqueeze(-1)
+            return torch.mean(iw * outer * err ** 2)
+
+        loss.required_keys = frozenset({"x0", "x1"})
     else:
-        xstar = batch["xstar"]
-        x_tau, target, lam_t = path.sample_and_target(x0, x1, xstar, tau, epsilon)
+        from src.waypoints.path_1d import Path1D
+        if not isinstance(path, Path1D):
+            raise TypeError(f"path must be Path1D; got {type(path).__name__}")
+        bound_path = path
 
-    err = target - lam_t * model(x_tau, tau)
-    # outer path_var lambda (1-tau^2) inverts per-tau objective scale when reweight=True;
-    # composes multiplicatively with iw. when reweight=False, outer == 1 (no-op).
-    outer = resolve_outer_lambda(reweight, tau).unsqueeze(-1)
-    return torch.mean(iw * outer * err ** 2)
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            xstar = batch["xstar"]
+            epsilon = torch.randn_like(x0)
+            x_tau, target, lam_t = bound_path.sample_and_target(x0, x1, xstar, tau, epsilon)
+            err = target - lam_t * model(x_tau, tau)
+            outer = resolve_outer_lambda(reweight, tau).unsqueeze(-1)
+            return torch.mean(iw * outer * err ** 2)
+
+        loss.required_keys = frozenset({"x0", "x1", "xstar"})
+    loss.requires_tau_grad = False
+    return loss
 
 
-sb_loss.required_keys = frozenset({"x0", "x1"})
-sb_loss.requires_tau_grad = False
-
-
-def velo_loss(
-    model: Callable[..., torch.Tensor],
-    batch: dict[str, torch.Tensor],
-    tau: torch.Tensor,
-    iw: torch.Tensor,
-    *,
-    path,
-    antithetic: bool = False,
-    reweight: bool = False,
-) -> torch.Tensor:
-    """VFM velocity (b-phase) loss on a stochastic interpolant.
+def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) -> Callable:
+    """factory: VFM velocity (b-phase) loss on a stochastic interpolant.
 
     x_t   = (1-tau) x0 + tau x1 + gamma(tau) z, z ~ N(0, I)
     v*    = (x1 - x0) + gamma'(tau) z
     loss  = mean(0.5 ||b(x_t)||^2 - <v*, b(x_t)>)
-    antithetic averages over (z, -z).
+    antithetic averages over (z, -z) for variance reduction.
 
-    Args:
-        model: f(t [B,1], x [B,D]) -> [B,D].
-        batch: requires "x0", "x1".
-        tau, iw: [B,1]; iw is importance weight applied to per-sample loss.
+    bound at factory time:
         path: object with gamma(tau), dgamma_dtau(tau) returning [B,1].
-        antithetic: enable (z, -z) variance reduction.
-
-    Returns: scalar loss.
+        antithetic: select the antithetic body once.
+        reweight: outer path_var lambda.
     """
-    x0 = batch["x0"]
-    x1 = batch["x1"]
-    g = path.gamma(tau)
-    dg = path.dgamma_dtau(tau)
-    mu = (1 - tau) * x0 + tau * x1
-    z = torch.randn_like(x0)
-    v_star = (x1 - x0) + dg * z
+    bound_path = path
 
-    # outer path_var lambda (1-tau^2) inverts per-tau variance when reweight=True;
-    # composes multiplicatively with iw. when reweight=False, outer == 1 (no-op).
-    outer = resolve_outer_lambda(reweight, tau)
+    if antithetic:
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            g = bound_path.gamma(tau)
+            dg = bound_path.dgamma_dtau(tau)
+            mu = (1 - tau) * x0 + tau * x1
+            z = torch.randn_like(x0)
+            v_star = (x1 - x0) + dg * z
+            v_star_m = (x1 - x0) - dg * z
+            b_p = model(tau, mu + g * z)
+            b_m = model(tau, mu - g * z)
+            lp = 0.25 * (b_p ** 2).sum(-1) - 0.5 * (v_star * b_p).sum(-1)
+            lm = 0.25 * (b_m ** 2).sum(-1) - 0.5 * (v_star_m * b_m).sum(-1)
+            outer = resolve_outer_lambda(reweight, tau)
+            return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
+    else:
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            g = bound_path.gamma(tau)
+            dg = bound_path.dgamma_dtau(tau)
+            mu = (1 - tau) * x0 + tau * x1
+            z = torch.randn_like(x0)
+            v_star = (x1 - x0) + dg * z
+            b = model(tau, mu + g * z)
+            outer = resolve_outer_lambda(reweight, tau)
+            return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
-    if not antithetic:
-        b = model(tau, mu + g * z)
-        loss_per_sample = 0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)
-        return (loss_per_sample * outer * iw.squeeze(-1)).mean()
-
-    b_p = model(tau, mu + g * z)
-    b_m = model(tau, mu - g * z)
-    v_star_m = (x1 - x0) - dg * z
-    lp = 0.25 * (b_p ** 2).sum(-1) - 0.5 * (v_star * b_p).sum(-1)
-    lm = 0.25 * (b_m ** 2).sum(-1) - 0.5 * (v_star_m * b_m).sum(-1)
-    loss_per_pair = 0.5 * (lp + lm)
-    return (loss_per_pair * outer * iw.squeeze(-1)).mean()
+    loss.required_keys = frozenset({"x0", "x1"})
+    loss.requires_tau_grad = False
+    return loss
 
 
-velo_loss.required_keys = frozenset({"x0", "x1"})
-velo_loss.requires_tau_grad = False
-
-
-def denoiser_loss(
-    model: Callable[..., torch.Tensor],
-    batch: dict[str, torch.Tensor],
-    tau: torch.Tensor,
-    iw: torch.Tensor,
-    *,
-    path,
-    reweight: bool = False,
-) -> torch.Tensor:
-    """VFM denoiser (eta-phase) loss.
+def make_denoiser_loss(*, path, reweight: bool = False) -> Callable:
+    """factory: VFM denoiser (eta-phase) loss with path, reweight bound.
 
     x_t  = (1-tau) x0 + tau x1 + gamma(tau) z, z ~ N(0, I)
     loss = mean(0.5 ||eta(x_t)||^2 - <z, eta(x_t)>)
-
-    Args:
-        model: f(t [B,1], x [B,D]) -> [B,D].
-        batch: requires "x0", "x1".
-        tau, iw: [B,1]; iw is importance weight applied to per-sample loss.
-        path: object with gamma(tau) returning [B,1].
-
-    Returns: scalar loss.
     """
-    x0 = batch["x0"]
-    x1 = batch["x1"]
-    z = torch.randn_like(x0)
-    x_t = (1 - tau) * x0 + tau * x1 + path.gamma(tau) * z
-    eta = model(tau, x_t)
-    # outer path_var lambda when reweight=True; composes with iw.
-    outer = resolve_outer_lambda(reweight, tau)
-    loss_per_sample = 0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)
-    return (loss_per_sample * outer * iw.squeeze(-1)).mean()
+    bound_path = path
+
+    def loss(model, batch, tau, iw):
+        x0 = batch["x0"]
+        x1 = batch["x1"]
+        z = torch.randn_like(x0)
+        x_t = (1 - tau) * x0 + tau * x1 + bound_path.gamma(tau) * z
+        eta = model(tau, x_t)
+        outer = resolve_outer_lambda(reweight, tau)
+        return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
+
+    loss.required_keys = frozenset({"x0", "x1"})
+    loss.requires_tau_grad = False
+    return loss
 
 
-denoiser_loss.required_keys = frozenset({"x0", "x1"})
-denoiser_loss.requires_tau_grad = False
-
-
-def fm_loss(
-    model: Callable[..., torch.Tensor],
-    batch: dict[str, torch.Tensor],
-    tau: torch.Tensor,
-    iw: torch.Tensor,
+def make_fm_loss(
     *,
     score_weight: float = 1.0,
     p_uncond: float = 0.0,
     sentinel_cond: float = -1.0,
     reweight: bool = False,
-) -> torch.Tensor:
-    """conditional flow-matching loss with optional CFG dropout (2 classes).
+) -> Callable:
+    """factory: conditional flow-matching loss with optional CFG dropout (2 classes).
 
     x_t      = (1-tau) z + tau x_data, z ~ N(0, I), x_data ~ {p0, p1}
     v*       = x_data - z
@@ -275,116 +248,110 @@ def fm_loss(
     loss     = mse(v_pred, v*) + score_weight * mse(s_pred, s*)
     with prob p_uncond, c is replaced by sentinel_cond.
 
-    Args:
-        model: f(t [B,1], x [B,D], c [B,1]) -> (v [B,D], s [B,D]).
-        batch: requires "x0", "x1". trainer passes equal-size halves.
-        tau, iw: [B,1]; iw is importance weight, tiled to 2B and applied per-sample.
-        score_weight, p_uncond, sentinel_cond: as documented.
-
-    Returns: scalar loss.
+    bound at factory time:
+        score_weight, sentinel_cond, reweight: scalar constants.
+        p_uncond: if > 0, the bernoulli-dropout body is bound; else the identity.
+          this removes the per-step ``if p_uncond > 0`` check.
     """
-    x0 = batch["x0"]
-    x1 = batch["x1"]
-    x_data = torch.cat([x0, x1], dim=0)
-    c = torch.cat(
-        [
-            torch.zeros(x0.shape[0], 1, device=x0.device, dtype=x0.dtype),
-            torch.ones(x1.shape[0], 1, device=x1.device, dtype=x1.dtype),
-        ],
-        dim=0,
-    )
-    iw_tiled = iw.repeat(2, 1).squeeze(-1)  # [2B] importance weight, tiled to match tau.repeat
-    tau = tau.repeat(2, 1)
-
     if p_uncond > 0.0:
-        mask = torch.bernoulli(torch.full_like(c, p_uncond))
-        c = torch.where(mask > 0.5, torch.full_like(c, sentinel_cond), c)
+        def apply_uncond(c):
+            mask = torch.bernoulli(torch.full_like(c, p_uncond))
+            return torch.where(mask > 0.5, torch.full_like(c, sentinel_cond), c)
+    else:
+        def apply_uncond(c):
+            return c
 
-    z = torch.randn_like(x_data)
-    x_t = (1 - tau) * z + tau * x_data
-    v_star = x_data - z
-    s_star = -z / (1 - tau)
+    def loss(model, batch, tau, iw):
+        x0 = batch["x0"]
+        x1 = batch["x1"]
+        x_data = torch.cat([x0, x1], dim=0)
+        c = torch.cat(
+            [
+                torch.zeros(x0.shape[0], 1, device=x0.device, dtype=x0.dtype),
+                torch.ones(x1.shape[0], 1, device=x1.device, dtype=x1.dtype),
+            ],
+            dim=0,
+        )
+        iw_tiled = iw.repeat(2, 1).squeeze(-1)
+        tau2 = tau.repeat(2, 1)
+        c = apply_uncond(c)
+        z = torch.randn_like(x_data)
+        x_t = (1 - tau2) * z + tau2 * x_data
+        v_star = x_data - z
+        s_star = -z / (1 - tau2)
+        v, s = model(tau2, x_t, c)
+        outer = resolve_outer_lambda(reweight, tau2)
+        v_err = ((v - v_star) ** 2).mean(dim=-1)
+        s_err = ((s - s_star) ** 2).mean(dim=-1)
+        return (v_err * outer * iw_tiled).mean() + score_weight * (s_err * outer * iw_tiled).mean()
 
-    v, s = model(tau, x_t, c)
-    # outer path_var lambda (1-tau^2) per-tau when reweight=True; composes with tiled iw.
-    # tau here is already tiled to [2B, 1]; resolve_outer_lambda yields [2B].
-    outer = resolve_outer_lambda(reweight, tau)
-    v_err = ((v - v_star) ** 2).mean(dim=-1)  # [2B]
-    s_err = ((s - s_star) ** 2).mean(dim=-1)  # [2B]
-    return (v_err * outer * iw_tiled).mean() + score_weight * (s_err * outer * iw_tiled).mean()
+    loss.required_keys = frozenset({"x0", "x1"})
+    loss.requires_tau_grad = False
+    return loss
 
 
-fm_loss.required_keys = frozenset({"x0", "x1"})
-fm_loss.requires_tau_grad = False
-
-
-def tri_fm_loss(
-    model: Callable[..., torch.Tensor],
-    batch: dict[str, torch.Tensor],
-    tau: torch.Tensor,
-    iw: torch.Tensor,
+def make_tri_fm_loss(
     *,
     score_weight: float = 1.0,
     triangular_p_uncond: float = 0.0,
     reweight: bool = False,
-) -> torch.Tensor:
-    """3-class flow-matching loss with masked score term.
+) -> Callable:
+    """factory: 3-class flow-matching loss with masked score term.
 
-    same form as `fm_loss` over x_data = cat([x0, x1, xstar]) with 3-way one-hot,
-    but the score-MSE is masked to exclude the xstar rows (those are never queried
-    at inference). with prob triangular_p_uncond, the one-hot row is zeroed.
+    same form as ``make_fm_loss`` over ``x_data = cat([x0, x1, xstar])`` with
+    3-way one-hot, but the score-MSE is masked to exclude the xstar rows
+    (those are never queried at inference). with prob triangular_p_uncond,
+    the one-hot row is zeroed.
 
-    Args:
-        model: must expose `forward_from_onehot(t, x, y_onehot)` -> (v, s).
-        batch: requires "x0", "x1", "xstar".
-        tau, iw: [B,1]; iw is importance weight, tiled to 3B and applied per-sample.
-        score_weight, triangular_p_uncond: as documented.
-
-    Returns: scalar loss.
+    bound at factory time:
+        score_weight, reweight: scalar constants.
+        triangular_p_uncond: if > 0, the bernoulli-dropout body is bound; else identity.
     """
-    x0 = batch["x0"]
-    x1 = batch["x1"]
-    xstar = batch["xstar"]
-    x_data = torch.cat([x0, x1, xstar], dim=0)
-    b0, b1, bs = x0.shape[0], x1.shape[0], xstar.shape[0]
-    y_idx = torch.cat(
-        [
-            torch.zeros(b0, dtype=torch.long, device=x0.device),
-            torch.ones(b1, dtype=torch.long, device=x1.device),
-            torch.full((bs,), 2, dtype=torch.long, device=xstar.device),
-        ],
-        dim=0,
-    )
-    y_oh = F.one_hot(y_idx, num_classes=3).to(x_data.dtype)
-    iw_tiled = iw.repeat(3, 1).squeeze(-1)  # [3B] importance weight, tiled to match tau.repeat
-    tau = tau.repeat(3, 1)
-
     if triangular_p_uncond > 0.0:
-        mask = torch.bernoulli(torch.full((y_oh.shape[0], 1), triangular_p_uncond, device=y_oh.device))
-        y_oh = torch.where(mask > 0.5, torch.zeros_like(y_oh), y_oh)
+        def apply_uncond(y_oh):
+            mask = torch.bernoulli(
+                torch.full((y_oh.shape[0], 1), triangular_p_uncond, device=y_oh.device)
+            )
+            return torch.where(mask > 0.5, torch.zeros_like(y_oh), y_oh)
+    else:
+        def apply_uncond(y_oh):
+            return y_oh
 
-    z = torch.randn_like(x_data)
-    x_t = (1 - tau) * z + tau * x_data
-    v_star = x_data - z
-    s_star = -z / (1 - tau)
+    def loss(model, batch, tau, iw):
+        x0 = batch["x0"]
+        x1 = batch["x1"]
+        xstar = batch["xstar"]
+        x_data = torch.cat([x0, x1, xstar], dim=0)
+        b0, b1, bs = x0.shape[0], x1.shape[0], xstar.shape[0]
+        y_idx = torch.cat(
+            [
+                torch.zeros(b0, dtype=torch.long, device=x0.device),
+                torch.ones(b1, dtype=torch.long, device=x1.device),
+                torch.full((bs,), 2, dtype=torch.long, device=xstar.device),
+            ],
+            dim=0,
+        )
+        y_oh = F.one_hot(y_idx, num_classes=3).to(x_data.dtype)
+        y_oh = apply_uncond(y_oh)
+        iw_tiled = iw.repeat(3, 1).squeeze(-1)
+        tau3 = tau.repeat(3, 1)
+        z = torch.randn_like(x_data)
+        x_t = (1 - tau3) * z + tau3 * x_data
+        v_star = x_data - z
+        s_star = -z / (1 - tau3)
+        v, s = model.forward_from_onehot(tau3, x_t, y_oh)
+        outer = resolve_outer_lambda(reweight, tau3)
+        v_err = ((v - v_star) ** 2).mean(dim=-1)
+        loss_v = (v_err * outer * iw_tiled).mean()
+        s_mask = (y_idx != 2).to(x_data.dtype).unsqueeze(-1)
+        diff = ((s - s_star) ** 2) * s_mask * (outer * iw_tiled).unsqueeze(-1)
+        n_active = s_mask.sum() * x_data.shape[1]
+        loss_s = diff.sum() / n_active.clamp(min=1.0)
+        return loss_v + score_weight * loss_s
 
-    v, s = model.forward_from_onehot(tau, x_t, y_oh)
-
-    # outer path_var lambda when reweight=True; tau is already tiled to [3B, 1] -> outer [3B].
-    outer = resolve_outer_lambda(reweight, tau)
-    v_err = ((v - v_star) ** 2).mean(dim=-1)  # [3B]
-    loss_v = (v_err * outer * iw_tiled).mean()
-    # score term: apply outer*iw before masking; normalize by n_active.
-    s_mask = (y_idx != 2).to(x_data.dtype).unsqueeze(-1)
-    diff = ((s - s_star) ** 2) * s_mask * (outer * iw_tiled).unsqueeze(-1)
-    n_active = s_mask.sum() * x_data.shape[1]
-    loss_s = diff.sum() / n_active.clamp(min=1.0)
-
-    return loss_v + score_weight * loss_s
-
-
-tri_fm_loss.required_keys = frozenset({"x0", "x1", "xstar"})
-tri_fm_loss.requires_tau_grad = False
+    loss.required_keys = frozenset({"x0", "x1", "xstar"})
+    loss.requires_tau_grad = False
+    return loss
 
 
 def tri_tsm_loss(
@@ -428,7 +395,6 @@ def tri_tsm_loss(
     tp0 = torch.zeros_like(tau) + eps
     tp1 = torch.ones_like(tau)
 
-    # lambdas via _weighting helper; uses interior t = clamp(tau, eps, 1)
     lam = resolve_lambdas(reweight, t, t0, t1, eps=eps)
 
     term1 = 2 * model(x0, t0, tp0).squeeze(-1) * lam.lam_t0
@@ -444,8 +410,6 @@ def tri_tsm_loss(
     term4 = score.squeeze(-1) * lam.lam_dt
     term5 = (score ** 2).squeeze(-1) * lam.lam_t
 
-    # boundary (term1, term2) at fixed t={eps,1}; interior (terms 3-5) at sampled tau.
-    # iw applies only to interior; when iw == ones(B,1) this matches the un-split form.
     boundary = (term1 - term2).mean()
     interior = (iw.squeeze(-1) * (term3 + term4 + term5)).mean()
     return boundary + interior

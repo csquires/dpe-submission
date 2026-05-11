@@ -15,6 +15,11 @@ from torch import nn, optim
 from ._ema import EMA
 
 
+def _noop() -> None:
+    """no-op callable used as a fallback when an optional hook is disabled."""
+    return None
+
+
 def maybe_clip_grad(
     params: Iterable[torch.nn.Parameter],
     max_norm: float | None,
@@ -23,6 +28,55 @@ def maybe_clip_grad(
     if max_norm is None or max_norm <= 0:
         return
     torch.nn.utils.clip_grad_norm_(list(params), max_norm=max_norm)
+
+
+def _make_clip(params, max_norm: float | None) -> Callable[[], None]:
+    """bind gradient-clipping into a 0-arg closure; returns _noop when disabled.
+
+    materializes the parameter list once (rather than iterating an iterable per
+    step) so the hot path performs only the clip call.
+    """
+    if max_norm is None or max_norm <= 0:
+        return _noop
+    param_list = list(params)
+
+    def clip() -> None:
+        torch.nn.utils.clip_grad_norm_(param_list, max_norm=max_norm)
+
+    return clip
+
+
+def _make_build_batch(
+    samples_p0: torch.Tensor,
+    samples_p1: torch.Tensor,
+    samples_pstar: torch.Tensor | None,
+    batch_size: int,
+    device: torch.device,
+    needs_xstar: bool,
+) -> Callable[[], dict[str, torch.Tensor]]:
+    """bind batch-bootstrap into a 0-arg closure with xstar-inclusion decided once."""
+    n0 = samples_p0.shape[0]
+    n1 = samples_p1.shape[0]
+
+    if needs_xstar:
+        n_star = samples_pstar.shape[0]
+
+        def build() -> dict[str, torch.Tensor]:
+            idx0 = torch.randint(0, n0, (batch_size,), device=device)
+            idx1 = torch.randint(0, n1, (batch_size,), device=device)
+            idx_star = torch.randint(0, n_star, (batch_size,), device=device)
+            return {
+                "x0": samples_p0[idx0],
+                "x1": samples_p1[idx1],
+                "xstar": samples_pstar[idx_star],
+            }
+    else:
+        def build() -> dict[str, torch.Tensor]:
+            idx0 = torch.randint(0, n0, (batch_size,), device=device)
+            idx1 = torch.randint(0, n1, (batch_size,), device=device)
+            return {"x0": samples_p0[idx0], "x1": samples_p1[idx1]}
+
+    return build
 
 
 def train_loop(
@@ -45,7 +99,7 @@ def train_loop(
 ) -> None:
     """train one network for `n_steps` mini-batch steps.
 
-    loss contract: loss_fn(model, batch_dict, tau, iw, **loss_kwargs) -> scalar,
+    loss contract: loss_fn(model, batch, tau, iw, **loss_kwargs) -> scalar,
     with module-level attributes:
       - required_keys: frozenset subset of {"x0", "x1", "xstar"}
       - requires_tau_grad: bool
@@ -53,12 +107,14 @@ def train_loop(
     procedure:
       1. validate samples + loss_fn contract.
       2. cast samples to float on model device.
-      3. model.train(); for n_steps:
-           - bootstrap [B, D] subsets of p0/p1 (and pstar if available).
+      3. pre-bind hot-path callables (build_batch, do_clip, do_sched, do_ema) so
+         the inner loop performs no `is not None` checks.
+      4. model.train(); for n_steps:
+           - build_batch() draws (x0, x1[, xstar]).
            - draw (tau, iw) from time_sampler.
            - loss = loss_fn(model, batch, tau, iw, **loss_kwargs); .backward();
-             optional grad clip; optim.step(); optional scheduler / EMA step.
-      4. model.eval().
+             do_clip(); optim.step(); do_sched(); do_ema().
+      5. model.eval().
 
     Args:
         model: trainable callable; if not an nn.Module, pass `model_module`.
@@ -78,17 +134,19 @@ def train_loop(
     if not hasattr(loss_fn, "required_keys") or not hasattr(loss_fn, "requires_tau_grad"):
         raise AttributeError("loss_fn must have 'required_keys' and 'requires_tau_grad'")
 
-    if not isinstance(loss_fn.required_keys, frozenset):
+    required_keys = loss_fn.required_keys
+    if not isinstance(required_keys, frozenset):
         raise ValueError(
-            f"loss_fn.required_keys must be frozenset; got {type(loss_fn.required_keys)}"
+            f"loss_fn.required_keys must be frozenset; got {type(required_keys)}"
         )
-    if not loss_fn.required_keys.issubset({"x0", "x1", "xstar"}):
+    if not required_keys.issubset({"x0", "x1", "xstar"}):
         raise ValueError(
             f"loss_fn.required_keys must be subset of {{'x0','x1','xstar'}}; "
-            f"got {loss_fn.required_keys}"
+            f"got {required_keys}"
         )
 
-    if "xstar" in loss_fn.required_keys:
+    needs_xstar = "xstar" in required_keys
+    if needs_xstar:
         if samples_pstar is None:
             raise ValueError("loss_fn requires 'xstar' but samples_pstar is None")
         if samples_pstar.shape[1] != samples_p0.shape[1]:
@@ -111,10 +169,6 @@ def train_loop(
     if samples_pstar is not None:
         samples_pstar = samples_pstar.float().to(device)
 
-    n0 = samples_p0.shape[0]
-    n1 = samples_p1.shape[0]
-    n_star = samples_pstar.shape[0] if samples_pstar is not None else 0
-
     if isinstance(model, nn.Module):
         model.train()
     elif model_module is not None:
@@ -122,34 +176,25 @@ def train_loop(
 
     loss_kw = loss_kwargs if loss_kwargs is not None else {}
 
+    build_batch = _make_build_batch(
+        samples_p0, samples_p1, samples_pstar, batch_size, device, needs_xstar,
+    )
+    do_clip = _make_clip(model_module.parameters(), grad_clip_norm)
+    do_sched = scheduler.step if scheduler is not None else _noop
+    do_ema = (lambda: ema.update(model_module)) if ema is not None else _noop
+
     for _ in range(n_steps):
-        idx0 = torch.randint(0, n0, (batch_size,), device=device)
-        idx1 = torch.randint(0, n1, (batch_size,), device=device)
-
-        # pass xstar through when available, even if required_keys excludes it:
-        # sb_loss declares {"x0","x1"} statically but reads xstar at runtime for
-        # triangular paths.
-        include_xstar = samples_pstar is not None
-        if include_xstar:
-            idx_star = torch.randint(0, n_star, (batch_size,), device=device)
-
-        batch = {"x0": samples_p0[idx0], "x1": samples_p1[idx1]}
-        if include_xstar:
-            batch["xstar"] = samples_pstar[idx_star]
-
+        batch = build_batch()
         tau, iw = time_sampler(batch_size, eps, device)
 
         loss = loss_fn(model, batch, tau, iw, **loss_kw)
 
         optim.zero_grad()
         loss.backward()
-        maybe_clip_grad(model_module.parameters(), grad_clip_norm)
+        do_clip()
         optim.step()
-
-        if scheduler is not None:
-            scheduler.step()
-        if ema is not None:
-            ema.update(model_module)
+        do_sched()
+        do_ema()
 
     if isinstance(model, nn.Module):
         model.eval()

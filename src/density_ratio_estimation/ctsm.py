@@ -9,7 +9,7 @@ from src.density_ratio_estimation._cfgs import (
 )
 from src.density_ratio_estimation._ema import EMA
 from src.density_ratio_estimation._trainer import train_loop
-from src.density_ratio_estimation._losses import sb_loss
+from src.density_ratio_estimation._losses import make_sb_loss
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 
 
@@ -107,13 +107,14 @@ class CTSM(DensityRatioEstimator):
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         self.ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
+        loss_fn = make_sb_loss(sigma=self.sigma, reweight=self.reweight)
 
         train_loop(
             model=self.model,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=None,
-            loss_fn=sb_loss,
+            loss_fn=loss_fn,
             optim=optim_obj,
             n_steps=self.n_epochs,
             batch_size=self.batch_size,
@@ -122,7 +123,6 @@ class CTSM(DensityRatioEstimator):
             ema=self.ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
-            loss_kwargs={"sigma": self.sigma, "path": None, "reweight": self.reweight},
         )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:

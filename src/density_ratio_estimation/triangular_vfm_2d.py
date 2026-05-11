@@ -13,9 +13,8 @@ from src.density_ratio_estimation._cfgs import (
     OptimCfg, SchedCfg, EmaCfg, TimeCfg,
     make_optim, make_sched, make_ema,
 )
-from src.density_ratio_estimation._trainer import maybe_clip_grad
 from src.density_ratio_estimation._weighting import resolve_outer_lambda
-from src.models.flow.div_estimators import exact_div, hutch_div
+from src.models.flow.div_estimators import build_div_fn
 from src.waypoints.path_2d import VfmPath2D
 from src.waypoints.triangular_continuous_2d import Stacked2DVfm
 from src.waypoints.curve_2d import Curve2D
@@ -141,6 +140,9 @@ class TriangularVFM2D(DensityRatioEstimator):
         # resolve curve default
         self.curve = curve if curve is not None else Curve2D(path_height=1.0)
 
+        # bind divergence estimator once; predict_ldr time-score holds no branches.
+        self._div_fn = build_div_fn(div_method, noise=div_noise, n_samples=n_hutch_samples)
+
         # coverage assertion: curve t_2 range must lie within trained t_2 range
         peak = float(self.curve.peak_t2())
         t2_max = float(self.path.t2_max)
@@ -264,99 +266,102 @@ class TriangularVFM2D(DensityRatioEstimator):
         self.net_eta.eval()
 
         t2_max = float(self.path.t2_max)
+        eps_t = self.time.eps
+        path = self.path
+        net_b1 = self.net_b1
+        net_b2 = self.net_b2
+        reweight = self.reweight
 
-        for epoch in range(self.n_epochs):
-            # bootstrap minibatches [B, D]
-            idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
-            idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
-            idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
-            x0 = samples_p0[idx0]  # [B, D]
-            x1 = samples_p1[idx1]  # [B, D]
-            xstar = samples_pstar[idx_star]  # [B, D]
+        # bind antithetic vs non-antithetic body once; the inner loop calls compute_losses()
+        # for both regimes via the same shape.
+        if self.antithetic:
+            def compute_losses(x0, x1, xstar):
+                t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*eps_t) + eps_t
+                t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - eps_t) + eps_t
+                z = torch.randn_like(x0)
+                outer = resolve_outer_lambda(reweight, t1)
+                mu = path.mu(x0, x1, xstar, t1, t2).detach()
+                dmu_dt1 = path.dmu_dt1(x0, x1, xstar, t1, t2).detach()
+                dmu_dt2 = path.dmu_dt2(x0, x1, xstar, t1, t2).detach()
+                gamma_t = path.gamma(t1, t2).detach()
+                dgamma_dt1 = path.dgamma_dt1(t1, t2).detach()
+                dgamma_dt2 = path.dgamma_dt2(t1, t2).detach()
 
-            # sample time on 2D domain
-            t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.time.eps) + self.time.eps  # [B, 1]
-            t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - self.time.eps) + self.time.eps  # [B, 1]
-
-            # sample noise
-            z = torch.randn_like(x0)  # [B, D]
-
-            # outer reweight lambda from t1
-            outer = resolve_outer_lambda(self.reweight, t1)  # [B]
-
-            # path quantities are detached; gradients flow only through the b/eta nets.
-            mu = self.path.mu(x0, x1, xstar, t1, t2).detach()  # [B, D]
-            dmu_dt1 = self.path.dmu_dt1(x0, x1, xstar, t1, t2).detach()  # [B, D]
-            dmu_dt2 = self.path.dmu_dt2(x0, x1, xstar, t1, t2).detach()  # [B, D]
-            gamma_t = self.path.gamma(t1, t2).detach()  # [B, 1]
-            dgamma_dt1 = self.path.dgamma_dt1(t1, t2).detach()  # [B, 1]
-            dgamma_dt2 = self.path.dgamma_dt2(t1, t2).detach()  # [B, 1]
-
-            if self.antithetic:
-                # antithetic variance reduction: evaluate at +z and -z
-                x_t_plus = mu + gamma_t * z  # [B, D]
-                x_t_minus = mu - gamma_t * z  # [B, D]
-
-                b1_plus = self.net_b1(t1, t2, x_t_plus)  # [B, D]
-                b2_plus = self.net_b2(t1, t2, x_t_plus)  # [B, D]
-                b1_minus = self.net_b1(t1, t2, x_t_minus)  # [B, D]
-                b2_minus = self.net_b2(t1, t2, x_t_minus)  # [B, D]
-
-                target_1_plus = dmu_dt1 + dgamma_dt1 * z  # [B, D]
-                target_2_plus = dmu_dt2 + dgamma_dt2 * z  # [B, D]
-                target_1_minus = dmu_dt1 - dgamma_dt1 * z  # [B, D]
-                target_2_minus = dmu_dt2 - dgamma_dt2 * z  # [B, D]
-
-                # half-norm-minus-dot per direction, averaged over (z, -z), with reweighting
-                per_sample_b1 = (
+                x_t_plus = mu + gamma_t * z
+                x_t_minus = mu - gamma_t * z
+                b1_plus = net_b1(t1, t2, x_t_plus)
+                b2_plus = net_b2(t1, t2, x_t_plus)
+                b1_minus = net_b1(t1, t2, x_t_minus)
+                b2_minus = net_b2(t1, t2, x_t_minus)
+                target_1_plus = dmu_dt1 + dgamma_dt1 * z
+                target_2_plus = dmu_dt2 + dgamma_dt2 * z
+                target_1_minus = dmu_dt1 - dgamma_dt1 * z
+                target_2_minus = dmu_dt2 - dgamma_dt2 * z
+                per_b1 = (
                     0.25 * (b1_plus ** 2).sum(dim=-1)
                     - 0.5 * (target_1_plus * b1_plus).sum(dim=-1)
                     + 0.25 * (b1_minus ** 2).sum(dim=-1)
                     - 0.5 * (target_1_minus * b1_minus).sum(dim=-1)
-                ) * outer  # [B]
-                per_sample_b2 = (
+                ) * outer
+                per_b2 = (
                     0.25 * (b2_plus ** 2).sum(dim=-1)
                     - 0.5 * (target_2_plus * b2_plus).sum(dim=-1)
                     + 0.25 * (b2_minus ** 2).sum(dim=-1)
                     - 0.5 * (target_2_minus * b2_minus).sum(dim=-1)
-                ) * outer  # [B]
-                loss_b1 = per_sample_b1.mean()
-                loss_b2 = per_sample_b2.mean()
-            else:
-                # single forward pass
-                x_t = mu + gamma_t * z  # [B, D]
-                b1_pred = self.net_b1(t1, t2, x_t)  # [B, D]
-                b2_pred = self.net_b2(t1, t2, x_t)  # [B, D]
+                ) * outer
+                return per_b1.mean() + per_b2.mean()
+        else:
+            def compute_losses(x0, x1, xstar):
+                t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*eps_t) + eps_t
+                t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - eps_t) + eps_t
+                z = torch.randn_like(x0)
+                outer = resolve_outer_lambda(reweight, t1)
+                mu = path.mu(x0, x1, xstar, t1, t2).detach()
+                dmu_dt1 = path.dmu_dt1(x0, x1, xstar, t1, t2).detach()
+                dmu_dt2 = path.dmu_dt2(x0, x1, xstar, t1, t2).detach()
+                gamma_t = path.gamma(t1, t2).detach()
+                dgamma_dt1 = path.dgamma_dt1(t1, t2).detach()
+                dgamma_dt2 = path.dgamma_dt2(t1, t2).detach()
 
-                target_1 = dmu_dt1 + dgamma_dt1 * z  # [B, D]
-                target_2 = dmu_dt2 + dgamma_dt2 * z  # [B, D]
+                x_t = mu + gamma_t * z
+                b1_pred = net_b1(t1, t2, x_t)
+                b2_pred = net_b2(t1, t2, x_t)
+                target_1 = dmu_dt1 + dgamma_dt1 * z
+                target_2 = dmu_dt2 + dgamma_dt2 * z
+                per_b1 = (
+                    0.5 * (b1_pred ** 2).sum(dim=-1) - (target_1 * b1_pred).sum(dim=-1)
+                ) * outer
+                per_b2 = (
+                    0.5 * (b2_pred ** 2).sum(dim=-1) - (target_2 * b2_pred).sum(dim=-1)
+                ) * outer
+                return per_b1.mean() + per_b2.mean()
 
-                per_sample_b1 = (
-                    0.5 * (b1_pred ** 2).sum(dim=-1)
-                    - (target_1 * b1_pred).sum(dim=-1)
-                ) * outer  # [B]
-                per_sample_b2 = (
-                    0.5 * (b2_pred ** 2).sum(dim=-1)
-                    - (target_2 * b2_pred).sum(dim=-1)
-                ) * outer  # [B]
-                loss_b1 = per_sample_b1.mean()
-                loss_b2 = per_sample_b2.mean()
+        # bind post-step callbacks once.
+        grad_clip = self.optim.grad_clip_norm
+        if grad_clip is not None and grad_clip > 0:
+            b_params = list(net_b1.parameters()) + list(net_b2.parameters())
 
-            # backward + step
-            loss = loss_b1 + loss_b2
+            def do_clip():
+                torch.nn.utils.clip_grad_norm_(b_params, max_norm=grad_clip)
+        else:
+            def do_clip():
+                return None
+        do_sched = scheduler_b.step if scheduler_b is not None else (lambda: None)
+        do_ema_b1 = (lambda: ema_b1.update(net_b1)) if ema_b1 is not None else (lambda: None)
+        do_ema_b2 = (lambda: ema_b2.update(net_b2)) if ema_b2 is not None else (lambda: None)
+
+        for epoch in range(self.n_epochs):
+            idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
+            idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
+            idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
+            loss = compute_losses(samples_p0[idx0], samples_p1[idx1], samples_pstar[idx_star])
             optimizer_b.zero_grad()
             loss.backward()
-            maybe_clip_grad(
-                list(self.net_b1.parameters()) + list(self.net_b2.parameters()),
-                self.optim.grad_clip_norm,
-            )
+            do_clip()
             optimizer_b.step()
-            if scheduler_b is not None:
-                scheduler_b.step()
-            if ema_b1 is not None:
-                ema_b1.update(self.net_b1)
-            if ema_b2 is not None:
-                ema_b2.update(self.net_b2)
+            do_sched()
+            do_ema_b1()
+            do_ema_b2()
 
     def _train_eta_phase(
         self,
@@ -381,45 +386,50 @@ class TriangularVFM2D(DensityRatioEstimator):
         self.net_eta.train()
 
         t2_max = float(self.path.t2_max)
+        eps_t = self.time.eps
+        path = self.path
+        net_eta = self.net_eta
+        reweight = self.reweight
+
+        # bind post-step callbacks once.
+        grad_clip = self.optim.grad_clip_norm
+        if grad_clip is not None and grad_clip > 0:
+            eta_params = list(net_eta.parameters())
+
+            def do_clip():
+                torch.nn.utils.clip_grad_norm_(eta_params, max_norm=grad_clip)
+        else:
+            def do_clip():
+                return None
+        do_sched = scheduler_eta.step if scheduler_eta is not None else (lambda: None)
+        do_ema = (lambda: ema_eta.update(net_eta)) if ema_eta is not None else (lambda: None)
 
         for epoch in range(self.n_epochs):
-            # bootstrap minibatches [B, D]
             idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
             idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
             idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
-            x0 = samples_p0[idx0]  # [B, D]
-            x1 = samples_p1[idx1]  # [B, D]
-            xstar = samples_pstar[idx_star]  # [B, D]
+            x0 = samples_p0[idx0]
+            x1 = samples_p1[idx1]
+            xstar = samples_pstar[idx_star]
 
-            # sample time on 2D domain
-            t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*self.time.eps) + self.time.eps  # [B, 1]
-            t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - self.time.eps) + self.time.eps  # [B, 1]
+            t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*eps_t) + eps_t
+            t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - eps_t) + eps_t
 
-            # sample noise and forward through path
-            z = torch.randn_like(x0)  # [B, D]
-            x_t = self.path.sample(x0, x1, xstar, t1, t2, z).detach()  # [B, D]
-
-            # outer reweight lambda from t1
-            outer = resolve_outer_lambda(self.reweight, t1)  # [B]
-
-            # forward through eta
-            eta_pred = self.net_eta(t1, t2, x_t)  # [B, D]
-
-            # denoising loss: half-norm minus dot, with reweighting
+            z = torch.randn_like(x0)
+            x_t = path.sample(x0, x1, xstar, t1, t2, z).detach()
+            outer = resolve_outer_lambda(reweight, t1)
+            eta_pred = net_eta(t1, t2, x_t)
             per_sample = (
                 0.5 * (eta_pred ** 2).sum(dim=-1) - (z * eta_pred).sum(dim=-1)
-            ) * outer  # [B]
+            ) * outer
             loss_eta = per_sample.mean()
 
-            # backward + step
             optimizer_eta.zero_grad()
             loss_eta.backward()
-            maybe_clip_grad(self.net_eta.parameters(), self.optim.grad_clip_norm)
+            do_clip()
             optimizer_eta.step()
-            if scheduler_eta is not None:
-                scheduler_eta.step()
-            if ema_eta is not None:
-                ema_eta.update(self.net_eta)
+            do_sched()
+            do_ema()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """estimate log p_0(x) / p_1(x) via time-score line integral on self.curve.
@@ -547,19 +557,9 @@ class TriangularVFM2D(DensityRatioEstimator):
         def b2_single(x_single):
             return self.net_b2(t1_one, t2_one, x_single.unsqueeze(0)).squeeze(0)
 
-        # compute divergences
-        if self.div_method == "exact":
-            div_b1 = exact_div(b1_single, x)  # [n_samples]
-            div_b2 = exact_div(b2_single, x)  # [n_samples]
-        else:
-            # hutchinson with optional multiple samples
-            div_b1 = hutch_div(b1_single, x, noise=self.div_noise)  # [n_samples]
-            div_b2 = hutch_div(b2_single, x, noise=self.div_noise)  # [n_samples]
-            for _ in range(self.n_hutch_samples - 1):
-                div_b1 = div_b1 + hutch_div(b1_single, x, noise=self.div_noise)
-                div_b2 = div_b2 + hutch_div(b2_single, x, noise=self.div_noise)
-            div_b1 = div_b1 / self.n_hutch_samples
-            div_b2 = div_b2 / self.n_hutch_samples
+        # divergences via the init-bound _div_fn (no per-tau branch on div_method).
+        div_b1 = self._div_fn(b1_single, x)  # [n_samples]
+        div_b2 = self._div_fn(b2_single, x)  # [n_samples]
 
         # dot products
         b1_dot_eta = (b1_pred * eta_pred).sum(dim=-1)  # [n_samples]

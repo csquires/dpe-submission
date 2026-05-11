@@ -13,8 +13,58 @@ batching via vmap internally, and return divergence estimates [B].
 import torch
 import math
 import warnings
+from functools import partial
 from torch import Tensor
-from typing import Callable
+from typing import Callable, Optional
+
+
+def build_div_fn(
+    method: str,
+    *,
+    noise: Optional[str] = None,
+    n_samples: int = 1,
+) -> Callable:
+    """select a divergence estimator once and return a single callable.
+
+    accepts two API styles:
+      - separated: method in {"exact", "hutchinson"}; noise required for
+        "hutchinson"; n_samples > 1 averages independent Hutchinson estimates.
+        used by VFM-family (which exposes `div_method`, `div_noise`,
+        `n_hutch_samples` as three independent knobs).
+      - combined-key: method in {"exact", "hutch_gaussian", "hutch_rademacher"}.
+        used by FMDRE-family `ratio_ode*` which pack method+noise into a single
+        string in their public API.
+
+    binds all dispatch at construction; the returned callable signature is
+    `(vecfield, x) -> [B]` and is safe to use inside vmap or in the body of an
+    integration loop without any per-step branches.
+    """
+    if method == "exact":
+        return exact_div
+    if method == "hutch_gaussian":
+        return partial(hutch_div, noise="gaussian")
+    if method == "hutch_rademacher":
+        return partial(hutch_div, noise="rademacher")
+    if method == "hutchinson":
+        if noise not in ("gaussian", "rademacher"):
+            raise ValueError(
+                f"noise must be 'gaussian' or 'rademacher' when method='hutchinson'; "
+                f"got {noise!r}"
+            )
+        if n_samples == 1:
+            return partial(hutch_div, noise=noise)
+
+        def avg_div(vecfield, x):
+            out = hutch_div(vecfield, x, noise=noise)
+            for _ in range(n_samples - 1):
+                out = out + hutch_div(vecfield, x, noise=noise)
+            return out / n_samples
+        return avg_div
+    raise ValueError(
+        f"method must be one of "
+        f"{{'exact', 'hutchinson', 'hutch_gaussian', 'hutch_rademacher'}}; "
+        f"got {method!r}"
+    )
 
 
 def exact_div(

@@ -24,9 +24,10 @@ from src.density_ratio_estimation._cfgs import (
 )
 from src.density_ratio_estimation._time_samplers import PathSampler
 from src.density_ratio_estimation._trainer import train_two_phase
-from src.density_ratio_estimation._losses import velo_loss, denoiser_loss
+from src.density_ratio_estimation._losses import make_velo_loss, make_denoiser_loss
+from src.density_ratio_estimation._integration import build_integrator
 from src.models.common.mlp import MLP
-from src.models.flow.div_estimators import exact_div, hutch_div
+from src.models.flow.div_estimators import build_div_fn
 from src.waypoints.triangular_continuous import BarycentricVfm1D
 from src.waypoints.piecewise_sb import PiecewiseSBVfm1D
 
@@ -107,6 +108,10 @@ class _TriangularVFMBase(DensityRatioEstimator):
         else:
             self.device = torch.device(device)
 
+        # bind div / integrator at construction; per-step time-score loop holds no branches.
+        self._div_fn = build_div_fn(div_method, noise=div_noise, n_samples=n_hutch_samples)
+        self._integrator = build_integrator(integration_type)
+
         self.net_b = None
         self.net_eta = None
         self.ema_b: Optional[object] = None
@@ -137,7 +142,11 @@ class _TriangularVFMBase(DensityRatioEstimator):
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
     ) -> None:
-        """two-phase training: build optim/sched/ema/time-sampler from cfgs, then delegate."""
+        """two-phase training: build optim/sched/ema/time-sampler from cfgs, then delegate.
+
+        loss closures are built via ``make_velo_loss`` / ``make_denoiser_loss``
+        with antithetic and reweight bound once at the factory.
+        """
         n_star = samples_pstar.shape[0]
         if n_star < 1:
             raise ValueError(f"samples_pstar must have at least 1 row; got n_star={n_star}")
@@ -164,14 +173,17 @@ class _TriangularVFMBase(DensityRatioEstimator):
 
         time_sampler = make_time_sampler(self.time)
 
+        loss_b = make_velo_loss(path=self.path, antithetic=self.antithetic, reweight=self.reweight)
+        loss_eta = make_denoiser_loss(path=self.path, reweight=self.reweight)
+
         train_two_phase(
             model_b=self.net_b,
             model_eta=self.net_eta,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=samples_pstar,
-            loss_b=velo_loss,
-            loss_eta=denoiser_loss,
+            loss_b=loss_b,
+            loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
             n_steps_b=self.n_epochs,
@@ -185,8 +197,6 @@ class _TriangularVFMBase(DensityRatioEstimator):
             grad_clip_norm_b=self.optim.grad_clip_norm,
             grad_clip_norm_eta=self.optim.grad_clip_norm,
             eps=self.time.eps,
-            loss_kwargs_b={"path": self.path, "antithetic": self.antithetic, "reweight": self.reweight},
-            loss_kwargs_eta={"path": self.path, "reweight": self.reweight},
         )
 
         self.net_b.eval()
@@ -223,19 +233,7 @@ class _TriangularVFMBase(DensityRatioEstimator):
             for i in range(0, n_points, chunk_size):
                 chunks.append(time_score_fn(t_vals[i:i + chunk_size], samples).detach())
             time_scores = torch.cat(chunks, dim=0)
-
-            if self.integration_type == "2":
-                return -torch.trapz(time_scores, t_vals, dim=0).cpu()
-            if self.integration_type == "3":
-                t_np = t_vals.cpu().numpy()
-                h = (t_np[-1] - t_np[0]) / (n_points - 1)
-                integrand = time_scores.cpu().numpy()
-                integral = integrand[0] + integrand[-1]
-                for i in range(1, n_points - 1):
-                    integral += (2 if i % 2 == 0 else 4) * integrand[i]
-                integral *= h / 3
-                return -torch.from_numpy(integral)
-            return -time_scores.mean(dim=0).cpu()
+            return self._integrator(time_scores, t_vals)
         finally:
             if self.ema_b is not None:
                 self.ema_b.restore(self.net_b)
@@ -257,13 +255,7 @@ class _TriangularVFMBase(DensityRatioEstimator):
         def b_single(x_single):
             return self.net_b(t_scalar.view(1, 1), x_single.unsqueeze(0)).squeeze(0)
 
-        if self.div_method == "exact":
-            div_b = exact_div(b_single, x)
-        else:
-            div_b = hutch_div(b_single, x, noise=self.div_noise)
-            for _ in range(self.n_hutch_samples - 1):
-                div_b = div_b + hutch_div(b_single, x, noise=self.div_noise)
-            div_b = div_b / self.n_hutch_samples
+        div_b = self._div_fn(b_single, x)
         b_dot_eta = (b_pred * eta_pred).sum(dim=-1)
         return -div_b + b_dot_eta / gamma_t
 

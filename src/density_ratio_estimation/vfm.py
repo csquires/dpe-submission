@@ -5,11 +5,7 @@ trains b (velocity) and eta (denoiser) sequentially; integrates the time-score
 """
 from typing import Optional, Literal
 
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from scipy import integrate
 
 from src.density_ratio_estimation.base import DRE
 from src.density_ratio_estimation._cfgs import (
@@ -18,11 +14,12 @@ from src.density_ratio_estimation._cfgs import (
 )
 from src.density_ratio_estimation._trainer import train_two_phase
 from src.density_ratio_estimation._weighting import resolve_outer_lambda
+from src.density_ratio_estimation._integration import build_integrator
 # VFM exposes inline gamma / dgamma_dt rather than a Path object, so it bypasses
 # velo_loss / denoiser_loss from `_losses` (which expect a path). fit() defines
 # inline closures with the same loss math.
-from src.models.flow.div_estimators import exact_div, hutch_div, compute_divergence
 from src.models.common.mlp import MLP
+from src.models.flow.div_estimators import build_div_fn
 
 
 class VFM(DRE):
@@ -87,6 +84,10 @@ class VFM(DRE):
         else:
             self.device = torch.device(device)
 
+        # bind div / integrator once: the per-step hot path holds no branches.
+        self._div_fn = build_div_fn(div_method, noise=div_noise, n_samples=n_hutch_samples)
+        self._integrator = build_integrator(integration_type)
+
         self.net_b = None
         self.net_eta = None
         self.ema_b = None
@@ -105,14 +106,10 @@ class VFM(DRE):
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """gamma(t) = (1 - exp(-k t)) (1 - exp(-k (1-t)))."""
-        if not isinstance(t, torch.Tensor):
-            t = torch.tensor(t, device=self.device)
         return (1 - torch.exp(-self.k * t)) * (1 - torch.exp(-self.k * (1 - t)))
 
     def dgamma_dt(self, t: torch.Tensor) -> torch.Tensor:
         """gamma'(t)."""
-        if not isinstance(t, torch.Tensor):
-            t = torch.tensor(t, device=self.device)
         e0 = torch.exp(-self.k * t)
         e1 = torch.exp(-self.k * (1 - t))
         return self.k * e0 * (1 - e1) - self.k * e1 * (1 - e0)
@@ -129,18 +126,16 @@ class VFM(DRE):
         def b_single(x_single):
             return self.net_b(t_scalar.view(1, 1), x_single.unsqueeze(0)).squeeze(0)
 
-        if self.div_method == "exact":
-            div_b = exact_div(b_single, x)
-        else:
-            div_b = hutch_div(b_single, x, noise=self.div_noise)
-            for _ in range(self.n_hutch_samples - 1):
-                div_b = div_b + hutch_div(b_single, x, noise=self.div_noise)
-            div_b = div_b / self.n_hutch_samples
+        div_b = self._div_fn(b_single, x)
         b_dot_eta = (b_pred * eta_pred).sum(dim=-1)
         return -div_b + b_dot_eta / gamma_t
 
     def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
-        """train b then eta sequentially via `train_two_phase` with cfg-based setup."""
+        """train b then eta sequentially via `train_two_phase` with cfg-based setup.
+
+        the loss_b closure binds antithetic, reweight, and the gamma schedule
+        once at definition time so the inner loop sees only one specialized body.
+        """
         self.init_model()
 
         samples_p0 = samples_p0.float().to(self.device)
@@ -155,19 +150,19 @@ class VFM(DRE):
         self.ema_b, self.ema_eta = ema_b, ema_eta
 
         time_sampler = make_time_sampler(self.time)
-        antithetic = self.antithetic
         reweight = self.reweight
+        gamma_fn = self.gamma
+        dgamma_fn = self.dgamma_dt
 
-        def loss_b(model, batch, tau, iw):
-            x0, x1 = batch["x0"], batch["x1"]
-            z = torch.randn_like(x0)
-            g = self.gamma(tau)
-            dg = self.dgamma_dt(tau)
-            mu = (1 - tau) * x0 + tau * x1
-            delta = x1 - x0
-            # outer path_var lambda when reweight=True; composes with iw
-            outer = resolve_outer_lambda(reweight, tau)
-            if antithetic:
+        if self.antithetic:
+            def loss_b(model, batch, tau, iw):
+                x0, x1 = batch["x0"], batch["x1"]
+                z = torch.randn_like(x0)
+                g = gamma_fn(tau)
+                dg = dgamma_fn(tau)
+                mu = (1 - tau) * x0 + tau * x1
+                delta = x1 - x0
+                outer = resolve_outer_lambda(reweight, tau)
                 b_p = model(tau, mu + g * z)
                 b_m = model(tau, mu - g * z)
                 v_p = delta + dg * z
@@ -175,9 +170,18 @@ class VFM(DRE):
                 lp = 0.5 * (b_p ** 2).sum(-1) - (v_p * b_p).sum(-1)
                 lm = 0.5 * (b_m ** 2).sum(-1) - (v_m * b_m).sum(-1)
                 return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
-            b = model(tau, mu + g * z)
-            v_star = delta + dg * z
-            return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
+        else:
+            def loss_b(model, batch, tau, iw):
+                x0, x1 = batch["x0"], batch["x1"]
+                z = torch.randn_like(x0)
+                g = gamma_fn(tau)
+                dg = dgamma_fn(tau)
+                mu = (1 - tau) * x0 + tau * x1
+                delta = x1 - x0
+                outer = resolve_outer_lambda(reweight, tau)
+                b = model(tau, mu + g * z)
+                v_star = delta + dg * z
+                return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss_b.required_keys = frozenset({"x0", "x1"})
         loss_b.requires_tau_grad = False
@@ -185,7 +189,7 @@ class VFM(DRE):
         def loss_eta(model, batch, tau, iw):
             x0, x1 = batch["x0"], batch["x1"]
             z = torch.randn_like(x0)
-            x_t = (1 - tau) * x0 + tau * x1 + self.gamma(tau) * z
+            x_t = (1 - tau) * x0 + tau * x1 + gamma_fn(tau) * z
             eta = model(tau, x_t)
             outer = resolve_outer_lambda(reweight, tau)
             return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
@@ -222,7 +226,7 @@ class VFM(DRE):
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """integrate the time-score over tau in [eps, 1-eps]; return -integral on CPU.
 
-        chunked vmap over the tau grid; integration_type selects mean / trapz / Simpson.
+        chunked vmap over the tau grid; the integration scheme is bound at __init__.
         """
         if self.net_b is None or self.net_eta is None:
             raise RuntimeError("VFM model is not trained. Call fit() before predict_ldr().")
@@ -254,19 +258,7 @@ class VFM(DRE):
             for i in range(0, n_points, chunk_size):
                 chunks.append(time_score_fn(t_vals[i:i + chunk_size], samples).detach())
             time_scores = torch.cat(chunks, dim=0)
-
-            if self.integration_type == "3":
-                t_np = t_vals.cpu().numpy()
-                h = (t_np[-1] - t_np[0]) / (n_points - 1)
-                integrand = time_scores.cpu().numpy()
-                integral = integrand[0] + integrand[-1]
-                for i in range(1, n_points - 1):
-                    integral += (2 if i % 2 == 0 else 4) * integrand[i]
-                integral *= h / 3
-                return -torch.from_numpy(integral)
-            if self.integration_type == "1":
-                return -time_scores.mean(dim=0).cpu()
-            return -torch.trapz(time_scores, t_vals, dim=0).cpu()
+            return self._integrator(time_scores, t_vals)
         finally:
             if self.ema_b is not None:
                 self.ema_b.restore(self.net_b)
