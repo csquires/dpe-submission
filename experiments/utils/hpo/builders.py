@@ -27,9 +27,9 @@ from src.methods.cls.tabular_plugin import (
     SmoothedTabularPluginDRE,
 )
 
-from src.methods.reg.ctsm.tri import TriangularCTSM
+from src.methods.reg.ctsm.tri import TriangularCTSMV1 as TriangularCTSM
 from src.methods.reg.ctsm.tri.v3 import TriangularCTSM2D
-from src.methods.reg.vfm.tri import TriangularVFM
+from src.methods.reg.vfm.tri import TriangularVFMV1 as TriangularVFM
 from src.methods.reg.vfm.tri.v3 import TriangularVFM2D
 
 from src.waypoints.piecewise_sb import PiecewiseSBCtsm1D, PiecewiseSBVfm1D
@@ -402,3 +402,30 @@ def build_SmoothedTabularPluginDRE(input_dim: int, device: str | torch.device, n
         smoothing_alpha=flat_hp.get("smoothing_alpha", 0.5),
         device=device
     )
+
+
+# registry mapping method label -> builder callable. consumed by the optuna
+# worker (experiments.utils.hpo.optuna.worker.run_worker) to resolve a builder
+# from METADATA['builder'] in a suggest_hp module.
+BUILDERS_REGISTRY = {
+    "TSM": build_TSM,
+    "CTSM": build_CTSM,
+    "VFM": build_VFM,
+    "BDRE": build_BDRE,
+    "MDRE": build_MDRE,
+    "MultiHeadTDRE": build_MHTDRE,
+    "FMDRE": build_FMDRE,
+    "FMDRE_S2": build_FMDRE_S2,
+    "TriangularFMDRE": build_TriangularFMDRE,
+    "TriangularTSM": build_TriangularTSM,
+    "MultiHeadTriangularTDRE": build_MHTTDRE,
+    "TriangularMDRE": build_TriangularMDRE,
+    "TriangularCTSM_V1": build_TriangularCTSM_V1,
+    "TriangularCTSM_V2": build_TriangularCTSM_V2,
+    "TriangularCTSM_V3": build_TriangularCTSM_V3,
+    "TriangularVFM_V1": build_TriangularVFM_V1,
+    "TriangularVFM_V2": build_TriangularVFM_V2,
+    "TriangularVFM_V3": build_TriangularVFM_V3,
+    "TabularPluginDRE": build_TabularPluginDRE,
+    "SmoothedTabularPluginDRE": build_SmoothedTabularPluginDRE,
+}

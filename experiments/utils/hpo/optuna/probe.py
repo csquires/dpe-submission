@@ -58,13 +58,13 @@ def best_at_budget(
     if len(trials) < 10:
         raise RuntimeError(f"insufficient completed trials for parzen estimator; got {len(trials)}")
 
-    # reconstruct parzen estimator
+    # reconstruct parzen estimator. always use intersection_search_space() to
+    # get a dict[str, BaseDistribution]; sampler._search_space is an
+    # IntersectionSearchSpace object, not a dict, in optuna >= 4.x.
     sampler = study.sampler
-    search_space = sampler._search_space
-    if search_space is None:
-        search_space = intersection_search_space(study.trials)
-        if search_space is None:
-            raise RuntimeError("search space not yet determined")
+    search_space = intersection_search_space(study.trials)
+    if not search_space:
+        raise RuntimeError("search space not yet determined")
 
     # compute split threshold and split trials
     n_below = sampler._gamma(len(trials))

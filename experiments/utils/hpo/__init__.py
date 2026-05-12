@@ -1,12 +1,13 @@
-"""hpo: shared hyperparameter optimization core for DRE experiments.
+"""hpo: hyperparameter optimization for DRE experiments.
 
-provides utilities for sampling hyperparameter configurations from search spaces
-and a generic per-trial harness loop. per-experiment hpo_trial.py wires these
-together with experiment-specific data loading, estimator construction, and
-metric computation.
+active subpackages:
+- experiments.utils.hpo.adapters: per-experiment data and metric adapters.
+- experiments.utils.hpo.optuna: optuna-based HPO driver (storage, objective,
+  worker, submit, study_config, cores_registry, probe, holdout, figures, configs).
+- experiments.utils.hpo.suggest_hp: per-method optuna suggest_hp functions and
+  METADATA registry.
+
+the legacy random-search infrastructure (sample, trial, trial_runner, registry,
+narrow, cell_schema, budget, cpu_*, launcher*, cli, workflow*) has been removed.
+import the optuna stack directly via `from experiments.utils.hpo.optuna import ...`.
 """
-
-from experiments.utils.hpo.sample import sample_param, gen_config
-from experiments.utils.hpo.trial import parse_cells, cell_id, run_trial
-
-__all__ = ["sample_param", "gen_config", "parse_cells", "cell_id", "run_trial"]
