@@ -5,7 +5,7 @@
 1. Run `bash setup.sh` to create the virtual environment and install dependencies
 2. Activate the virtual environment via `source venv/bin/activate`
 
-dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipython` (optional), `tqdm`, `pyyaml`, `h5py`
+dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipython` (optional), `tqdm`, `pyyaml`, `h5py`. If using conda, start with an empty Python 3.10 environment and install those dependencies. 
 
 ## Environment variables
 
@@ -17,20 +17,20 @@ before running any experiment; otherwise the defaults below are used.
 | `DPE_WORKDIR` | repo root (resolved from package `__file__`) | absolute path to the repo. used inside sbatch wraps that `cd` to the repo before launching python |
 | `DPE_DATA_ROOT` | `$HOME/dpe-data` | root for data, results, queue files, manifests. point at NFS on a cluster |
 | `DPE_CKPT_ROOT` | `$HOME/dpe-ckpt` | root for checkpoints. point at node-local scratch on a cluster |
-| `DPE_CONDA_ENV` | `fac` | conda env name activated inside sbatch wraps |
+| `DPE_CONDA_ENV` | `fac` | conda env name activated inside sbatch wraps; if using conda |
 | `DPE_PYTHON` | `python` | python interpreter used by `ex/` shell wrappers when not running through conda |
 
 Config yamls reference these as `${DPE_DATA_ROOT}/<exp>/...` and
 `${DPE_CKPT_ROOT}/<exp>/ckpt`; `experiments/__init__.py` monkey-patches
 `yaml.safe_load` to expand them on every load, so configs stay portable.
 
-Example for a cluster with NFS at `/data/user_data` and node-local scratch at
-`/scratch`:
+Example for a cluster with NFS at `/data` and node-local scratch at
+`/tmp`:
 
 ```bash
 export DPE_WORKDIR="$PWD"
-export DPE_DATA_ROOT="/data/user_data/$USER/dpe-submission"
-export DPE_CKPT_ROOT="/scratch/$USER/ckpt/dpe-submission"
+export DPE_DATA_ROOT="/data/$USER/dpe-submission"
+export DPE_CKPT_ROOT="/tmp/$USER/dpe-submission"
 export DPE_CONDA_ENV=fac
 ```
 
