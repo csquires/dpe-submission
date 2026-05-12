@@ -71,7 +71,7 @@ export DPE_DATA_ROOT=/path/to/nfs/scratch # only if using HPO
 - **TDRE**: telescoping DRE; multiple binary classifiers, one per adjacent waypoint pair. the `MultiHeadTDRE` and `MultiHeadTriangularTDRE` variants share a backbone across heads.
 - **MDRE**: multiclass classifier across all waypoints.
 - **TSM**, **CTSM**: time score matching and its conditional variant.
-- **FMDRE**: flow matching DRE (single-stage `s1`, two-stage `s2`, triangular `tri`).
+- **FMDRE**: flow matching DRE (simulate along numerator `s1`, simulate along unconditional flow `s2`).
 - **VFM**: velocity flow matching with two-phase training (velocity then denoiser).
 - **Triangular variants**: `triangular_tdre`, `triangular_mdre`, `triangular_tsm`, `triangular_ctsm`, `triangular_vfm`, `triangular_fmdre`. consume a reference `samples_pstar` and decompose the ratio along p0 -> pstar -> p1.
 - **TabularPluginDRE**, **SmoothedTabularPluginDRE**: oracle plug-in estimators for discrete state-action spaces.
