@@ -7,6 +7,33 @@
 
 dependencies: `numpy`, `scipy`, `torch`, `matplotlib`, `einops`, `seaborn`, `ipython` (optional), `tqdm`, `pyyaml`, `h5py`
 
+## Environment variables
+
+All filesystem locations are controlled by environment variables. Export them
+before running any experiment; otherwise the defaults below are used.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DPE_WORKDIR` | repo root (resolved from package `__file__`) | absolute path to the repo. used inside sbatch wraps that `cd` to the repo before launching python |
+| `DPE_DATA_ROOT` | `$HOME/dpe-data` | root for data, results, queue files, manifests. point at NFS on a cluster |
+| `DPE_CKPT_ROOT` | `$HOME/dpe-ckpt` | root for checkpoints. point at node-local scratch on a cluster |
+| `DPE_CONDA_ENV` | `fac` | conda env name activated inside sbatch wraps |
+| `DPE_PYTHON` | `python` | python interpreter used by `ex/` shell wrappers when not running through conda |
+
+Config yamls reference these as `${DPE_DATA_ROOT}/<exp>/...` and
+`${DPE_CKPT_ROOT}/<exp>/ckpt`; `experiments/__init__.py` monkey-patches
+`yaml.safe_load` to expand them on every load, so configs stay portable.
+
+Example for a cluster with NFS at `/data/user_data` and node-local scratch at
+`/scratch`:
+
+```bash
+export DPE_WORKDIR="$PWD"
+export DPE_DATA_ROOT="/data/user_data/$USER/dpe-submission"
+export DPE_CKPT_ROOT="/scratch/$USER/ckpt/dpe-submission"
+export DPE_CONDA_ENV=fac
+```
+
 ## Organization
 
 - `src/` - implementations of algorithms, models, and their APIs for our tasks

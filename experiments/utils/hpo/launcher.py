@@ -28,7 +28,7 @@ from experiments.utils.walltime_caps import speed_rank, cpu_eligible_methods
 
 logger = logging.getLogger(__name__)
 
-_WORKDIR = "/home/aviamala/dpe-submission"
+_WORKDIR = os.environ.get("DPE_WORKDIR") or os.getcwd()
 
 
 def verify_queue_sort(queue_file: Path, max_wait_sec: int = 60) -> bool:
@@ -232,7 +232,7 @@ def init_watchdog_logdir(run_id: str) -> Path:
     stubs: exclude.txt, state.json, submitted.tsv.
     returns the logdir path.
     """
-    ckpt_root = Path(os.environ.get("DPE_CKPT_ROOT", "/scratch/dpe-submission"))
+    ckpt_root = Path(os.environ.get("DPE_CKPT_ROOT") or os.path.expanduser("~/dpe-ckpt"))
     logdir = ckpt_root / "watchdog" / run_id
     logdir.mkdir(parents=True, exist_ok=True)
     (logdir / "exclude.txt").touch()
@@ -246,7 +246,7 @@ def record_skipped(skipped: dict[str, list[str]], run_id: str) -> None:
 
     creates parent dir if needed. writes JSON atomically.
     """
-    ckpt_root = Path(os.environ.get("DPE_CKPT_ROOT", "/scratch/dpe-submission"))
+    ckpt_root = Path(os.environ.get("DPE_CKPT_ROOT") or os.path.expanduser("~/dpe-ckpt"))
     out = ckpt_root / "watchdog" / run_id / "skipped.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".json.tmp")

@@ -40,7 +40,7 @@ If your cluster names partitions differently (e.g., `gpu` instead of `preempt`, 
 
 ### 1. Method Speed Classification
 
-Edit `/home/aviamala/dpe-submission/experiments/utils/walltime_caps.py`.
+Edit `$DPE_WORKDIR/experiments/utils/walltime_caps.py`.
 
 The `SPEED_CLASS_MAP` dict classifies all methods:
 - **SLOW** (0): GPU-only, long runtimes (flow integration). Front of queue.
@@ -86,7 +86,7 @@ WALLTIME_CAPS_CPU = {
 
 ### 3. Partition Names
 
-Edit `/home/aviamala/dpe-submission/experiments/utils/submit_watchdog.sh`:
+Edit `$DPE_WORKDIR/experiments/utils/submit_watchdog.sh`:
 ```bash
 # Line 46: replace 'cpu' with your CPU partition name if different
 sbatch --parsable \
@@ -94,7 +94,7 @@ sbatch --parsable \
     ...
 ```
 
-Edit `/home/aviamala/dpe-submission/experiments/utils/hpo/cpu_dispatcher.py`:
+Edit `$DPE_WORKDIR/experiments/utils/hpo/cpu_dispatcher.py`:
 ```python
 # Line 72: replace 'array' with your CPU partition name if different
 cmd = [
@@ -107,31 +107,27 @@ cmd = [
 
 ### 4. Project Paths
 
-Edit `/home/aviamala/dpe-submission/experiments/utils/hpo/cpu_dispatcher.py`:
-```python
-# Line 29: set to your project root absolute path
-WORKDIR = "/home/aviamala/dpe-submission"  # <-- your cloned repo
-```
-
-Also update `/home/aviamala/dpe-submission/experiments/utils/hpo/launcher.py`:
-```python
-# Line 31: set to your project root absolute path
-_WORKDIR = "/home/aviamala/dpe-submission"  # <-- your cloned repo
-```
+Project paths are resolved from environment variables; you do not need to edit
+any source files. See the root `README.md` for the full list. The relevant
+variable for this workflow is `DPE_WORKDIR`, which points at the repo root.
 
 ### 5. Environment Setup
 
 Define or export these env vars **before launching**:
 
 ```bash
-# NFS-shared directory for queue file, results, and manifests
-export DPE_DATA_ROOT=/data/user_data/$USER/dpe-submission
+# Repo root (defaults to repo's location resolved from package __file__)
+export DPE_WORKDIR=/path/to/dpe-submission
 
-# Optional: node-local scratch for checkpoints (can be node-local; cross-node recovery via NFS queue)
-export DPE_CKPT_ROOT=/scratch/$USER/ckpt/dpe-submission
+# Shared directory for queue file, results, and manifests
+# (use NFS on cluster, $HOME/dpe-data locally)
+export DPE_DATA_ROOT=/path/to/dpe/data
+
+# Optional: node-local scratch for checkpoints (cross-node recovery via NFS queue)
+export DPE_CKPT_ROOT=/path/to/dpe/ckpt
 
 # Conda environment (default: 'fac')
-conda activate fac  # or your env name if different
+conda activate "${DPE_CONDA_ENV:-fac}"
 ```
 
 Verify connectivity:
@@ -225,8 +221,8 @@ _ADAPTERS = {
 ### Quick Start
 
 ```bash
-cd /home/aviamala/dpe-submission
-export DPE_DATA_ROOT=/data/user_data/$USER/dpe-submission
+cd "$DPE_WORKDIR"
+export DPE_DATA_ROOT=/path/to/dpe/data
 mkdir -p $DPE_DATA_ROOT
 
 # Test run: 5 CPU elements (small pilot)
@@ -524,7 +520,8 @@ export DPE_DATA_ROOT=/tmp/dpe-submission
 python -m experiments.utils.hpo.launcher ...
 ```
 
-**Fix**: Use NFS-mounted path.
+**Fix**: Use NFS-mounted path. For example, on a cluster where NFS is mounted
+at `/data/user_data`:
 ```bash
 export DPE_DATA_ROOT=/data/user_data/$USER/dpe-submission
 ```
@@ -533,12 +530,12 @@ export DPE_DATA_ROOT=/data/user_data/$USER/dpe-submission
 
 ```bash
 # WRONG: breaks for other users
-LOGDIR="/data/avi/dpe-submission"
+LOGDIR="/data/alice/dpe-submission"
 ```
 
 **Fix**: Use `$USER` env var.
 ```bash
-LOGDIR="/data/user_data/$USER/dpe-submission"
+LOGDIR="$DPE_DATA_ROOT"   # already user-scoped via DPE_DATA_ROOT
 ```
 
 ### Mistake 3: GPU-Only Methods in CPU Filter

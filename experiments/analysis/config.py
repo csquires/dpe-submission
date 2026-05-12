@@ -12,77 +12,77 @@ import re
 # cell_split_seed : RNG seed for deterministic train/holdout split
 
 EXP_CONFIGS: dict[str, dict] = {
-    "smodice_eldr_estimation_combined": {
+    "smodice_eldr_estimation": {
         "metric_key": "per_cell_ldr_mae",
         "n_total_cells": 24,
         "n_train_cells": 16,
         "n_holdout_cells": 8,
         "cell_split_seed": 42,
     },
-    "elbo_estimation_combined": {
+    "elbo_estimation": {
         "metric_key": "per_cell_eldr_abs_err",
         "n_total_cells": 32,
         "n_train_cells": 24,
         "n_holdout_cells": 8,
         "cell_split_seed": 42,
     },
-    "dbpedia_cond_flow_combined": {
+    "dbpedia_cond_flow": {
         "metric_key": "per_pair_mae",
         "n_total_cells": 32,
         "n_train_cells": 24,
         "n_holdout_cells": 8,
         "cell_split_seed": 42,
     },
-    "mnist_cond_flow_combined": {
+    "mnist_cond_flow": {
         "metric_key": "per_pair_mae",
         "n_total_cells": 32,
         "n_train_cells": 24,
         "n_holdout_cells": 8,
         "cell_split_seed": 42,
     },
-    "eig_estimation_combined": {
+    "eig_estimation": {
         "metric_key": "per_design_eig_abs_err",
         "n_total_cells": 32,
         "n_train_cells": 24,
         "n_holdout_cells": 8,
         "cell_split_seed": 42,
     },
-    "pendulum_eldr_estimation_combined": {
+    "pendulum_eldr_estimation": {
         "metric_key": "per_cell_ldr_mae",
         "n_total_cells": 32,
         "n_train_cells": 24,
         "n_holdout_cells": 8,
         "cell_split_seed": 42,
     },
-    "dre_sample_complexity_combined": {
+    "dre_sample_complexity": {
         "metric_key": "per_cell_mae",
         "n_total_cells": 9,
         "n_train_cells": 6,
         "n_holdout_cells": 3,
         "cell_split_seed": 42,
     },
-    "plugin_dre_combined": {
+    "plugin_dre": {
         "metric_key": "per_cell_mae",
         "n_total_cells": 4,
         "n_train_cells": 3,
         "n_holdout_cells": 1,
         "cell_split_seed": 42,
     },
-    "pstar_sample_complexity_combined": {
+    "pstar_sample_complexity": {
         "metric_key": "per_cell_mae",
         "n_total_cells": 20,
         "n_train_cells": 15,
         "n_holdout_cells": 5,
         "cell_split_seed": 42,
     },
-    "model_selection_combined": {
+    "model_selection": {
         "metric_key": "per_row_ldr_mean_ae",
         "n_total_cells": 7,
         "n_train_cells": 5,
         "n_holdout_cells": 2,
         "cell_split_seed": 42,
     },
-    "mnist_eldr_estimation_combined": {
+    "mnist_eldr_estimation": {
         "metric_key": "per_pair_mae",
         "n_total_cells": 4,
         "n_train_cells": 3,

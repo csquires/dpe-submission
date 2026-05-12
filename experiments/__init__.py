@@ -1,12 +1,13 @@
 """experiments package init.
 
-guards against the dominant leak vector that fills $HOME on this cluster:
+guards against the dominant leak vector that fills $HOME on shared clusters:
 config yamls with relative paths like "experiments/<exp>/data" that resolve
-under the repo's CWD (which is typically /home/<user>/dpe-submission).
+under the repo's CWD.
 
 procedure executed once on import (when the user runs
 `python -m experiments.<exp>.<step>` for any step):
-    1. install DPE_DATA_ROOT and DPE_CKPT_ROOT env-var defaults if unset.
+    1. install DPE_WORKDIR, DPE_DATA_ROOT and DPE_CKPT_ROOT env-var defaults
+       if unset.
     2. monkey-patch yaml.safe_load and yaml.load to recursively
        os.path.expandvars on every string in the parsed structure.
 
@@ -15,19 +16,21 @@ that helper. callers that do `yaml.safe_load(open(...))` directly get it
 through the patch installed here. all configs should template path keys as
 ${DPE_DATA_ROOT}/<exp>/... or ${DPE_CKPT_ROOT}/<exp>/ckpt.
 
-defaults:
-    DPE_DATA_ROOT -> /data/user_data/$USER/dpe-submission     (NFS, all nodes)
-    DPE_CKPT_ROOT -> /scratch/$USER/ckpt/dpe-submission       (node-local, fast)
+defaults (override by exporting the env var before running):
+    DPE_WORKDIR   -> repo root resolved from this file's location
+    DPE_DATA_ROOT -> $HOME/dpe-data        (override with NFS path on clusters)
+    DPE_CKPT_ROOT -> $HOME/dpe-ckpt        (override with node-local scratch)
 """
 import os
-import getpass
+from pathlib import Path
 
 import yaml
 
 
-_USER = os.environ.get("USER") or getpass.getuser()
-os.environ.setdefault("DPE_DATA_ROOT", f"/data/user_data/{_USER}/dpe-submission")
-os.environ.setdefault("DPE_CKPT_ROOT", f"/scratch/{_USER}/ckpt/dpe-submission")
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+os.environ.setdefault("DPE_WORKDIR", _REPO_ROOT)
+os.environ.setdefault("DPE_DATA_ROOT", os.path.expanduser("~/dpe-data"))
+os.environ.setdefault("DPE_CKPT_ROOT", os.path.expanduser("~/dpe-ckpt"))
 
 
 def _expand_env(value):

@@ -23,7 +23,7 @@ from experiments.utils.walltime_caps import speed_rank
 
 logger = logging.getLogger(__name__)
 
-_WORKDIR = "/home/aviamala/dpe-submission"
+_WORKDIR = os.environ.get("DPE_WORKDIR") or os.getcwd()
 
 
 def _resolve_watchdog_lite_script() -> Path:

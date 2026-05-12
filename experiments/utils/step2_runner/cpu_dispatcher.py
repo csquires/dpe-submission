@@ -27,7 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKDIR = os.environ.get("DPE_WORKDIR", "/home/aviamala/dpe-submission")
+WORKDIR = os.environ.get("DPE_WORKDIR") or os.getcwd()
 CONDA_ENV = os.environ.get("DPE_CONDA_ENV", "fac")
 
 

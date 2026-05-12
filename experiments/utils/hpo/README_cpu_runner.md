@@ -47,8 +47,8 @@ srun --partition=preempt --cpus-per-task=6 --mem=12G --time=0:30:00 --pty bash
 Then in the session:
 
 ```bash
-conda activate fac
-cd /home/aviamala/dpe-submission
+conda activate "${DPE_CONDA_ENV:-fac}"
+cd "$DPE_WORKDIR"
 
 python -m experiments.utils.hpo.cpu_runner \
     --experiment dre_sample_complexity \

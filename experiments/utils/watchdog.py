@@ -811,7 +811,7 @@ def _build_orphan_sbatch_cmd(experiment: str, method: str, config_file: Path,
     --eval-cells-file, --output-dir, --stage. does not include --time or
     --exclude placeholders (those are filled by watchdog at dispatch time).
     """
-    workdir = "/home/aviamala/dpe-submission"
+    workdir = os.environ.get("DPE_WORKDIR") or os.getcwd()
     trial_id = config_file.stem.removeprefix("trial_")
     job_name = f"{trial_id}_{stage}_{method}_{experiment}"
     logdir = output_dir / "logs"

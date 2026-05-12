@@ -23,7 +23,7 @@ def main():
         description="Select best HPO trials per (method, alpha) and write to YAML (dbpedia cond-flow)"
     )
     default_results_dir = os.path.expandvars(
-        "/data/user_data/$USER/dpe-submission/dbpedia_eldr_cond_flow/hpo_results"
+        "$DPE_DATA_ROOT/dbpedia_eldr_cond_flow/hpo_results"
     )
     parser.add_argument(
         "--results-dir",

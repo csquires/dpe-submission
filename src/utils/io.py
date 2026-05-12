@@ -1,5 +1,5 @@
 import os
-import getpass
+from pathlib import Path
 import yaml
 import numpy as np
 import torch
@@ -16,20 +16,23 @@ New experiments should import these functions from here.
 """
 
 
-_USER = os.environ.get("USER") or getpass.getuser()
-DPE_DATA_ROOT_DEFAULT = f"/data/user_data/{_USER}/dpe-submission"
-DPE_CKPT_ROOT_DEFAULT = f"/scratch/{_USER}/ckpt/dpe-submission"
+DPE_WORKDIR_DEFAULT = str(Path(__file__).resolve().parents[2])
+DPE_DATA_ROOT_DEFAULT = os.path.expanduser("~/dpe-data")
+DPE_CKPT_ROOT_DEFAULT = os.path.expanduser("~/dpe-ckpt")
 
 
 def _set_path_env_defaults() -> None:
 	"""
-	idempotently install DPE_DATA_ROOT and DPE_CKPT_ROOT env-var defaults.
+	idempotently install DPE_WORKDIR, DPE_DATA_ROOT and DPE_CKPT_ROOT env-var
+	defaults.
 
-	rule: heavy artifacts (data, ckpts, results) must never land under $HOME.
-	configs reference these as ${DPE_DATA_ROOT}/<exp>/... and
-	${DPE_CKPT_ROOT}/<exp>/ckpt; this function ensures the variables are
+	rule: heavy artifacts (data, ckpts, results) should not land under $HOME on
+	shared clusters. override DPE_DATA_ROOT and DPE_CKPT_ROOT to point at NFS
+	or node-local scratch. configs reference these as ${DPE_DATA_ROOT}/<exp>/...
+	and ${DPE_CKPT_ROOT}/<exp>/ckpt; this function ensures the variables are
 	defined even when scripts run without going through a launcher.
 	"""
+	os.environ.setdefault("DPE_WORKDIR", DPE_WORKDIR_DEFAULT)
 	os.environ.setdefault("DPE_DATA_ROOT", DPE_DATA_ROOT_DEFAULT)
 	os.environ.setdefault("DPE_CKPT_ROOT", DPE_CKPT_ROOT_DEFAULT)
 

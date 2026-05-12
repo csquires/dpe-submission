@@ -5,11 +5,11 @@
 | `config.py` | All tunable constants (cell splits, subsample counts, tolerances) |
 | `utils.py` | Shared helpers (load trials, split cells, metric, neighbourhood search) |
 | `analyze.py` | Main analysis pipeline (stages 1–3 + optional refined24 stage) |
-| `combine.py` | Union trials from multiple sources, deduplicate |
+| `analyze_rank.py` | Per-cell rank variant of `analyze.py` |
 
 ---
 
-## Part 1 – Analysis pipeline (`analyze.py`)
+## Analysis pipeline (`analyze.py`)
 
 ### What it does
 
@@ -53,38 +53,34 @@
 
 **Dominant HP reporting:** at each stage (1, 2, 2.5), any HP whose single value appears in >50% of that stage's top-10 trials is reported. This surfaces HPs that are effectively pinned by the data regardless of search-space width.
 
-**Neighbourhood search:** starts at 10% relative tolerance; relaxes by 10% per step until ≥3 neighbours found (max tolerance configurable in `config.py`). Categorical values must match exactly.
+**Neighbourhood search:** starts at 10% relative tolerance; relaxes by 10% per step until ≥3 neighbours found (max tolerance configurable in `config.py`).  Categorical values must match exactly.
 
 ### How to run
 
+Set `DPE_DATA_ROOT` before running (see the root `README.md` for environment-variable setup):
+
 ```bash
-cd /home/yizhoulu/dpe-submission
+export DPE_DATA_ROOT=/path/to/dpe/data
 source venv/bin/activate
 
 # smodice (automatically picks up BDRE_refined24/, FMDRE_refined24/, etc.)
-ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
-        --experiment smodice_eldr_estimation \
-        --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
+python -m experiments.analysis.analyze \
+    --experiment smodice_eldr_estimation \
+    --output-dir experiments/analysis/results
 
 # elbo
-ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
-        --experiment elbo_estimation \
-        --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
+python -m experiments.analysis.analyze \
+    --experiment elbo_estimation \
+    --output-dir experiments/analysis/results
 
 # restrict to specific methods
-ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
-        --experiment smodice_eldr_estimation \
-        --methods BDRE FMDRE VFM \
-        --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
+python -m experiments.analysis.analyze \
+    --experiment smodice_eldr_estimation \
+    --methods BDRE FMDRE VFM \
+    --output-dir experiments/analysis/results
 ```
 
-The script must run on a node with `/data` NFS access (e.g. `babel-w5-16`).
+`--data-root` defaults to `$DPE_DATA_ROOT`; pass it explicitly to point at a different location.
 
 ### Output files
 
@@ -145,48 +141,9 @@ The script must run on a node with `/data` NFS access (e.g. `babel-w5-16`).
 
 ---
 
-## Part 2 – Combine sources (`combine.py`)
-
-### What it does
-
-Unions `trial_*.json` files from multiple root directories into a single
-`<experiment>_combined/` directory on NFS.
-
-**Deduplication key:** `(pilot_variant, hyperparams_json, eval_sample_seed)`.
-When the same trial appears in multiple sources, the copy with the better
-(lower) score is kept.
-
-### How to run
-
-```bash
-# Step 1 – combine your own smodice results
-ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.combine \
-        --experiment smodice_eldr_estimation \
-        --sources /data/user_data/yizhoulu/dpe-submission \
-        --output-root /data/user_data/yizhoulu/dpe-submission"
-
-# Step 2 – merge with aviamala's results
-ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.combine \
-        --experiment smodice_eldr_estimation \
-        --sources /data/user_data/yizhoulu/dpe-submission \
-                  /data/user_data/aviamala/dpe-submission \
-        --output-root /data/user_data/yizhoulu/dpe-submission"
-
-# Step 3 – run analysis on combined data
-ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
-        --experiment smodice_eldr_estimation_combined \
-        --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
-```
-
----
-
 ## Adding a new experiment
 
-1. Add an entry in `config.py → EXP_CONFIGS`:
+1. Add an entry in `config.py -> EXP_CONFIGS`:
    ```python
    "my_new_exp": {
        "metric_key": "per_cell_something",

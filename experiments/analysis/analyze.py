@@ -27,21 +27,23 @@ Primary/secondary pool selection:
     secondary = remaining broad.
 
 Usage:
-    cd /home/yizhoulu/dpe-submission
+    export DPE_DATA_ROOT=/path/to/dpe/data
     python -m experiments.analysis.analyze \\
         --experiment smodice_eldr_estimation \\
-        --data-root /data/user_data/yizhoulu/dpe-submission \\
         --output-dir experiments/analysis/results
 
     # both experiments
     for exp in smodice_eldr_estimation elbo_estimation; do
         python -m experiments.analysis.analyze --experiment $exp
     done
+
+`--data-root` defaults to `$DPE_DATA_ROOT`.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 from pathlib import Path
 
@@ -568,8 +570,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--data-root",
-        default="/data/user_data/yizhoulu/dpe-submission",
-        help="NFS root containing experiment directories (default: %(default)s)",
+        default=os.environ.get("DPE_DATA_ROOT") or os.path.expanduser("~/dpe-data"),
+        help="NFS root containing experiment directories "
+             "(default: $DPE_DATA_ROOT)",
     )
     parser.add_argument(
         "--output-dir",

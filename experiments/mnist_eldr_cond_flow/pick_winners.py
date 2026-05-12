@@ -32,7 +32,7 @@ def main():
 		help="cond_flow config YAML",
 	)
 	default_results_dir = os.path.expandvars(
-		"/data/user_data/$USER/dpe-submission/mnist_eldr_cond_flow/hpo_results"
+		"$DPE_DATA_ROOT/mnist_eldr_cond_flow/hpo_results"
 	)
 	parser.add_argument(
 		"--results-dir",

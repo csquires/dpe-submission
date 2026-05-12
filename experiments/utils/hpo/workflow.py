@@ -229,7 +229,7 @@ def _build_sbatch_cmd(experiment: str, method: str, config_file: Path,
     trial_runner adds <stage>/ subdir to output_dir, so we pass the ROOT
     output_dir (without stage suffix). watchdog expands {time}/{exclude}.
     """
-    workdir = "/home/aviamala/dpe-submission"
+    workdir = os.environ.get("DPE_WORKDIR") or os.getcwd()
     trial_id = Path(config_file).stem.removeprefix("trial_")
     job_name = f"{trial_id}_{stage}_{method}_{experiment}"
     return (

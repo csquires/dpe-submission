@@ -267,7 +267,7 @@ def main():
 		description="Select top-K HPO trials per (method, alpha) and write to YAML"
 	)
 	default_results_dir = os.path.expandvars(
-		"/data/user_data/$USER/dpe-submission/mnist_eldr_estimation/hpo_results"
+		"$DPE_DATA_ROOT/mnist_eldr_estimation/hpo_results"
 	)
 	parser.add_argument(
 		"--results-dir",

@@ -108,8 +108,10 @@ also supported via auto-detection.
 ## usage — single-drain (preempt only)
 
 ```bash
-export DPE_DATA_ROOT=/data/user_data/$USER/dpe-submission
-export DPE_CKPT_ROOT=/scratch/$USER/ckpt/dpe-submission
+# set these to point at NFS / node-local scratch on your cluster.
+# defaults are $HOME/dpe-data and $HOME/dpe-ckpt; see root README.md.
+export DPE_DATA_ROOT=/path/to/dpe/data
+export DPE_CKPT_ROOT=/path/to/dpe/ckpt
 
 # 1. dispatch: emit queue (one line per (method, cell_chunk))
 python -m experiments.utils.step2_runner.dispatch \

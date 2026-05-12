@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-WORKDIR = "/home/aviamala/dpe-submission"
+WORKDIR = os.environ.get("DPE_WORKDIR") or os.getcwd()
 
 
 def _build_wrap_cmd(queue_file: Path, lock_file: Path,
