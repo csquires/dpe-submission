@@ -13,7 +13,7 @@ import yaml
 
 
 config = yaml.load(
-    open('experiments/eig_vertex_sweep/config.yaml', 'r'),
+    open('experiments/ablations/eig_vertex_sweep/config.yaml', 'r'),
     Loader=yaml.FullLoader
 )
 

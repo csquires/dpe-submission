@@ -82,6 +82,16 @@ class DRE(ABC):
         """log(p0(xs) / p1(xs)); shape [N]. device handling is implementation-defined."""
         pass
 
+    def predict_eldr(self, xs: torch.Tensor) -> torch.Tensor:
+        """expected log-density ratio: mean of predict_ldr over xs. shape [].
+
+        default impl: torch.mean(predict_ldr(xs)). subclasses override for
+        smarter reductions (e.g., importance-weighted averages, stratified
+        means). this is the natural scalar summary for EIG ($E_{joint}$ at
+        joint samples) and ELDR ($E_{p_\\ast}$ at p_\\ast samples).
+        """
+        return torch.mean(self.predict_ldr(xs))
+
 
 class ELDR(DRE):
     """abstract base for triangular log-density-ratio estimators that take a reference p*."""

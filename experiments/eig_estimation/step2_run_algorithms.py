@@ -15,34 +15,24 @@ from src.models.binary_classification import make_binary_classifier, make_pairwi
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.methods import BDRE, MDRE, TDRE, TSM, TriangularTSM
 from src.methods.cls.mdre.tri import TriangularMDRE
-from src.eig_estimation.plugin import EIGPlugin
 from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from experiments.utils.eig_ldr import joint_and_shuffled
 
 
-class TriangularTSMEIGAdapter:
-    """Adapter for TriangularTSM that uses p0 samples as pstar during fit."""
-    def __init__(self, triangular_tsm):
-        self.triangular_tsm = triangular_tsm
-
-    def fit(self, samples_p0, samples_p1):
-        # Use samples_p0 as pstar (joint distribution samples)
-        self.triangular_tsm.fit(samples_p0, samples_p1, samples_p0)
-
-    def predict_ldr(self, xs):
-        return self.triangular_tsm.predict_ldr(xs)
+# methods whose fit signature takes a third positional pstar arg.
+# we pass the joint as pstar since eig has no separate pstar distribution.
+_PSTAR_METHODS = {"TriangularTSM", "TriangularMDRE"}
 
 
-class TriangularMDREEIGAdapter:
-    """Adapter for TriangularMDRE that uses p0 samples as pstar during fit."""
-    def __init__(self, triangular_mdre):
-        self.triangular_mdre = triangular_mdre
-
-    def fit(self, samples_p0, samples_p1):
-        # Use samples_p0 as pstar (joint distribution samples)
-        self.triangular_mdre.fit(samples_p0, samples_p1, samples_p0)
-
-    def predict_ldr(self, xs):
-        return self.triangular_mdre.predict_ldr(xs)
+def fit_predict_eig(alg, alg_name, theta, y):
+    """fit alg on (joint, shuffled-marginals); return mean predict_ldr(joint)."""
+    joint, shuffled = joint_and_shuffled(theta, y)
+    if alg_name in _PSTAR_METHODS:
+        alg.fit(joint, shuffled, joint)
+    else:
+        alg.fit(joint, shuffled)
+    with torch.no_grad():
+        return alg.predict_ldr(joint).mean()
 
 
 config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -67,12 +57,11 @@ if os.path.exists(results_filename):
         existing_results = set(f.keys())
         print("Existing results for:", list(f.keys()))
 
-# instantiate bdre plugin
+# instantiate bdre
 bdre_classifier = make_binary_classifier(name="default", input_dim=DATA_DIM + 1)
 bdre = BDRE(bdre_classifier, device=DEVICE)
-bdre_plugin = EIGPlugin(density_ratio_estimator=bdre)
 
-# instantiate tdre plugin (5 waypoints)
+# instantiate tdre (5 waypoints)
 tdre_waypoints = 5
 tdre_classifiers = make_pairwise_binary_classifiers(
     name="default",
@@ -80,9 +69,8 @@ tdre_classifiers = make_pairwise_binary_classifiers(
     input_dim=DATA_DIM + 1,
 )
 tdre = TDRE(tdre_classifiers, num_waypoints=tdre_waypoints, device=DEVICE)
-tdre_plugin = EIGPlugin(density_ratio_estimator=tdre)
 
-# instantiate mdre plugin (15 waypoints)
+# instantiate mdre (15 waypoints)
 mdre_waypoints = 15
 mdre_classifier = make_multiclass_classifier(
     name="default",
@@ -90,23 +78,19 @@ mdre_classifier = make_multiclass_classifier(
     num_classes=mdre_waypoints,
 )
 mdre = MDRE(mdre_classifier, device=DEVICE)
-mdre_plugin = EIGPlugin(density_ratio_estimator=mdre)
 
-# instantiate triangular mdre plugin (15 waypoints)
+# instantiate triangular mdre (15 waypoints)
 triangular_mdre_classifier = make_multiclass_classifier(
     name="default",
     input_dim=DATA_DIM + 1,
     num_classes=mdre_waypoints,
 )
 triangular_mdre = TriangularMDRE(triangular_mdre_classifier, device=DEVICE)
-triangular_mdre_adapter = TriangularMDREEIGAdapter(triangular_mdre)
-triangular_mdre_plugin = EIGPlugin(density_ratio_estimator=triangular_mdre_adapter)
 
-# instantiate tsm plugin
+# instantiate tsm
 tsm = TSM(DATA_DIM + 1, device=DEVICE)
-tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
 
-# instantiate triangular tsm plugin
+# instantiate triangular tsm
 ttsm_cfg = config.get('triangular_tsm', {})
 triangular_tsm = TriangularTSM(
     DATA_DIM + 1,
@@ -114,24 +98,17 @@ triangular_tsm = TriangularTSM(
     vertex=ttsm_cfg.get('vertex', 0.5),
     peak_max=ttsm_cfg.get('peak_max', 1.0),
 )
-triangular_tsm_adapter = TriangularTSMEIGAdapter(triangular_tsm)
-triangular_tsm_plugin = EIGPlugin(density_ratio_estimator=triangular_tsm_adapter)
 
-# instantiate spatial-based EIG plugin (VFM)
+# instantiate spatial velo denoiser (VFM)
 spatial_denoiser = make_spatial_velo_denoiser(input_dim=DATA_DIM + 1, device=DEVICE)
-spatial_denoiser_plugin = EIGPlugin(density_ratio_estimator=spatial_denoiser)
-
-# instantiate TSM plugin
-tsm = TSM(input_dim=DATA_DIM + 1, device=DEVICE)
-tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
 
 algorithms = [
-    ("BDRE", bdre_plugin),
-    ("TDRE", tdre_plugin),
-    ("MDRE", mdre_plugin),
-    ("TriangularMDRE", triangular_mdre_plugin),
-    ("TSM", tsm_plugin),
-    ("VFM", spatial_denoiser_plugin),
+    ("BDRE", bdre),
+    ("TDRE", tdre),
+    ("MDRE", mdre),
+    ("TriangularMDRE", triangular_mdre),
+    ("TSM", tsm),
+    ("VFM", spatial_denoiser),
 ]
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:
@@ -167,7 +144,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         for idx in trange(nrows):
             theta_samples = torch.from_numpy(dataset_file['theta_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, DATA_DIM)
             y_samples = torch.from_numpy(dataset_file['y_samples_arr'][idx]).to(DEVICE)  # (NSAMPLES, 1)
-            result = alg.estimate_eig(theta_samples, y_samples)
+            result = fit_predict_eig(alg, alg_name, theta_samples, y_samples)
             est_eigs_arr[idx] = result.item() if hasattr(result, 'item') else result
 
         with h5py.File(results_filename, 'a') as results_file:

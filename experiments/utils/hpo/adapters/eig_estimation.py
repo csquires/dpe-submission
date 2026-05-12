@@ -1,4 +1,20 @@
-"""EIG estimation experiment adapter."""
+"""EIG estimation experiment adapter.
+
+cell shape: 1-tuple (design_idx,).
+cell pool: [(0,), (1,), ..., (num_designs - 1,)] where
+  num_designs = num_priors * num_designs_per_setting from config.
+
+h5 file: {data_dir}/dataset_d={data_dim},nsamples={nsamples}.h5
+h5 keys per row (indexed by design_idx):
+  theta_samples_arr, y_samples_arr, design_arr, prior_covariance_arr,
+  prior_mean_arr.
+
+load_cell_data returns {"theta", "y", "xi", "Sigma_pi", "mu_pi"}.
+eval_cell builds (p0, p1) on the fly via joint_and_shuffled, computes
+true ldrs via the gaussian-linear closed form, fits the estimator, and
+returns MAE between predict_ldr(joint) and the true per-sample ldrs.
+the same MAE function is forwarded as eval_fn for hyperband pruning.
+"""
 import h5py
 import numpy as np
 import torch
@@ -7,65 +23,37 @@ from pathlib import Path
 from typing import Optional
 
 from experiments.utils.hpo.adapters.base import ExperimentAdapter
+from experiments.utils.eig_ldr import joint_and_shuffled, true_ldrs_gaussian_linear
 
 _CONFIG_PATH = Path(__file__).resolve().parents[4] / "experiments/eig_estimation/config1.yaml"
 
 
 class EIGAdapter(ExperimentAdapter):
-    """EIG estimation experiment adapter.
-
-    cell shape: 1-tuple (design_idx,).
-    cell pool: [(0,), (1,), ..., (num_designs - 1,)] where
-      num_designs = num_priors * num_designs_per_setting from config.
-
-    h5 file: {data_dir}/dataset_d={data_dim},nsamples={nsamples}.h5
-    h5 keys per row (indexed by design_idx):
-      theta_samples_arr, y_samples_arr, design_arr, prior_covariance_arr.
-
-    load_cell_data returns {"theta", "y", "xi", "Sigma_pi"} — the same
-    names used in hpo_trial.py's eval_cell closure. EIGPlugin wrapping
-    is applied at the trial_runner level, not here.
-    """
 
     def __init__(self):
-        """load config1.yaml; cache data_dir, device, latent_dim, h5 path params."""
         with open(_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
-
         self._data_dir = cfg["data_dir"]
         self._device = cfg.get("device", "cpu")
         self._data_dim = cfg["data_dim"]
         self._nsamples = cfg["nsamples"]
-        self._latent_dim = self._data_dim + 1  # per mid-level doc
+        self._latent_dim = self._data_dim + 1
         self._num_designs = cfg["num_priors"] * cfg["num_designs_per_setting"]
 
     def name(self) -> str:
-        """return "eig_estimation"."""
         return "eig_estimation"
 
     def data_dir(self) -> Path:
-        """return Path(config["data_dir"])."""
         return Path(self._data_dir)
 
     def cell_pool(self) -> list[tuple[int]]:
-        """return [(i,) for i in range(num_designs)]."""
         return [(i,) for i in range(self._num_designs)]
 
     def load_cell_data(self, cell: tuple[int, ...], device: str) -> dict[str, torch.Tensor]:
-        """load one design row from the single h5 dataset file.
+        """load one design row; returns {theta, y, xi, Sigma_pi, mu_pi}.
 
-        args:
-          cell: (design_idx,) 1-tuple.
-          device: torch device string.
-
-        opens {data_dir}/dataset_d={data_dim},nsamples={nsamples}.h5.
-        extracts row design_idx from:
-          theta_samples_arr, y_samples_arr, design_arr, prior_covariance_arr.
-        converts to float32 tensors on device.
-
-        returns: {"theta": tensor, "y": tensor, "xi": tensor, "Sigma_pi": tensor}.
-
-        raises FileNotFoundError if h5 missing, ValueError if cell invalid.
+        no p0/p1/pstar/true_ldrs precomputed: eval_cell builds them per call so
+        the joint-vs-shuffled permutation is freshly drawn each trial.
         """
         (idx,) = cell
         path = self.data_dir() / f"dataset_d={self._data_dim},nsamples={self._nsamples}.h5"
@@ -74,28 +62,25 @@ class EIGAdapter(ExperimentAdapter):
             return torch.from_numpy(np.array(arr)).float().to(device)
 
         with h5py.File(path, "r") as f:
-            theta = _t(f["theta_samples_arr"][idx])    # (n_samples, data_dim)
-            y = _t(f["y_samples_arr"][idx])             # (n_samples, data_dim+1)
-            xi = _t(f["design_arr"][idx])               # (data_dim+1,)
-            Sigma_pi = _t(f["prior_covariance_arr"][idx])  # (data_dim, data_dim)
+            theta = _t(f["theta_samples_arr"][idx])
+            y = _t(f["y_samples_arr"][idx])
+            xi = _t(f["design_arr"][idx])
+            Sigma_pi = _t(f["prior_covariance_arr"][idx])
+            mu_pi = _t(f["prior_mean_arr"][idx])
 
-        return {"theta": theta, "y": y, "xi": xi, "Sigma_pi": Sigma_pi}
+        return {"theta": theta, "y": y, "xi": xi, "Sigma_pi": Sigma_pi, "mu_pi": mu_pi}
 
     def device(self) -> str:
-        """return config["device"] (default "cpu")."""
         return self._device
 
     def latent_dim(self) -> int:
-        """return data_dim + 1."""
         return self._latent_dim
 
     def num_waypoints(self) -> Optional[int]:
-        """return None; eig does not use triangular waypoints."""
         return None
 
     def metric_key(self) -> str:
-        """return "per_design_eig_abs_err"."""
-        return "per_design_eig_abs_err"
+        return "per_design_ldr_mae"
 
     def eval_cell(
         self,
@@ -111,38 +96,36 @@ class EIGAdapter(ExperimentAdapter):
         step_cb_interval: int = 50,
         data=None,
     ):
-        """eig-specific scoring: |EIGPlugin.estimate_eig(theta,y) - true_eig(Sigma_pi,xi)|.
+        """eig scoring: MAE between predict_ldr(joint) and closed-form true ldrs.
 
-        new kwargs (step_cb, trial_number, step_cb_interval) are accepted to
-        maintain signature compatibility with base.ExperimentAdapter.eval_cell
-        but are NOT used. EIG cells have schema {theta, y, xi, Sigma_pi}, not
-        {p0, p1, pstar, true_ldrs}, so the uniform predict_ldr mae eval signal
-        does not apply. pruning is deferred for EIG until a custom eval_fn is
-        implemented (out of scope).
-
-        cell schema is {theta, y, xi, Sigma_pi}, not {p0, p1, pstar, true_ldrs}.
-        triangular methods are wrapped with a small adapter so EIGPlugin can
-        call est.fit(p0, p1) without needing a pstar arg (re-uses p0).
-
-        TriangularEIGAdapter and _true_eig are inlined here to avoid
-        importing experiments.eig_estimation.hpo_trial, which transitively
-        loads hpo_search_spaces.py (still has stale legacy entries).
+        steps:
+          1. load cell data if not cached.
+          2. build joint=(theta, y), shuffled=independent-marginal product, and
+             precompute true_ldrs at the joint samples.
+          3. derive a per-trial seed and split (joint, true_ldrs) for early
+             stopping; the unsplit pair is used for the final metric.
+          4. build the estimator. triangular methods (requires_pstar=True)
+             use joint as pstar.
+          5. forward step_cb / eval_data / step_cb_interval to est.fit.
+          6. return MAE on the full joint sample.
         """
-        from src.eig_estimation.plugin import EIGPlugin
-
-        class _TriEIGAdapter:
-            def __init__(self, inner): self.inner = inner
-            def fit(self, p0, p1): self.inner.fit(p0, p1, p0)
-            def predict_ldr(self, xs): return self.inner.predict_ldr(xs)
-
-        def _true_eig(Sigma_pi, xi, sigma2: float = 1.0):
-            quad = (xi.T @ Sigma_pi @ xi).squeeze()
-            return 0.5 * torch.log1p(quad / sigma2)
-
         if data is None:
             data = self.load_cell_data(cell, device=device)
-        nwp_default = self.num_waypoints() or 0
-        nwp = hyperparams.get("num_waypoints", nwp_default)
+        theta, y = data["theta"], data["y"]
+        joint, shuffled = joint_and_shuffled(theta, y)
+        true_ldrs = true_ldrs_gaussian_linear(
+            theta, y, data["mu_pi"], data["Sigma_pi"], data["xi"]
+        )
+
+        # within-cell split for pruning eval_fn
+        eval_data = None
+        if trial_number is not None:
+            seed = hash((trial_number, cell)) & 0xFFFFFFFF
+            split_in = {"pstar": joint, "true_ldrs": true_ldrs}
+            _, eval_part = self.split_for_eval_seeded(split_in, seed=seed)
+            eval_data = {k: v.to(device) for k, v in eval_part.items()}
+
+        nwp = hyperparams.get("num_waypoints", self.num_waypoints() or 0)
         flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
         est = builder(
             input_dim=self.latent_dim(),
@@ -150,12 +133,20 @@ class EIGAdapter(ExperimentAdapter):
             num_waypoints=nwp,
             **flat,
         )
-        # wrap any pstar-requiring estimator (covers MultiHeadTriangularTDRE too,
-        # whose name doesn't start with "Triangular")
-        if requires_pstar:
-            est = _TriEIGAdapter(est)
-        plugin = EIGPlugin(est)
-        est_eig = plugin.estimate_eig(data["theta"], data["y"])
-        est_eig_f = float(est_eig.item() if hasattr(est_eig, "item") else est_eig)
-        true_eig = float(_true_eig(data["Sigma_pi"], data["xi"]).item())
-        return abs(est_eig_f - true_eig)
+
+        fit_args = (joint, shuffled, joint) if requires_pstar else (joint, shuffled)
+        est.fit(
+            *fit_args,
+            step_cb=step_cb,
+            eval_data=eval_data,
+            step_cb_interval=step_cb_interval,
+        )
+
+        with torch.no_grad():
+            preds = est.predict_ldr(joint)
+            return float(torch.abs(preds.cpu() - true_ldrs.cpu()).mean())
+
+    def split_for_eval_seeded(self, data: dict, *, seed: int) -> tuple[dict, dict]:
+        """per-trial-seeded variant of split_for_eval used by eval_cell."""
+        from experiments.utils.hpo.adapters.eval_split import split_for_eval
+        return split_for_eval(data, seed=seed)

@@ -14,7 +14,7 @@ import yaml
 
 
 config = yaml.load(
-    open('experiments/hidden_dim_scaling/config.yaml', 'r'),
+    open('experiments/ablations/hidden_dim_scaling/config.yaml', 'r'),
     Loader=yaml.FullLoader
 )
 

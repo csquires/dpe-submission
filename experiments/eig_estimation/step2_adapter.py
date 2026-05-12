@@ -9,9 +9,9 @@ the original step2 output dataset name.
 
 quirks:
 - input_dim is data_dim + 1 (theta has data_dim coords, y has 1 coord, concatenated).
-- per-cell wraps the DRE in EIGPlugin; estimate_eig() handles the (theta, y) -> p0/p1 split.
-- triangular DRE variants (TriangularMDRE, TriangularTSM) need a small EIGAdapter that
-  passes p0 as pstar at fit time. handled inline via _wrap_for_eig().
+- per-cell builds (joint, shuffled) via joint_and_shuffled, fits the DRE on those,
+  and reports the mean predict_ldr(joint) as the scalar EIG estimate.
+- triangular DRE variants (requires_pstar=True) reuse joint as pstar at fit time.
 - the original step2 also computed true_eigs_arr from Sigma_pi + design; this is a
   deterministic post-processing step that gather_postprocess() can run after the
   per-method gathers complete (true_eigs depends only on the dataset, not on any
@@ -26,7 +26,7 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from src.eig_estimation.plugin import EIGPlugin
+from experiments.utils.eig_ldr import joint_and_shuffled
 from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
@@ -76,40 +76,15 @@ def bucket_for_cell(cell_idx: int, config: dict) -> None:
 
 
 # -----------------------------------------------------------------------------
-# triangular-DRE adapter (used when wrapping a triangular DRE for EIGPlugin)
-# -----------------------------------------------------------------------------
-
-class _TriangularEIGAdapter:
-    """forwards EIGPlugin's 2-arg fit(p0, p1) into triangular's 3-arg fit(p0, p1, pstar=p0).
-
-    eig_estimation has no separate pstar samples; the joint (theta, y) is itself the
-    pstar distribution, so the original step2 passes p0 twice. mirrored here.
-    """
-    def __init__(self, dre):
-        self._dre = dre
-
-    def fit(self, samples_p0, samples_p1):
-        self._dre.fit(samples_p0, samples_p1, samples_p0)
-
-    def predict_ldr(self, xs):
-        return self._dre.predict_ldr(xs)
-
-
-def _wrap_for_eig(method: str, dre):
-    """wrap triangular DREs so EIGPlugin's 2-arg fit signature works."""
-    if _requires_pstar(method):
-        return _TriangularEIGAdapter(dre)
-    return dre
-
-
-# -----------------------------------------------------------------------------
 # fit + eval
 # -----------------------------------------------------------------------------
 
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
-    """build estimator with hp; wrap in EIGPlugin; call estimate_eig on (theta, y).
+    """build estimator with hp; fit on (joint, shuffled-marginals); return scalar
+    EIG estimate = mean predict_ldr(joint).
 
+    triangular methods (requires_pstar) reuse joint as pstar at fit time.
     returns:
         est_ldrs: array (1,) holding the scalar EIG estimate
     """
@@ -132,14 +107,18 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
         **hp,
     }
     dre = builder(**builder_kwargs)
-    plugin = EIGPlugin(density_ratio_estimator=_wrap_for_eig(method, dre))
 
     with _open_dataset(config) as ds:
         theta = torch.from_numpy(ds["theta_samples_arr"][cell_idx]).to(device)
         y = torch.from_numpy(ds["y_samples_arr"][cell_idx]).to(device)
 
-    result = plugin.estimate_eig(theta, y)
-    eig = float(result.item() if hasattr(result, "item") else result)
+    joint, shuffled = joint_and_shuffled(theta, y)
+    if _requires_pstar(method):
+        dre.fit(joint, shuffled, joint)
+    else:
+        dre.fit(joint, shuffled)
+    with torch.no_grad():
+        eig = float(dre.predict_eldr(joint).item())
 
     return {"est_ldrs": np.array([eig], dtype=np.float32)}
 

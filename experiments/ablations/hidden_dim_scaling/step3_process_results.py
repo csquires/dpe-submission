@@ -8,7 +8,7 @@ import re
 from collections import defaultdict
 
 
-config = yaml.load(open('experiments/hidden_dim_scaling/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/ablations/hidden_dim_scaling/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # extract directory paths
 DATA_DIR = config['data_dir']

@@ -12,7 +12,7 @@ parser.add_argument('--force', action='store_true', help='Force re-run of all al
 args = parser.parse_args()
 
 # load config
-config = yaml.load(open('experiments/eig_vertex_sweep/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('experiments/ablations/eig_vertex_sweep/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # extract and bind scalar config values
 DEVICE = config['device']
@@ -35,21 +35,29 @@ torch.manual_seed(SEED)
 # import delayed modules
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.methods.cls.mdre.tri import TriangularMDRE
-from src.eig_estimation.plugin import EIGPlugin
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
+from experiments.utils.eig_ldr import joint_and_shuffled
 
 
-class TriangularMDREEIGAdapter:
-    """adapter for TriangularMDRE that uses p0 samples as pstar during fit."""
-    def __init__(self, triangular_mdre):
-        self.triangular_mdre = triangular_mdre
-
-    def fit(self, samples_p0, samples_p1):
-        # use samples_p0 as pstar (joint distribution samples)
-        self.triangular_mdre.fit(samples_p0, samples_p1, samples_p0)
-
-    def predict_ldr(self, xs):
-        return self.triangular_mdre.predict_ldr(xs)
+def fit_predict_eig_split(dre, theta, y, train_ratio):
+    """fit on (joint_train, shuffled_train); predict on joint_eval. if train_ratio
+    is None, fit on full joint and eval on full joint. triangular method always
+    uses joint as pstar at fit time.
+    """
+    if train_ratio is None:
+        joint, shuffled = joint_and_shuffled(theta, y)
+        dre.fit(joint, shuffled, joint)
+        eval_joint = joint
+    else:
+        n = theta.shape[0]
+        n_train = int(n * train_ratio)
+        perm = torch.randperm(n, device=theta.device)
+        tr, ev = perm[:n_train], perm[n_train:]
+        joint_tr, shuffled_tr = joint_and_shuffled(theta[tr], y[tr])
+        dre.fit(joint_tr, shuffled_tr, joint_tr)
+        eval_joint = torch.cat([theta[ev], y[ev]], dim=1)
+    with torch.no_grad():
+        return dre.predict_ldr(eval_joint).mean()
 
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:
@@ -147,12 +155,6 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             max_train_samples=MAX_TRAIN_SAMPLES,
         )
 
-        # wrap with adapter
-        adapter = TriangularMDREEIGAdapter(triangular_mdre)
-
-        # wrap with EIG plugin
-        plugin = EIGPlugin(density_ratio_estimator=adapter, train_ratio=TRAIN_RATIO)
-
         # allocate result array (full size, unfiltered rows will be 0)
         est_eigs_arr = np.zeros(nrows, dtype=np.float32)
 
@@ -163,7 +165,7 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             y_samples = torch.from_numpy(dataset_file['y_samples_arr'][row_idx]).to(DEVICE)  # [NSAMPLES, 1]
 
             # estimate eig
-            result = plugin.estimate_eig(theta_samples, y_samples)
+            result = fit_predict_eig_split(triangular_mdre, theta_samples, y_samples, TRAIN_RATIO)
             est_eigs_arr[row_idx] = result.item() if hasattr(result, 'item') else result
 
         # save estimated eigs to results file

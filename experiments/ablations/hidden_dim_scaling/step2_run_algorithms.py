@@ -21,42 +21,28 @@ from src.methods.reg.tsm import TSM
 from src.methods.cls.mdre.tri import TriangularMDRE
 from src.methods.cls.tdre.tri import TriangularTDRE
 from src.methods.cls.tdre.mh_tri import MultiHeadTriangularTDRE
-from src.eig_estimation.plugin import EIGPlugin
+from experiments.utils.eig_ldr import joint_and_shuffled
+
+
+# triangular methods accept a third positional pstar arg at fit; reuse joint.
+_PSTAR_METHODS = {"TriangularMDRE", "TriangularTDRE", "MultiHeadTriangularTDRE"}
 
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:
-    """
-    Compute true EIG for Gaussian linear model.
-
-    args:
-        Sigma_pi: prior covariance, shape [data_dim, data_dim]
-        xi: design vector, shape [data_dim, 1]
-        sigma2: observation noise variance
-
-    returns:
-        scalar torch.Tensor with true EIG value
-    """
+    """closed-form eig for the gaussian linear model."""
     quad = (xi.T @ Sigma_pi @ xi).squeeze()
     return 0.5 * torch.log1p(quad / sigma2)
 
 
-class TriangularDREAdapter:
-    """
-    Adapter bridging triangular DRE methods to EIGPlugin interface.
-
-    Triangular DRE methods require fit(samples_p0, samples_p1, samples_pstar),
-    while EIGPlugin expects fit(samples_p0, samples_p1).
-    This adapter uses samples_p0 (joint distribution) as pstar.
-    """
-
-    def __init__(self, dre):
-        self.dre = dre
-
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
-        self.dre.fit(samples_p0, samples_p1, samples_p0)
-
-    def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        return self.dre.predict_ldr(xs)
+def fit_predict_eig(dre, alg_name, theta, y):
+    """fit dre on (joint, shuffled-marginals); return mean predict_ldr(joint)."""
+    joint, shuffled = joint_and_shuffled(theta, y)
+    if alg_name in _PSTAR_METHODS:
+        dre.fit(joint, shuffled, joint)
+    else:
+        dre.fit(joint, shuffled)
+    with torch.no_grad():
+        return dre.predict_ldr(joint).mean()
 
 
 def validate_subset(user_values, config_values, param_name):
@@ -100,7 +86,7 @@ def main():
     args = parser.parse_args()
 
     # === 1.5 VALIDATE CLI ARGUMENTS ===
-    config_path = "experiments/hidden_dim_scaling/config.yaml"
+    config_path = "experiments/ablations/hidden_dim_scaling/config.yaml"
     config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
 
     try:
@@ -201,7 +187,6 @@ def main():
                 lr=TSM_LR,
                 device=DEVICE,
             )
-            tsm_plugin = EIGPlugin(density_ratio_estimator=tsm)
             temp_tsm_model = TimeScoreNetwork1D(DATA_DIM + 1, hidden_dim)
             tsm_param_count = sum(p.numel() for p in temp_tsm_model.parameters())
             del temp_tsm_model
@@ -216,8 +201,6 @@ def main():
                 num_epochs=mdre_epochs,
             )
             triangular_mdre = TriangularMDRE(mdre_classifier, device=DEVICE)
-            mdre_adapter = TriangularDREAdapter(triangular_mdre)
-            mdre_plugin = EIGPlugin(density_ratio_estimator=mdre_adapter)
             mdre_param_count = sum(p.numel() for p in mdre_classifier.parameters())
 
             # 7.4 INSTANTIATE TRIANGULAR TDRE
@@ -235,8 +218,6 @@ def main():
                 num_waypoints=NUM_WAYPOINTS,
                 device=DEVICE,
             )
-            tdre_adapter = TriangularDREAdapter(triangular_tdre)
-            tdre_plugin = EIGPlugin(density_ratio_estimator=tdre_adapter)
             tdre_param_count = sum(
                 sum(p.numel() for p in c.parameters()) for c in tdre_classifiers
             )
@@ -259,22 +240,20 @@ def main():
                 num_waypoints=NUM_WAYPOINTS,
                 device=DEVICE,
             )
-            mh_tdre_adapter = TriangularDREAdapter(mh_tdre)
-            mh_tdre_plugin = EIGPlugin(density_ratio_estimator=mh_tdre_adapter)
             mh_tdre_param_count = sum(p.numel() for p in mh_classifier.parameters())
 
             # 7.6 BUILD ALGORITHM TUPLES
             all_algorithms = [
-                ("TriangularMDRE", mdre_plugin, mdre_param_count),
-                ("TriangularTDRE", tdre_plugin, tdre_param_count),
-                ("MultiHeadTriangularTDRE", mh_tdre_plugin, mh_tdre_param_count),
-                ("TSM", tsm_plugin, tsm_param_count),
+                ("TriangularMDRE", triangular_mdre, mdre_param_count),
+                ("TriangularTDRE", triangular_tdre, tdre_param_count),
+                ("MultiHeadTriangularTDRE", mh_tdre, mh_tdre_param_count),
+                ("TSM", tsm, tsm_param_count),
             ]
             # filter by --methods CLI arg
             algorithms = [(n, p, c) for n, p, c in all_algorithms if n in methods]
 
             # === 8. INNER LOOP: PER ALGORITHM ===
-            for alg_name, alg_plugin, param_count in algorithms:
+            for alg_name, alg, param_count in algorithms:
                 # 8.1 CONSTRUCT FILENAME FOR THIS METHOD-DIM PAIR
                 results_filename = f'{RAW_RESULTS_DIR}/{alg_name}_hidden_dim_{hidden_dim}.h5'
 
@@ -303,7 +282,7 @@ def main():
                     # 8.4.3 MEASURE TIMING AND RUN ALGORITHM
                     t0 = time.perf_counter()
                     try:
-                        result = alg_plugin.estimate_eig(theta_samples, y_samples)
+                        result = fit_predict_eig(alg, alg_name, theta_samples, y_samples)
                         est_eigs_arr[idx] = result.item() if hasattr(result, 'item') else result
                     except RuntimeError as e:
                         if 'out of memory' in str(e):
