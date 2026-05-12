@@ -3,6 +3,7 @@
 The two-source (DRE) variant VFM lives in this module; triangular variants
 (V1 barycentric, V2 piecewise-SB, V3 2D) live under `.tri`.
 """
+import warnings
 from typing import Optional, Literal
 
 import torch
@@ -39,7 +40,7 @@ class VFM(DRE):
         time: TimeCfg = TimeCfg(),
         device: Optional[str] = None,
         k: float = 0.5,
-        n_t: int = 50,
+        n_t: Optional[int] = None,
         antithetic: bool = False,
         div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
         div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
@@ -61,7 +62,13 @@ class VFM(DRE):
         self.ema = ema
         self.time = time
         self.k = k
-        self.n_t = n_t
+        if n_t is not None:
+            warnings.warn(
+                "`n_t` is deprecated and unused; it has no effect on VFM training "
+                "or inference and will be removed in a future revision.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.antithetic = antithetic
         self.integration_steps = integration_steps
         self.reweight = reweight
