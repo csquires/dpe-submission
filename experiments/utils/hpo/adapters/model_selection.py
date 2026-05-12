@@ -109,12 +109,29 @@ class ModelSelectionAdapter(ExperimentAdapter):
     def metric_key(self) -> str:
         return "per_row_ldr_mean_ae"
 
-    def eval_cell(self, cell, method, builder, hyperparams, requires_pstar, device, *, data=None):
+    def eval_cell(
+        self,
+        cell,
+        method,
+        builder,
+        hyperparams,
+        requires_pstar,
+        device,
+        *,
+        step_cb=None,
+        trial_number: int | None = None,
+        step_cb_interval: int = 50,
+        data=None,
+    ):
         """model_selection scoring: fits with pstar_train, scores on pstar.
 
         differs from default in that the fit-time pstar (when requires_pstar)
         is the per-cell pstar_train slice, not the test pstar. metric is
         mae(predict_ldr(pstar_test), true_ldrs).
+
+        new kwargs (step_cb, trial_number, step_cb_interval) are accepted but
+        not used in this iteration; deferred pending integration of eval-split
+        semantics with the pstar_train / pstar distinction.
         """
         import torch
 
