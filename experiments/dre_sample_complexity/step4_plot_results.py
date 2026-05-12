@@ -6,7 +6,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import yaml
 
-from experiments.utils.hpo.registry import LEGACY_ALIASES
+# inlined legacy method-name aliases. used at h5 load time to canonicalize
+# entries written by older runs (pre-rename). new runs use canonical names
+# and bypass this map entirely.
+LEGACY_ALIASES: dict[str, str] = {
+    "MHTTDRE": "MultiHeadTriangularTDRE",
+    "MDRE": "MDRE_15",
+    "TDRE": "TDRE_5",
+    "TriangularCTSM": "TriangularCTSM_V1",
+    "TriangularVFM": "TriangularVFM_V1",
+}
 
 
 config = yaml.load(open('experiments/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)

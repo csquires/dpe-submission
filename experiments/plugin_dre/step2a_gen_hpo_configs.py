@@ -6,13 +6,48 @@ Writes one JSON per trial to:
 """
 
 import json
+import math
 import os
 import random
 
 import yaml
 
-from experiments.plugin_dre.hpo_search_spaces import SEARCH_SPACES
-from experiments.utils.hpo.sample import gen_config
+from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+
+
+def _sample_param(spec: tuple):
+    """sample a hyperparameter value from a (kind, ...args) spec tuple.
+
+    inlined from the deprecated experiments.utils.hpo.sample module; only the
+    five spec shapes used by METHOD_SPECS search-space declarations are
+    supported.
+    """
+    kind = spec[0]
+    if kind == "log_uniform":
+        lo, hi = spec[1], spec[2]
+        return math.exp(random.uniform(math.log(lo), math.log(hi)))
+    if kind == "log_uniform_int":
+        lo, hi = spec[1], spec[2]
+        return int(round(math.exp(random.uniform(math.log(lo), math.log(hi)))))
+    if kind == "uniform":
+        return random.uniform(spec[1], spec[2])
+    if kind == "uniform_int":
+        return random.randint(spec[1], spec[2])
+    if kind == "choice":
+        return random.choice(spec[1])
+    raise ValueError(f"unknown spec kind: {kind!r}")
+
+
+def gen_config(registry: dict, method: str, trial_id: int) -> dict:
+    """sample a full hyperparameter config for one random-search trial.
+
+    inlined from the deprecated experiments.utils.hpo.sample module. used by
+    the random-search generator below; the new optuna stack does not call
+    this function.
+    """
+    search_space = registry[method]["base_search_space"]
+    hyperparams = {p: _sample_param(spec) for p, spec in search_space.items()}
+    return {"trial_id": trial_id, "method": method, "hyperparams": hyperparams}
 
 
 def main():

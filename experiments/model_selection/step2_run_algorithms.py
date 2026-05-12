@@ -26,7 +26,7 @@ import yaml
 from pathlib import Path
 
 from src.utils.io import _load_config
-from experiments.model_selection.hpo_search_spaces import SEARCH_SPACES
+from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -24,7 +24,7 @@ import torch
 from tqdm import tqdm
 import yaml
 
-from experiments.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def parse_args():

@@ -16,7 +16,7 @@ import torch
 from tqdm import tqdm
 import yaml
 
-from experiments.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def parse_args():
