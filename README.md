@@ -1,4 +1,4 @@
-# ELDR Estimation for Experimental Design
+# ELDR Estimation
 
 ## Installation
 
