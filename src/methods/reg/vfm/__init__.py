@@ -47,6 +47,7 @@ class VFM(DRE):
         integration_steps: int = 10000,
         integration_type: Literal['1', '2', '3'] = '1',
         activation: str = "silu",
+        layernorm: str = "off",
         reweight: bool = False,
     ) -> None:
         super().__init__(input_dim)
@@ -78,6 +79,9 @@ class VFM(DRE):
                 f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
             )
         self.activation = activation
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
+        self.layernorm = layernorm
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -97,11 +101,13 @@ class VFM(DRE):
         self.net_b = MLP(self.input_dim, self.hidden_dim,
                          output_dim=self.input_dim,
                          n_hidden_layers=self.n_hidden_layers,
-                         activation=self.activation).to(self.device)
+                         activation=self.activation,
+                         layernorm=self.layernorm).to(self.device)
         self.net_eta = MLP(self.input_dim, self.hidden_dim,
                            output_dim=self.input_dim,
                            n_hidden_layers=self.n_hidden_layers,
-                           activation=self.activation).to(self.device)
+                           activation=self.activation,
+                           layernorm=self.layernorm).to(self.device)
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """gamma(t) = (1 - exp(-k t)) (1 - exp(-k (1-t)))."""

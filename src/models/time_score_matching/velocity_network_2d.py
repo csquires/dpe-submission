@@ -32,6 +32,7 @@ class MLP2D(nn.Module):
         output_dim: int | None = None,
         n_hidden_layers: int = 3,
         activation: str = "gelu",
+        layernorm: str = "off",
     ) -> None:
         """
         Args:
@@ -40,6 +41,8 @@ class MLP2D(nn.Module):
             output_dim: output dimension (defaults to input_dim).
             n_hidden_layers: number of hidden linear+activation blocks (default 3).
             activation: activation function {"elu", "gelu", "silu"}; default "gelu" for byte-identical behavior.
+            layernorm: one of {"off", "pre", "post"}; "pre"/"post" insert LayerNorm
+                before/after each hidden activation. mirrors common.MLP semantics.
         """
         super().__init__()
         if output_dim is None:
@@ -48,20 +51,27 @@ class MLP2D(nn.Module):
             raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
         if activation not in ("elu", "gelu", "silu"):
             raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}")
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off','pre','post'}}; got {layernorm!r}")
 
-        # map activation string to nn module
-        act_map = {
-            "elu": nn.ELU(),
-            "gelu": nn.GELU(),
-            "silu": nn.SiLU(),
-        }
+        act = {"elu": nn.ELU(), "gelu": nn.GELU(), "silu": nn.SiLU()}[activation]
 
-        layers = [nn.Linear(input_dim + 2, hidden_dim), act_map[activation]]  # +2 for t1, t2
+        layers: list[nn.Module] = [nn.Linear(input_dim + 2, hidden_dim)]  # +2 for t1, t2
+        if layernorm == "pre":
+            layers.append(nn.LayerNorm(hidden_dim))
+        layers.append(act)
+        if layernorm == "post":
+            layers.append(nn.LayerNorm(hidden_dim))
+
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(act_map[activation])
-        layers.append(nn.Linear(hidden_dim, output_dim))
+            if layernorm == "pre":
+                layers.append(nn.LayerNorm(hidden_dim))
+            layers.append(act)
+            if layernorm == "post":
+                layers.append(nn.LayerNorm(hidden_dim))
 
+        layers.append(nn.Linear(hidden_dim, output_dim))
         self.net = nn.Sequential(*layers)
 
     def forward(self, t1: Tensor, t2: Tensor, x: Tensor) -> Tensor:

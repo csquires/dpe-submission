@@ -55,6 +55,7 @@ class TriangularVFM2D(ELDR):
         n_hutch_samples: int = 1,
         integration_steps: int = 200,
         activation: str = "gelu",
+        layernorm: str = "off",
         reweight: bool = False,
     ) -> None:
         """initialize triangularvfm2d with cfg-based optimization surface.
@@ -118,6 +119,9 @@ class TriangularVFM2D(ELDR):
                 f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
             )
         self.activation = activation
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
+        self.layernorm = layernorm
         self.reweight = reweight
 
         # resolve device
@@ -165,21 +169,24 @@ class TriangularVFM2D(ELDR):
             self.hidden_dim,
             output_dim=self.input_dim,
             n_hidden_layers=self.n_hidden_layers,
-            activation=self.activation
+            activation=self.activation,
+            layernorm=self.layernorm,
         ).to(self.device)
         self.net_b2 = MLP2D(
             self.input_dim,
             self.hidden_dim,
             output_dim=self.input_dim,
             n_hidden_layers=self.n_hidden_layers,
-            activation=self.activation
+            activation=self.activation,
+            layernorm=self.layernorm,
         ).to(self.device)
         self.net_eta = MLP2D(
             self.input_dim,
             self.hidden_dim,
             output_dim=self.input_dim,
             n_hidden_layers=self.n_hidden_layers,
-            activation=self.activation
+            activation=self.activation,
+            layernorm=self.layernorm,
         ).to(self.device)
 
     def fit(
