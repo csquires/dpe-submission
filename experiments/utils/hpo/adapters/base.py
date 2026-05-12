@@ -1,8 +1,10 @@
 """unifies per-experiment data + h5 loading + metric semantics. cell tuples are arity-agnostic (1, 2, or 3); adapter encodes shape via cell_pool() return type."""
 import abc
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 import torch
+from experiments.utils.hpo.adapters.eval_split import split_for_eval as _split_for_eval
+from experiments.utils.hpo.adapters.split_utils import stratified_split
 
 
 class ExperimentAdapter(abc.ABC):
@@ -13,6 +15,8 @@ class ExperimentAdapter(abc.ABC):
     int sequences. subclass docstring should declare cell arity for downstream
     validation. subclasses own h5 key mapping and file I/O.
     """
+
+    _train_holdout_cache: tuple[list, list] | None = None
 
     @abc.abstractmethod
     def name(self) -> str:
@@ -119,6 +123,67 @@ class ExperimentAdapter(abc.ABC):
         """
         return 32
 
+    def split_seed(self) -> int:
+        """seed for stratified_split reproducibility.
+
+        default: 42. override per-adapter for custom seed behavior.
+        """
+        return 42
+
+    def holdout_ratio(self) -> float:
+        """holdout fraction for train/holdout stratified split.
+
+        default: 0.2 (20% holdout, 80% train). override per-adapter.
+        range: (0, 1) exclusive; stratified_split validates bounds.
+        """
+        return 0.2
+
+    def split_for_eval(self, data: dict) -> tuple[dict, dict]:
+        """deterministic within-cell train/eval split.
+
+        default: delegates to eval_split.split_for_eval with seed=42. override
+        to inject a custom split policy (per-trial seed, alternative strategy).
+        callers (eval_cell) typically pass their own seed by overriding this
+        method or by NOT calling it (when trial_number is None).
+
+        returns: (train_data, eval_data) where only "pstar" and "true_ldrs" are
+        partitioned; all other keys (p0, p1, etc.) remain in train_data.
+        """
+        return _split_for_eval(data, seed=42)
+
+    def train_pool(self) -> list[tuple[int, ...]]:
+        """training pool via stratified split of cell_pool.
+
+        returns deterministic stratified subset ensuring stratification
+        by stratify_key (if defined). result cached per adapter instance
+        to avoid recomputation on repeated calls.
+        """
+        if self._train_holdout_cache is None:
+            train, holdout = stratified_split(
+                self.cell_pool(),
+                stratify_fn=self.stratify_key,
+                train_ratio=1 - self.holdout_ratio(),
+                seed=self.split_seed(),
+            )
+            self._train_holdout_cache = (train, holdout)
+        return self._train_holdout_cache[0]
+
+    def holdout_pool(self) -> list[tuple[int, ...]]:
+        """holdout pool via stratified split of cell_pool.
+
+        returns deterministic complement of train_pool; same cache and
+        split parameters. disjoint with train_pool; union equals cell_pool.
+        """
+        if self._train_holdout_cache is None:
+            train, holdout = stratified_split(
+                self.cell_pool(),
+                stratify_fn=self.stratify_key,
+                train_ratio=1 - self.holdout_ratio(),
+                seed=self.split_seed(),
+            )
+            self._train_holdout_cache = (train, holdout)
+        return self._train_holdout_cache[1]
+
     def eval_cell(
         self,
         cell: tuple[int, ...],
@@ -128,6 +193,9 @@ class ExperimentAdapter(abc.ABC):
         requires_pstar: bool,
         device: str,
         *,
+        step_cb: Callable[[int, float], None] | None = None,
+        trial_number: int | None = None,
+        step_cb_interval: int = 50,
         data: Optional[dict] = None,
     ) -> float:
         """build estimator, fit on this cell, return scalar metric.
@@ -141,18 +209,45 @@ class ExperimentAdapter(abc.ABC):
         if data is provided (cpu_runner cache path), reuse it; else load
         from h5 via load_cell_data.
 
+        if trial_number is not None, compute a per-trial seed and split
+        eval data for early stopping / pruning. eval_data is moved to device
+        before forwarding to est.fit. else, eval_data=None and full data is
+        used for training.
+
+        step_cb and step_cb_interval are forwarded to est.fit for iterative
+        methods (BDRE, FMDRE); tabular methods pass step_cb=None and ignore
+        these parameters.
+
         plan:
           1. data = data or load_cell_data(cell, device).
-          2. build estimator: pop num_waypoints from hp (HP-driven if present,
-             else adapter default), pass remaining hp via **flat.
-          3. fit on (p0, p1[, pstar]) per requires_pstar.
-          4. predict_ldr(pstar) -> mae vs true_ldrs.
-
-        in-flight mnist runs: unchanged (this default reproduces the
-        pre-existing inline logic from trial_runner / cpu_runner).
+          2. if trial_number is not None:
+             - seed = hash((trial_number, cell)) & 0xFFFFFFFF
+             - train_data, eval_data = _split_for_eval(data, seed=seed)
+             - move every tensor in eval_data to device
+          3. else: train_data = data, eval_data = None
+          4. build estimator: pop num_waypoints from hp, pass remaining via **flat.
+          5. fit estimator:
+             - if requires_pstar: est.fit(train_data["p0"], train_data["p1"],
+               train_data["pstar"], step_cb=step_cb, eval_data=eval_data,
+               step_cb_interval=step_cb_interval)
+             - else: est.fit(train_data["p0"], train_data["p1"],
+               step_cb=step_cb, eval_data=eval_data, step_cb_interval=step_cb_interval)
+          6. predict_ldr(pstar) on FULL data (not eval_data) and mae vs true_ldrs.
         """
         if data is None:
             data = self.load_cell_data(cell, device=device)
+
+        # derive eval split (within-cell held-out slice for early stopping)
+        if trial_number is not None:
+            seed = hash((trial_number, cell)) & 0xFFFFFFFF
+            train_data, eval_data = _split_for_eval(data, seed=seed)
+            # adapter is responsible for device hop on eval_data
+            eval_data = {k: v.to(device) for k, v in eval_data.items()}
+        else:
+            train_data = data
+            eval_data = None
+
+        # build estimator
         nwp = hyperparams.get("num_waypoints", self.num_waypoints())
         flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
         est = builder(
@@ -161,10 +256,27 @@ class ExperimentAdapter(abc.ABC):
             num_waypoints=nwp,
             **flat,
         )
+
+        # fit on training data (train_data has full p0, p1 but possibly truncated pstar/true_ldrs)
         if requires_pstar:
-            est.fit(data["p0"], data["p1"], data["pstar"])
+            est.fit(
+                train_data["p0"],
+                train_data["p1"],
+                train_data["pstar"],
+                step_cb=step_cb,
+                eval_data=eval_data,
+                step_cb_interval=step_cb_interval,
+            )
         else:
-            est.fit(data["p0"], data["p1"])
+            est.fit(
+                train_data["p0"],
+                train_data["p1"],
+                step_cb=step_cb,
+                eval_data=eval_data,
+                step_cb_interval=step_cb_interval,
+            )
+
+        # evaluate on FULL pstar / true_ldrs (not eval_data)
         with torch.no_grad():
             predicted = est.predict_ldr(data["pstar"])
             return float(torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean())

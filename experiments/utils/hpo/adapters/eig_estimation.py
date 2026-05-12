@@ -97,14 +97,34 @@ class EIGAdapter(ExperimentAdapter):
         """return "per_design_eig_abs_err"."""
         return "per_design_eig_abs_err"
 
-    def eval_cell(self, cell, method, builder, hyperparams, requires_pstar, device, *, data=None):
+    def eval_cell(
+        self,
+        cell,
+        method,
+        builder,
+        hyperparams,
+        requires_pstar,
+        device,
+        *,
+        step_cb=None,
+        trial_number: int | None = None,
+        step_cb_interval: int = 50,
+        data=None,
+    ):
         """eig-specific scoring: |EIGPlugin.estimate_eig(theta,y) - true_eig(Sigma_pi,xi)|.
+
+        new kwargs (step_cb, trial_number, step_cb_interval) are accepted to
+        maintain signature compatibility with base.ExperimentAdapter.eval_cell
+        but are NOT used. EIG cells have schema {theta, y, xi, Sigma_pi}, not
+        {p0, p1, pstar, true_ldrs}, so the uniform predict_ldr mae eval signal
+        does not apply. pruning is deferred for EIG until a custom eval_fn is
+        implemented (out of scope).
 
         cell schema is {theta, y, xi, Sigma_pi}, not {p0, p1, pstar, true_ldrs}.
         triangular methods are wrapped with a small adapter so EIGPlugin can
         call est.fit(p0, p1) without needing a pstar arg (re-uses p0).
 
-        TriangularEIGAdapter and compute_true_eig are inlined here to avoid
+        TriangularEIGAdapter and _true_eig are inlined here to avoid
         importing experiments.eig_estimation.hpo_trial, which transitively
         loads hpo_search_spaces.py (still has stale legacy entries).
         """

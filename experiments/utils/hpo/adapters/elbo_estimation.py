@@ -128,11 +128,29 @@ class ELBOAdapter(ExperimentAdapter):
         """return "per_cell_eldr_abs_err"."""
         return "per_cell_eldr_abs_err"
 
-    def eval_cell(self, cell, method, builder, hyperparams, requires_pstar, device, *, data=None):
+    def eval_cell(
+        self,
+        cell,
+        method,
+        builder,
+        hyperparams,
+        requires_pstar,
+        device,
+        *,
+        step_cb=None,
+        trial_number=None,
+        step_cb_interval=50,
+        data=None,
+    ):
         """elbo metric: |mean(predict_ldr(pstar)) - true_eldr_scalar|.
 
         true_ldrs is a SCALAR (the true expected ldr for this cell), so we
         compare against the mean of predicted ldrs over pstar samples.
+
+        step_cb, trial_number, and step_cb_interval are accepted for signature
+        compatibility with the base adapter contract but are not used. ELBO
+        does not support eval splits or step callbacks because true_ldrs is
+        a scalar, not per-sample.
         """
         if data is None:
             data = self.load_cell_data(cell, device=device)
