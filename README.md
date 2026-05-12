@@ -36,7 +36,6 @@ export DPE_DATA_ROOT=/path/to/nfs/scratch # only if using HPO
 
 - `src/` - implementations of algorithms, models, and their APIs.
   - `methods/` - density ratio estimators. split into `cls/` (classification-based: BDRE, TDRE family, MDRE, tabular plug-in) and `reg/` (regression / score-based: TSM, CTSM, FMDRE, VFM); shared base classes and the training loop in `common/`.
-  - `eldr_estimation/` - ELDR methods that consume samples from three distributions; plug-in adapters that compose any `DRE`.
   - `eig_estimation/` - EIG estimation APIs and the plug-in adapter that composes a `DRE`.
   - `waypoints/` - waypoint generators for telescoping and triangular methods.
   - `sampling/` - data samplers (gibbs, frozen-flow, tabular, pendulum trajectories).
@@ -61,16 +60,12 @@ export DPE_DATA_ROOT=/path/to/nfs/scratch # only if using HPO
 **ELDR** (`src/methods/common/base.py`)
 - subclass of `DRE` whose `fit` also accepts `samples_pstar`. enforced via an `__init_subclass__` hook that inspects the positional-parameter prefix at class-definition time.
 
-**ELDREstimator** (`src/eldr_estimation/base.py`)
-- `estimate_eldr(samples_base, samples_p0, samples_p1)` - deprecated.
-
 **EIGEstimator** (`src/eig_estimation/base.py`)
 - `estimate_eig(samples_theta, samples_y)` - estimate expected information gain.
 
-**Plug-in estimation** (`src/eldr_estimation/plugins.py`, `src/eig_estimation/plugin.py`):
-- ELDR plug-in: fits any `DRE` on `(p0, p1)`, evaluates `predict_ldr` on samples from the base distribution, returns the empirical mean.
+**Plug-in estimation** (`src/eig_estimation/plugin.py`):
 - EIG plug-in: constructs joint samples `(theta, y)` as `p0` and shuffled marginals as `p1`, fits a `DRE`, returns the mean ldr (mutual information via kl between joint and product of marginals).
-- both accept any `DRE` via dependency injection, enabling swap-in comparison of BDRE / TDRE / MDRE / TSM / VFM / FMDRE as subroutines.
+- accepts any `DRE` via dependency injection, enabling swap-in comparison of BDRE / TDRE / MDRE / TSM / VFM / FMDRE as subroutines.
 
 ## DRE methods
 
