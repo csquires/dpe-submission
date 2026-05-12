@@ -1,8 +1,8 @@
 """experiments package init.
 
-guards against the dominant leak vector that fills $HOME on this cluster:
-config yamls with relative paths like "ex/<exp>/data" that resolve
-under the repo's CWD (which is typically /home/<user>/dpe-submission).
+guards against the dominant leak vector that fills $HOME on shared clusters:
+config yamls with relative paths like "ex/<exp>/data" that resolve under the
+repo's CWD.
 
 procedure executed once on import (when the user runs
 `python -m ex.<exp>.<step>` for any step):
@@ -15,19 +15,17 @@ that helper. callers that do `yaml.safe_load(open(...))` directly get it
 through the patch installed here. all configs should template path keys as
 ${DPE_DATA_ROOT}/<exp>/... or ${DPE_CKPT_ROOT}/<exp>/ckpt.
 
-defaults:
-    DPE_DATA_ROOT -> /data/user_data/$USER/dpe-submission     (NFS, all nodes)
-    DPE_CKPT_ROOT -> /scratch/$USER/ckpt/dpe-submission       (node-local, fast)
+defaults (override by exporting the env var before running):
+    DPE_DATA_ROOT -> $HOME/dpe-data        (set NFS path on clusters)
+    DPE_CKPT_ROOT -> $HOME/dpe-ckpt        (set node-local scratch on clusters)
 """
 import os
-import getpass
 
 import yaml
 
 
-_USER = os.environ.get("USER") or getpass.getuser()
-os.environ.setdefault("DPE_DATA_ROOT", f"/data/user_data/{_USER}/dpe-submission")
-os.environ.setdefault("DPE_CKPT_ROOT", f"/scratch/{_USER}/ckpt/dpe-submission")
+os.environ.setdefault("DPE_DATA_ROOT", os.path.expanduser("~/dpe-data"))
+os.environ.setdefault("DPE_CKPT_ROOT", os.path.expanduser("~/dpe-ckpt"))
 
 
 def _expand_env(value):

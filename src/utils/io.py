@@ -1,5 +1,4 @@
 import os
-import getpass
 import yaml
 import numpy as np
 import torch
@@ -16,19 +15,19 @@ New experiments should import these functions from here.
 """
 
 
-_USER = os.environ.get("USER") or getpass.getuser()
-DPE_DATA_ROOT_DEFAULT = f"/data/user_data/{_USER}/dpe-submission"
-DPE_CKPT_ROOT_DEFAULT = f"/scratch/{_USER}/ckpt/dpe-submission"
+DPE_DATA_ROOT_DEFAULT = os.path.expanduser("~/dpe-data")
+DPE_CKPT_ROOT_DEFAULT = os.path.expanduser("~/dpe-ckpt")
 
 
 def _set_path_env_defaults() -> None:
 	"""
 	idempotently install DPE_DATA_ROOT and DPE_CKPT_ROOT env-var defaults.
 
-	rule: heavy artifacts (data, ckpts, results) must never land under $HOME.
-	configs reference these as ${DPE_DATA_ROOT}/<exp>/... and
-	${DPE_CKPT_ROOT}/<exp>/ckpt; this function ensures the variables are
-	defined even when scripts run without going through a launcher.
+	on shared clusters the user is expected to export these to point at NFS
+	(data) and node-local scratch (ckpt). the $HOME-relative fallback is just
+	a non-cluster-specific safety net so scripts don't crash when run on a
+	local dev machine; configs reference these as ${DPE_DATA_ROOT}/<exp>/...
+	and ${DPE_CKPT_ROOT}/<exp>/ckpt.
 	"""
 	os.environ.setdefault("DPE_DATA_ROOT", DPE_DATA_ROOT_DEFAULT)
 	os.environ.setdefault("DPE_CKPT_ROOT", DPE_CKPT_ROOT_DEFAULT)
