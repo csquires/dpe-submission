@@ -27,14 +27,75 @@ env:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
-from experiments.utils.watchdog import pop_lines_back_atomic
+
+def _parse_spec_line(line: str) -> Optional[tuple[str, str, str]]:
+    """parse queue spec line: tab-sep (method, pilot_tag, sbatch_template).
+
+    strip newline, skip blank/comment, split on tab. returns None on
+    blank/comment/bad arity. inlined from the deprecated watchdog module.
+    """
+    line = line.rstrip("\n")
+    if not line or line.startswith("#"):
+        return None
+    parts = line.split("\t", 2)
+    if len(parts) != 3:
+        return None
+    method, pilot_tag, template = parts
+    if pilot_tag not in {"optuna", "recalibrated", "random_a", "random_b",
+                         "broad", "refined", "holdout"}:
+        return None
+    return method, pilot_tag, template
+
+
+def pop_lines_back_atomic(queue_file: Path, lock_file: Path, k: int,
+                          method_filter: Optional[set[str]] = None) -> list[str]:
+    """flock-protected pop of up to k valid lines from the END of queue_file.
+
+    inlined from the deprecated experiments.utils.watchdog module since the
+    step2 runner is the only remaining consumer.
+    """
+    if k < 1:
+        return []
+    with open(lock_file, "a+") as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if not queue_file.exists() or queue_file.stat().st_size == 0:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            return []
+        lines = queue_file.read_text().splitlines(keepends=True)
+        claim_idx: list[int] = []
+        for i in range(len(lines) - 1, -1, -1):
+            spec = _parse_spec_line(lines[i])
+            if spec is None:
+                continue
+            if method_filter is not None and spec[0] not in method_filter:
+                continue
+            claim_idx.append(i)
+            if len(claim_idx) >= k:
+                break
+        if not claim_idx:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            return []
+        claim_set = set(claim_idx)
+        remaining = [lines[j] for j in range(len(lines)) if j not in claim_set]
+        claimed = [lines[i].rstrip("\n") for i in claim_idx]
+
+        tmp_path = queue_file.parent / f"{queue_file.name}.tmp"
+        with open(tmp_path, "w") as tmp_fd:
+            tmp_fd.writelines(remaining)
+            tmp_fd.flush()
+            os.fsync(tmp_fd.fileno())
+        os.replace(tmp_path, queue_file)
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    return claimed
 
 
 _FLAG_PATTERNS = {
