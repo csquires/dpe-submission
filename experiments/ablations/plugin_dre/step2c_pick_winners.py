@@ -8,7 +8,7 @@ import os
 
 import yaml
 
-from experiments.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from experiments.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
 
 
 def load_trials(hpo_results_dir: str, method: str, kl_idx: int) -> list[dict]:

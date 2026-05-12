@@ -17,7 +17,7 @@ import random
 
 import yaml
 
-from experiments.dre_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from experiments.ablations.dre_sample_complexity.hpo_search_spaces import SEARCH_SPACES
 
 
 def sample_param(spec):

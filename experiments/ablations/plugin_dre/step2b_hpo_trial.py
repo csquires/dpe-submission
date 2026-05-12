@@ -16,7 +16,7 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from experiments.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
 
 
 def parse_args():

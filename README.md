@@ -44,7 +44,8 @@ export DPE_DATA_ROOT=/path/to/nfs/scratch # only if using HPO
   - `utils/` - shared utilities (i/o, gridworld, pendulum dynamics, etc.).
 
 - `experiments/` - reproducible experiment pipelines, one directory per study.
-  - `dre_sample_complexity/`, `pstar_sample_complexity/`, `plugin_dre/`, `model_selection/`, `elbo_estimation/`, `eig_estimation/`, `mnist/`, `mnist_uncond/`, `dbpedia/`, `occupancy/`, `pendulum/`, plus a few hidden-dim scaling sweeps.
+  - main experiments (at top level): `mnist/`, `mnist_uncond/`, `dbpedia/`, `model_selection/`, `elbo_estimation/`, `eig_estimation/`, `occupancy/`, `pendulum/`.
+  - `ablations/` - secondary studies and analysis tooling: `dre_sample_complexity/`, `pstar_sample_complexity/`, `plugin_dre/`, `dre_hidden_dim_scaling/`, `hidden_dim_scaling/`, `eig_vertex_sweep/`, `analysis/` (cross-experiment aggregation).
   - `utils/hpo/` - the Optuna HPO stack and the per-experiment adapters that drive it (see "HPO" below).
   - `utils/step2_runner/` - distributed post-HPO runner used by some experiments to fan winning hyperparameters across slurm jobs.
 
@@ -184,7 +185,7 @@ nsamples_train: 2048
 nsamples_test: 1024
 ```
 
-**dre_sample_complexity** ([config.yaml](experiments/dre_sample_complexity/config.yaml))
+**dre_sample_complexity** ([config.yaml](experiments/ablations/dre_sample_complexity/config.yaml))
 ```yaml
 nsamples_train_values: [100, 300, 900, 1800, 3600, 5400, 8100]
 ```
@@ -196,7 +197,7 @@ eig_max: 2
 design_eig_percentages: [0.5, 0.6, 0.7, 0.8, 0.9, 0.999]
 ```
 
-**plugin_dre** ([config.yaml](experiments/plugin_dre/config.yaml))
+**plugin_dre** ([config.yaml](experiments/ablations/plugin_dre/config.yaml))
 ```yaml
 grid_size: 50
 tdre_waypoints: [5]

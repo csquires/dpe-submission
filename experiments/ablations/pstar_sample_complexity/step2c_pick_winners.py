@@ -16,7 +16,7 @@ import os
 
 import yaml
 
-from experiments.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from experiments.ablations.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
 
 
 def load_trials(hpo_results_dir: str, method: str, pstar_idx: int) -> list[dict]:

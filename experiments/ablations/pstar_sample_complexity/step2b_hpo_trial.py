@@ -23,7 +23,7 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from experiments.ablations.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
 
 
 def parse_args():

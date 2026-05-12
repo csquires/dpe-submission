@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from experiments.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from experiments.ablations.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
 from experiments.utils.hpo.method_specs import METHOD_SPECS
 
 
