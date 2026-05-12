@@ -3,7 +3,7 @@
 reference: arXiv:2602.24201 (triangular setting).
 """
 
-from typing import Optional
+from typing import Callable, Optional
 import torch
 from torch import Tensor
 
@@ -111,8 +111,30 @@ class TriangularFMDRE(ELDR):
             layernorm=self.layernorm,
         ).to(self.device)
 
-    def fit(self, samples_p0: Tensor, samples_p1: Tensor, samples_pstar: Tensor) -> None:
-        """init model + cfg-based optimizer, scheduler, EMA, time-sampler; delegate to train_loop."""
+    def fit(
+        self,
+        samples_p0: Tensor,
+        samples_p1: Tensor,
+        samples_pstar: Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
+    ) -> None:
+        """init model + cfg-based optimizer, scheduler, EMA, time-sampler; delegate to train_loop.
+
+        Args:
+            samples_p0: [N0, input_dim] samples from p0.
+            samples_p1: [N1, input_dim] samples from p1.
+            samples_pstar: [N*, input_dim] samples from p*.
+            step_cb: optional callback invoked every step_cb_interval steps with
+                (step_index: int, score: float). when None, no instrumentation.
+            eval_data: optional dict with keys "pstar" and "true_ldrs" (paired by
+                index). used to build eval_fn closure only if step_cb is not None.
+                when None, eval_fn is not constructed.
+            step_cb_interval: interval (in minibatch updates) for step_cb invocation
+                (default 50).
+        """
         self.init_model()
         samples_p0 = samples_p0.float().to(self.device)
         samples_p1 = samples_p1.float().to(self.device)
@@ -127,6 +149,23 @@ class TriangularFMDRE(ELDR):
             triangular_p_uncond=self.triangular_p_uncond,
             reweight=self.reweight,
         )
+
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> Tensor:
+                """compute MAE between predict_ldr(pstar_eval) and true_ldrs_eval.
+
+                predict_ldr runs ratio_ode_triangular under the hood; integration
+                cost is controlled by self.integration_steps (a hyperparameter in HPO
+                search space). _model arg is ignored; closure captures self.
+                """
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
 
         train_loop(
             model=self.model,
@@ -143,6 +182,9 @@ class TriangularFMDRE(ELDR):
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
             model_module=self.model,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
         self.model.eval()
 

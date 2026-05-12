@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List
+from typing import List, Callable, Any
+
+from src.methods.common._report import _make_report
 
 
 class MultiHeadBinaryClassifier(nn.Module):
@@ -130,6 +132,10 @@ class MultiHeadBinaryClassifier(nn.Module):
         self,
         xs_per_head: List[torch.Tensor],
         ys_per_head: List[torch.Tensor],
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_fn: Callable[[Any], torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         """train shared backbone + per-head binary classifiers.
 
@@ -147,6 +153,9 @@ class MultiHeadBinaryClassifier(nn.Module):
 
         xs_per_head: list of [n_i, input_dim] tensors
         ys_per_head: list of [n_i, 1] tensors with values in {0, 1}
+        step_cb: optional callback invoked at step_cb_interval multiples (step, score).
+        eval_fn: optional function to compute evaluation score from model.
+        step_cb_interval: interval (in steps) between callback invocations.
         """
         self._reset_parameters()
         self.train()
@@ -157,6 +166,9 @@ class MultiHeadBinaryClassifier(nn.Module):
         n_per_head = [xs.shape[0] for xs in xs_per_head]
         max_n = max(n_per_head)
         bs = self.batch_size if (self.batch_size and self.batch_size < max_n) else max_n
+
+        # construct reporting closure before training loop
+        do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
 
         def _step(xs_list, ys_list, sizes):
             optimizer.zero_grad()
@@ -175,6 +187,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         if bs == max_n:
             for _ in range(self.num_epochs):
                 _step(xs_per_head, ys_per_head, n_per_head)
+                do_report()
         else:
             for _ in range(self.num_epochs):
                 perms = [
@@ -192,6 +205,7 @@ class MultiHeadBinaryClassifier(nn.Module):
                         xs_batch.append(xs_per_head[i][idx])
                         ys_batch.append(ys_per_head[i][idx])
                     _step(xs_batch, ys_batch, [bs] * num_heads)
+                    do_report()
 
         self.eval()
 

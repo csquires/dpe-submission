@@ -1,3 +1,5 @@
+from typing import Callable
+
 import torch
 
 from ...common.base import DRE
@@ -32,12 +34,43 @@ class BDRE(DRE):
         self.device = device
         self.classifier = classifier.to(self.device)
 
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+    def fit(
+        self,
+        samples_p0: torch.Tensor,
+        samples_p1: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
+    ) -> None:
         xs = torch.cat([samples_p0, samples_p1], dim=0)
         p0_labels = torch.ones((samples_p0.shape[0], 1), dtype=torch.float).to(self.device)
         p1_labels = torch.zeros((samples_p1.shape[0], 1), dtype=torch.float).to(self.device)
         ys = torch.cat([p0_labels, p1_labels], dim=0)
-        self.classifier.fit(xs, ys)
+
+        # build eval_fn closure if both step_cb and eval_data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """compute MAE between predict_ldr output and held-out ground truth.
+
+                _model arg is part of the shared contract but ignored here; the closure
+                captures self for access to predict_ldr. returned tensor is a 0-dim scalar.
+                """
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
+        self.classifier.fit(
+            xs,
+            ys,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
+        )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         return self.classifier.predict_logits(xs)

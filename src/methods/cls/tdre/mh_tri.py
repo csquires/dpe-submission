@@ -1,3 +1,5 @@
+from typing import Callable
+
 import torch
 
 from ...common.base import ELDR
@@ -54,13 +56,21 @@ class MultiHeadTriangularTDRE(ELDR):
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         """
         Fit multi-head classifier on waypoint pairs.
 
-        samples_p0: samples from p0, shape [n0, dim]
-        samples_p1: samples from p1, shape [n1, dim]
-        samples_pstar: samples from p*, shape [nstar, dim]
+        args:
+            samples_p0: samples from p0, shape [n0, dim]
+            samples_p1: samples from p1, shape [n1, dim]
+            samples_pstar: samples from p*, shape [nstar, dim]
+            step_cb: optional callback(step, score) invoked at intervals during training
+            eval_data: optional dict with keys "pstar" and "true_ldrs" for evaluation
+            step_cb_interval: number of steps between callback invocations (default: 50)
         """
         # build waypoints: [num_waypoints, batch_size, dim]
         waypoint_samples = self.waypoint_builder.build_waypoints(
@@ -88,8 +98,32 @@ class MultiHeadTriangularTDRE(ELDR):
             xs_per_head.append(xs)
             ys_per_head.append(ys)
 
+        # build uniform predict_ldr MAE eval function if instrumentation is enabled.
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """compute MAE between predict_ldr(pstar_eval) and true_ldrs_eval.
+
+                this is the uniform eval signal: single forward pass on eval pstar,
+                sum logits across heads, measure error against reference LDRs. _model
+                argument is ignored; self.predict_ldr closure-captures self for access
+                to classifier logits.
+                """
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
         # train multi-head classifier
-        self.classifier.fit(xs_per_head, ys_per_head)
+        self.classifier.fit(
+            xs_per_head,
+            ys_per_head,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
+        )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """
