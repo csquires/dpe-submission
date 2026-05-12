@@ -20,7 +20,7 @@ shift 4 2>/dev/null || true
 if [[ "${1:-}" == "--" ]]; then shift; fi
 EXTRA_ARGS="$*"
 
-WORKDIR="${DPE_WORKDIR:-/home/aviamala/dpe-submission}"
+WORKDIR="${DPE_WORKDIR:-$PWD}"
 CONDA_ENV="${DPE_CONDA_ENV:-fac}"
 export DPE_DATA_ROOT="${DPE_DATA_ROOT:-/data/user_data/$USER/dpe-submission}"
 export DPE_CKPT_ROOT="${DPE_CKPT_ROOT:-/scratch/$USER/ckpt/dpe-submission}"

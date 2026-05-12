@@ -17,7 +17,7 @@ set -u
 
 ACK="${1:-}"
 
-WORKDIR="/home/aviamala/dpe-submission"
+WORKDIR="${DPE_WORKDIR:-$PWD}"
 # centralized roots: never let heavy artifacts leak under $HOME.
 export DPE_DATA_ROOT="${DPE_DATA_ROOT:-/data/user_data/$USER/dpe-submission}"
 export DPE_CKPT_ROOT="${DPE_CKPT_ROOT:-/scratch/$USER/ckpt/dpe-submission}"

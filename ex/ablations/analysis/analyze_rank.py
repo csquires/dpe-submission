@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 from pathlib import Path
 
@@ -557,10 +558,13 @@ def main() -> None:
     )
     parser.add_argument("--experiment", required=True, choices=list(EXP_CONFIGS.keys()))
     parser.add_argument(
-        "--data-root", default="/data/user_data/yizhoulu/dpe-submission",
+        "--data-root",
+        default=os.environ.get("DPE_DATA_ROOT"),
+        help="NFS root containing experiment directories "
+             "(default: $DPE_DATA_ROOT)",
     )
     parser.add_argument(
-        "--output-dir", default="ex/analysis/results",
+        "--output-dir", default="ex/ablations/analysis/results",
     )
     parser.add_argument("--methods", nargs="+", default=None)
     parser.add_argument(

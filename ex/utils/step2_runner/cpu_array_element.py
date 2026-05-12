@@ -174,7 +174,7 @@ def main() -> int:
     p.add_argument("--method-filter", default="",
                    help="comma-separated method whitelist (matches METHOD column)")
     p.add_argument("--device", default="cpu", help="device passed to worker")
-    p.add_argument("--workdir", default="/home/aviamala/dpe-submission")
+    p.add_argument("--workdir", default=os.environ.get("DPE_WORKDIR") or os.getcwd())
     p.add_argument("--empty-retries", type=int, default=3)
     p.add_argument("--empty-sleep-seconds", type=int, default=60)
     args = p.parse_args()

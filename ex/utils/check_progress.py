@@ -5,10 +5,14 @@ import os
 import h5py
 import numpy as np
 
+DATA_ROOT = os.environ.get("DPE_DATA_ROOT")
+if not DATA_ROOT:
+    raise SystemExit("DPE_DATA_ROOT must be set")
+
 targets = {"elbo": 1200, "smodice_eldr_estimation": 480}
 
 for exp, target in targets.items():
-    base = f"/data/user_data/yizhoulu/dpe-submission/{exp}/step2_results"
+    base = f"{DATA_ROOT}/{exp}/step2_results"
     print(f"=== {exp} (target: {target} per method) ===")
     print(f"  {'method':<35} {'done':>5}/{'tgt':<5}  {'valid':>5}  {'failed':>6}  {'pct':>5}")
     print(f"  {'-'*35} {'-'*5}  {'-'*5}  {'-'*6}  {'-'*5}")
