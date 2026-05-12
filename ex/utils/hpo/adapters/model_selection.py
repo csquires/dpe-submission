@@ -16,10 +16,10 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.hpo.adapters.base import ExperimentAdapter
 
 _logger = logging.getLogger(__name__)
-_CONFIG_PATH = Path(__file__).resolve().parents[4] / "experiments/model_selection/config.yaml"
+_CONFIG_PATH = Path(__file__).resolve().parents[4] / "ex/synth/model_selection/config.yaml"
 
 
 class ModelSelectionAdapter(ExperimentAdapter):

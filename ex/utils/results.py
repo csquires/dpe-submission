@@ -44,7 +44,7 @@ def process_results_main(config_path: str) -> None:
     to per-alpha mean/std ready for plotting. Writes mae_summary.h5.
 
     Args:
-        config_path: path to config yaml (e.g., 'experiments/<expname>/config.yaml')
+        config_path: path to config yaml (e.g., 'ex/<expname>/config.yaml')
             expected keys: alphas, data_dir, raw_results_dir, processed_results_dir,
             num_pairs_per_alpha, algorithms
     """
@@ -198,7 +198,7 @@ def plot_results_main(config_path: str) -> None:
     Falls back to 'gray' for unknown method colors.
 
     Args:
-        config_path: path to config yaml (e.g., 'experiments/<expname>/config.yaml')
+        config_path: path to config yaml (e.g., 'ex/<expname>/config.yaml')
             expected keys: processed_results_dir, figures_dir
 
     Raises:

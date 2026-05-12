@@ -405,7 +405,7 @@ def build_SmoothedTabularPluginDRE(input_dim: int, device: str | torch.device, n
 
 
 # registry mapping method label -> builder callable. consumed by the optuna
-# worker (experiments.utils.hpo.optuna.worker.run_worker) to resolve a builder
+# worker (ex.utils.hpo.optuna.worker.run_worker) to resolve a builder
 # from METADATA['builder'] in a suggest_hp module.
 BUILDERS_REGISTRY = {
     "TSM": build_TSM,

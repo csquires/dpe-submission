@@ -7,10 +7,10 @@ import numpy as np
 import torch
 from torch.distributions import MultivariateNormal
 
-from experiments.utils.prescribed_eigs import create_prior_eig_range, create_design_eig
+from ex.utils.prescribed_eigs import create_prior_eig_range, create_design_eig
 
 
-config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/synth/eig/config1.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 # dataset parameters

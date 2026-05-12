@@ -1,11 +1,11 @@
 """experiments package init.
 
 guards against the dominant leak vector that fills $HOME on this cluster:
-config yamls with relative paths like "experiments/<exp>/data" that resolve
+config yamls with relative paths like "ex/<exp>/data" that resolve
 under the repo's CWD (which is typically /home/<user>/dpe-submission).
 
 procedure executed once on import (when the user runs
-`python -m experiments.<exp>.<step>` for any step):
+`python -m ex.<exp>.<step>` for any step):
     1. install DPE_DATA_ROOT and DPE_CKPT_ROOT env-var defaults if unset.
     2. monkey-patch yaml.safe_load and yaml.load to recursively
        os.path.expandvars on every string in the parsed structure.

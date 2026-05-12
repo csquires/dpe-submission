@@ -1,6 +1,6 @@
 data_dir: "${DPE_DATA_ROOT}/plugin_dre/data"
-results_dir: "experiments/ablations/plugin_dre/results"
-figures_dir: "experiments/ablations/plugin_dre/figures"
+results_dir: "ex/ablations/plugin_dre/results"
+figures_dir: "ex/ablations/plugin_dre/figures"
 
 data_dim: 2
 kl_divergences: [0.5, 2.0, 4.0, 8.0]

@@ -1,6 +1,6 @@
 """step2_runner adapter for model_selection.
 
-contract (consumed by experiments.utils.step2_runner.{dispatch,worker,gather}):
+contract (consumed by ex.utils.step2_runner.{dispatch,worker,gather}):
 
   load_config(path) -> dict
   list_cells(config) -> Iterable[int]
@@ -26,10 +26,10 @@ import torch
 import yaml
 
 from src.utils.io import _load_config
-# bypass the stale experiments.model_selection.hpo_search_spaces (references
+# bypass the stale ex.synth.model_selection.hpo_search_spaces (references
 # TDRE_5 which is no longer in the registry); use METHOD_SPECS directly. step2
 # only needs the builder + requires_pstar at runtime, not the search range.
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 # -----------------------------------------------------------------------------

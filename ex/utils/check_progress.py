@@ -5,7 +5,7 @@ import os
 import h5py
 import numpy as np
 
-targets = {"elbo_estimation": 1200, "smodice_eldr_estimation": 480}
+targets = {"elbo": 1200, "smodice_eldr_estimation": 480}
 
 for exp, target in targets.items():
     base = f"/data/user_data/yizhoulu/dpe-submission/{exp}/step2_results"

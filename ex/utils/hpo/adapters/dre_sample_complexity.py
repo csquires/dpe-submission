@@ -22,10 +22,10 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.hpo.adapters.base import ExperimentAdapter
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_CONFIG_PATH = _REPO_ROOT / "experiments/ablations/dre_sample_complexity/config.yaml"
+_CONFIG_PATH = _REPO_ROOT / "ex/ablations/dre_sample_complexity/config.yaml"
 
 
 class DreSampleComplexityAdapter(ExperimentAdapter):

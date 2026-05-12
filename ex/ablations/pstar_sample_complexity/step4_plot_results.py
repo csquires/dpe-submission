@@ -17,7 +17,7 @@ import seaborn as sns
 
 
 config = yaml.load(
-    open("experiments/pstar_sample_complexity/config.yaml", "r"),
+    open("ex/pstar_sample_complexity/config.yaml", "r"),
     Loader=yaml.FullLoader,
 )
 

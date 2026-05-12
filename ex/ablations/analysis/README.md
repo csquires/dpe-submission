@@ -63,33 +63,33 @@ source venv/bin/activate
 
 # smodice (automatically picks up BDRE_refined24/, FMDRE_refined24/, etc.)
 ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
+    python -m ex.analysis.analyze \
         --experiment smodice_eldr_estimation \
         --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
+        --output-dir ex/analysis/results"
 
 # elbo
 ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
-        --experiment elbo_estimation \
+    python -m ex.analysis.analyze \
+        --experiment elbo \
         --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
+        --output-dir ex/analysis/results"
 
 # restrict to specific methods
 ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
+    python -m ex.analysis.analyze \
         --experiment smodice_eldr_estimation \
         --methods BDRE FMDRE VFM \
         --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
+        --output-dir ex/analysis/results"
 ```
 
 The script must run on a node with `/data` NFS access (e.g. `babel-w5-16`).
 
 ### Output files
 
-`experiments/analysis/results/<experiment>_analysis.json` (full) and
-`experiments/analysis/results/<experiment>_summary.json` (concise).
+`ex/analysis/results/<experiment>_analysis.json` (full) and
+`ex/analysis/results/<experiment>_summary.json` (concise).
 
 **Summary schema:**
 ```json
@@ -161,14 +161,14 @@ When the same trial appears in multiple sources, the copy with the better
 ```bash
 # Step 1 – combine your own smodice results
 ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.combine \
+    python -m ex.analysis.combine \
         --experiment smodice_eldr_estimation \
         --sources /data/user_data/yizhoulu/dpe-submission \
         --output-root /data/user_data/yizhoulu/dpe-submission"
 
 # Step 2 – merge with aviamala's results
 ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.combine \
+    python -m ex.analysis.combine \
         --experiment smodice_eldr_estimation \
         --sources /data/user_data/yizhoulu/dpe-submission \
                   /data/user_data/aviamala/dpe-submission \
@@ -176,10 +176,10 @@ ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
 
 # Step 3 – run analysis on combined data
 ssh babel-w5-16 "cd ~/dpe-submission && source venv/bin/activate && \
-    python -m experiments.analysis.analyze \
+    python -m ex.analysis.analyze \
         --experiment smodice_eldr_estimation_combined \
         --data-root /data/user_data/yizhoulu/dpe-submission \
-        --output-dir experiments/analysis/results"
+        --output-dir ex/analysis/results"
 ```
 
 ---

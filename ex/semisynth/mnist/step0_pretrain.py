@@ -6,10 +6,10 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from experiments.utils.pretrain import get_device, encode_mnist_with_vae
+from ex.utils.pretrain import get_device, encode_mnist_with_vae
 from src.models.vae import MNISTVAE
 from src.models.flow import ClassCondVelocityMLP, train_class_cond_flow
-from experiments.utils.mnist_imbalance import get_mnist_dataset
+from ex.utils.mnist_imbalance import get_mnist_dataset
 
 
 def train_cond_flow_pipeline(config: dict, device: str, force: bool) -> None:
@@ -103,14 +103,14 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 
 	# load config
-	config = yaml.safe_load(open("experiments/mnist/config.yaml"))
+	config = yaml.safe_load(open("ex/semisynth/mnist/config.yaml"))
 
 	# get device
 	device = get_device(args.device)
 
 	# dispatch
 	if args.mode == "global":
-		from experiments.mnist_uncond.step0_pretrain import train_global_vae
+		from ex.semisynth.mnist_uncond.step0_pretrain import train_global_vae
 
 		train_global_vae(config, device, args.force)
 	else:

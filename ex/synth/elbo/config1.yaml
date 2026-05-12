@@ -1,7 +1,7 @@
-data_dir: "${DPE_DATA_ROOT}/elbo_estimation/data"
-raw_results_dir: "experiments/elbo_estimation/raw_results"
-processed_results_dir: "${DPE_DATA_ROOT}/elbo_estimation/processed_results"
-figures_dir: "experiments/elbo_estimation/figures"
+data_dir: "${DPE_DATA_ROOT}/elbo/data"
+raw_results_dir: "ex/synth/elbo/raw_results"
+processed_results_dir: "${DPE_DATA_ROOT}/elbo/processed_results"
+figures_dir: "ex/synth/elbo/figures"
 data_dim: 3
 eig_min: 0.1
 eig_max: 1.0
@@ -15,4 +15,4 @@ nsamples: 50000
 dataset_filename: "dataset_d=3,n_p0p1=20000,n_pstar=10000.h5"
 device: "cuda"
 seed: 1729
-winners_path: "experiments/elbo_estimation/winners.yaml"
+winners_path: "ex/synth/elbo/winners.yaml"

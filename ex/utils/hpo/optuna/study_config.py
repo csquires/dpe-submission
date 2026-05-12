@@ -78,7 +78,7 @@ class StudyConfig:
             raise ValueError("experiment must be non-empty string")
 
         # validate method names exist in registry
-        from experiments.utils.hpo.suggest_hp import SUGGEST_HP_REGISTRY
+        from ex.utils.hpo.suggest_hp import SUGGEST_HP_REGISTRY
         missing = [m for m in self.methods if m not in SUGGEST_HP_REGISTRY]
         if missing:
             raise ValueError(f"methods {missing} not in SUGGEST_HP_REGISTRY")
@@ -134,7 +134,7 @@ def load_config(module_path: str) -> StudyConfig:
     Validates CONFIG is a StudyConfig instance.
 
     Args:
-        module_path: import path, e.g. 'experiments.configs.hpo.bdre_pilot'
+        module_path: import path, e.g. 'ex.configs.hpo.bdre_pilot'
 
     Returns:
         StudyConfig instance

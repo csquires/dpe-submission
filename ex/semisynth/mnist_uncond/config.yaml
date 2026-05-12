@@ -34,9 +34,9 @@ log_prob_steps: 200
 # Directory Configuration
 ckpt_dir: "${DPE_CKPT_ROOT}/mnist_eldr_estimation/ckpt"
 data_dir: "${DPE_DATA_ROOT}/mnist_eldr_estimation/data"
-raw_results_dir: "experiments/mnist_uncond/raw_results"
-processed_results_dir: "experiments/mnist_uncond/processed_results"
-figures_dir: "experiments/mnist_uncond/figures"
+raw_results_dir: "ex/semisynth/mnist_uncond/raw_results"
+processed_results_dir: "ex/semisynth/mnist_uncond/processed_results"
+figures_dir: "ex/semisynth/mnist_uncond/figures"
 
 # Compute Configuration
 device: "cuda"

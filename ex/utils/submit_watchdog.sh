@@ -74,7 +74,7 @@ JID=$(sbatch --parsable \
     --output="$LOGDIR/watchdog.out" \
     --error="$LOGDIR/watchdog.err" \
     --wrap="source ~/.bashrc && conda activate $CONDA_ENV && cd $WORKDIR && \
-            python -m experiments.utils.watchdog \
+            python -m ex.utils.watchdog \
               --queue-file '$WATCHDOG_QUEUE_FILE' \
               --my-cap $MY_CAP \
               --total-cap $TOTAL_CAP \

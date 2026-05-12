@@ -1,5 +1,5 @@
 # DBpedia ELDR Cond-Flow Experiment Configuration
-# Mirrors experiments/mnist/config.yaml structure.
+# Mirrors ex/semisynth/mnist/config.yaml structure.
 # K=14 classes; SBERT(all-mpnet-base-v2) -> PCA(64) -> ClassCondVelocityMLP.
 
 # Experimental Grid
@@ -39,9 +39,9 @@ log_prob_chunk_size: 250
 ckpt_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/ckpt"
 data_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/data"
 hf_cache_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/data/hf_cache"
-raw_results_dir: "experiments/dbpedia/raw_results"
-processed_results_dir: "experiments/dbpedia/processed_results"
-figures_dir: "experiments/dbpedia/figures"
+raw_results_dir: "ex/semisynth/dbpedia/raw_results"
+processed_results_dir: "ex/semisynth/dbpedia/processed_results"
+figures_dir: "ex/semisynth/dbpedia/figures"
 
 # Compute Configuration
 device: "cuda"
@@ -50,5 +50,5 @@ seed: 1729
 # Hyperparameter Optimization Configuration
 hpo_results_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/hpo_results"
 hpo_configs_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/hpo_configs"
-winners_path: "experiments/dbpedia/winners.yaml"
+winners_path: "ex/semisynth/dbpedia/winners.yaml"
 top_k: 3

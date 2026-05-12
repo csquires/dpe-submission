@@ -7,7 +7,7 @@ for each nsamples_pstar value. Output format is identical to the pre-HPO version
 so step3_process_results.py is unchanged.
 
 Usage:
-  python experiments/pstar_sample_complexity/step2_run_algorithms.py [--method METHOD] [--force]
+  python ex/pstar_sample_complexity/step2_run_algorithms.py [--method METHOD] [--force]
 
   --method: run only this method (default: all)
   --force:  overwrite existing results
@@ -24,7 +24,7 @@ import torch
 from tqdm import tqdm
 import yaml
 
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def parse_args():
@@ -62,7 +62,7 @@ def build_estimator(method: str, pstar_idx: int, winners: dict, config: dict) ->
 
 def main():
     args = parse_args()
-    config = yaml.safe_load(open("experiments/pstar_sample_complexity/config.yaml"))
+    config = yaml.safe_load(open("ex/pstar_sample_complexity/config.yaml"))
 
     device = config["device"]
     data_dir = config["data_dir"]

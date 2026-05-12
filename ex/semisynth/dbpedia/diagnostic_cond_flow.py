@@ -1,6 +1,6 @@
 """diagnostic plots for the dbpedia class-conditional cond_flow model.
 
-mirrors experiments/mnist/diagnostic_cond_flow.py with two
+mirrors ex/semisynth/mnist/diagnostic_cond_flow.py with two
 substitutions forced by the modality:
   - sbert is one-way (no decoder), so the mnist VAE-recon and decoded-grid
     panels are replaced with code-space comparisons.
@@ -15,7 +15,7 @@ produces a single figure `cond_flow_diagnostic.png` with four panels:
   D. per-class NLL on dbpedia test split (encoded via sbert + pca-standardize)
 
 usage:
-  python -m experiments.dbpedia.diagnostic_cond_flow [--config PATH]
+  python -m ex.semisynth.dbpedia.diagnostic_cond_flow [--config PATH]
 """
 import argparse
 import os
@@ -34,13 +34,13 @@ from src.models.flow import (
     sample_class_cond_flow,
     log_prob_class_cond,
 )
-from experiments.utils.dbpedia_imbalance import (
+from ex.utils.dbpedia_imbalance import (
     DBPEDIA_LABEL_NAMES,
     get_dbpedia_dataset,
     subsample_dbpedia,
 )
-from experiments.utils.pca import apply_basis
-from experiments.utils.sbert import encode_corpus
+from ex.utils.pca import apply_basis
+from ex.utils.sbert import encode_corpus
 
 
 K = 14
@@ -49,7 +49,7 @@ K = 14
 def parse_args():
     p = argparse.ArgumentParser(description="dbpedia class-conditional flow diagnostics")
     p.add_argument("--config",
-                   default="experiments/dbpedia/config.yaml",
+                   default="ex/semisynth/dbpedia/config.yaml",
                    help="path to config yaml")
     p.add_argument("--n-real-per-class", type=int, default=200,
                    help="real codes per class for PCA panel A and centroid panel B")

@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from experiments.pendulum.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def _decode(flat_idx: int, config: dict) -> tuple[int, int, int]:
@@ -131,4 +131,4 @@ def gather_dataset_name(method: str, config: dict) -> str:
 
 def gather_output_path(config: dict) -> str:
     return os.path.join(config.get("raw_results_dir",
-        "experiments/pendulum/raw_results"), "results_all_cells.h5")
+        "ex/semisynth/pendulum/raw_results"), "results_all_cells.h5")

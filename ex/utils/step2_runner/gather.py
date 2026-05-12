@@ -14,7 +14,7 @@ arrays along axis 0:
 matches the existing step2 output convention so step3/4 work unchanged.
 
 usage:
-    DPE_DATA_ROOT=... python -m experiments.utils.step2_runner.gather \
+    DPE_DATA_ROOT=... python -m ex.utils.step2_runner.gather \
         --experiment model_selection \
         [--method CTSM]    # default: all methods present
 """
@@ -79,11 +79,11 @@ def main() -> None:
                    help="single method to gather; default: gather all methods present")
     p.add_argument("--config", default=None)
     p.add_argument("--out", default=None,
-                   help="output h5 path (default: experiments/<exp>/raw_results/results.h5)")
+                   help="output h5 path (default: ex/<exp>/raw_results/results.h5)")
     args = p.parse_args()
 
-    adapter = importlib.import_module(f"experiments.{args.experiment}.step2_adapter")
-    config_path = args.config or f"experiments/{args.experiment}/config.yaml"
+    adapter = importlib.import_module(f"ex.{args.experiment}.step2_adapter")
+    config_path = args.config or f"ex/{args.experiment}/config.yaml"
     config = adapter.load_config(config_path)
     n_cells_total = len(list(adapter.list_cells(config)))
 
@@ -102,7 +102,7 @@ def main() -> None:
         if hasattr(adapter, "gather_output_path"):
             out_path = Path(adapter.gather_output_path(config))
         else:
-            out_path = Path(f"experiments/{args.experiment}/raw_results/results.h5")
+            out_path = Path(f"ex/{args.experiment}/raw_results/results.h5")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # adapter may also override the dataset-name template (e.g. elbo writes
@@ -124,7 +124,7 @@ def main() -> None:
             f.create_dataset(ds_name, data=arr)
         print(f"[{method}] {summary}; wrote {ds_name} shape={arr.shape} -> {out_path}")
 
-    # optional adapter post-step (e.g. eig_estimation appends 'true_eigs_arr').
+    # optional adapter post-step (e.g. eig appends 'true_eigs_arr').
     if hasattr(adapter, "gather_postprocess"):
         try:
             adapter.gather_postprocess(config, str(out_path))

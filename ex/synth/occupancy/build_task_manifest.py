@@ -11,7 +11,7 @@ Manifest format (one task per line, space-separated):
   <task_id> <k1_idx> <k2_idx> <seed_offset>
 
 Usage:
-  python experiments/occupancy/build_task_manifest.py
+  python ex/synth/occupancy/build_task_manifest.py
   (prints "wrote N tasks to ..." and SLURM array range)
 """
 
@@ -27,14 +27,14 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="experiments/occupancy/config.yaml",
-        help="Path to config.yaml (default: experiments/occupancy/config.yaml)",
+        default="ex/synth/occupancy/config.yaml",
+        help="Path to config.yaml (default: ex/synth/occupancy/config.yaml)",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="experiments/occupancy/task_manifest.txt",
-        help="Path to output manifest (default: experiments/occupancy/task_manifest.txt)",
+        default="ex/synth/occupancy/task_manifest.txt",
+        help="Path to output manifest (default: ex/synth/occupancy/task_manifest.txt)",
     )
     args = parser.parse_args()
 

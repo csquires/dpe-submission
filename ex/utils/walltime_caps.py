@@ -87,7 +87,7 @@ def cpu_eligible_methods() -> set[str]:
 
     expected 13 entries: 7 MEDIUM + 6 FAST.
     """
-    from experiments.utils.hpo.method_specs import METHOD_SPECS
+    from ex.utils.hpo.method_specs import METHOD_SPECS
     return {m for m in SPEED_CLASS_MAP
             if m in METHOD_SPECS and cpu_eligible(m)}
 

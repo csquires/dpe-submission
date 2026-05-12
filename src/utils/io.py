@@ -49,10 +49,10 @@ def _install_yaml_envvar_patch() -> None:
 	"""
 	idempotently monkey-patch yaml.safe_load and yaml.load to expand env vars.
 
-	belt-and-suspenders for the patch in experiments/__init__.py: any script
+	belt-and-suspenders for the patch in ex/__init__.py: any script
 	that imports from src.utils.io (most step1/step2/hpo_trial scripts do)
 	gets the same protection even when run as `python script.py` rather than
-	`python -m experiments.<exp>.<step>`.
+	`python -m ex.<exp>.<step>`.
 	"""
 	if getattr(yaml, "_dpe_envvar_patched", False):
 		return

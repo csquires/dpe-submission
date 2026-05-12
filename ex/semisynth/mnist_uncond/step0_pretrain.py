@@ -9,13 +9,13 @@ from torch.utils.data import DataLoader, Subset
 
 from src.models.vae import MNISTVAE, train_vae
 from src.models.flow import VelocityMLP, train_flow
-from experiments.utils.mnist_imbalance import (
+from ex.utils.mnist_imbalance import (
     sample_dirichlet_weights,
     subsample_mnist,
     get_mnist_dataset,
     invert_weights,
 )
-from experiments.utils.pretrain import get_device
+from ex.utils.pretrain import get_device
 
 
 def validate_args(args, config=None):
@@ -259,7 +259,7 @@ if __name__ == "__main__":
 
     # load config
     config = yaml.safe_load(
-        open("experiments/mnist_uncond/config.yaml", "r")
+        open("ex/semisynth/mnist_uncond/config.yaml", "r")
     )
 
     # validate arguments

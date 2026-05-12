@@ -7,11 +7,11 @@ import numpy as np
 import torch
 from torch.distributions import MultivariateNormal
 
-from experiments.utils.prescribed_eigs import create_prior_eig_range, create_design_eig
-from experiments.utils.fractional_posterior import get_fractional_posterior
+from ex.utils.prescribed_eigs import create_prior_eig_range, create_design_eig
+from ex.utils.fractional_posterior import get_fractional_posterior
 
 
-config = yaml.load(open('experiments/elbo_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/synth/elbo/config1.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 # dataset parameters

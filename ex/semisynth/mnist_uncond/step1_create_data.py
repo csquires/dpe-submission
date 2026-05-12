@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from src.models.vae import MNISTVAE
 from src.models.flow import VelocityMLP, sample_flow, log_prob
-from experiments.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist, weight_kl
+from ex.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist, weight_kl
 
 
 def compute_log_jacobian(vae_pair, vae_global, z_global, device, chunk_size=500):
@@ -210,7 +210,7 @@ if __name__ == '__main__':
     parser.add_argument('--force', action='store_true', help='force recomputation')
     args = parser.parse_args()
 
-    config_path = 'experiments/mnist_uncond/config.yaml'
+    config_path = 'ex/semisynth/mnist_uncond/config.yaml'
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 

@@ -17,7 +17,7 @@ import random
 
 import yaml
 
-from experiments.ablations.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def sample_param(spec):
@@ -61,7 +61,7 @@ def gen_config(method: str, pstar_idx: int, trial_id: int) -> dict:
 
 
 def main():
-    config = yaml.safe_load(open("experiments/pstar_sample_complexity/config.yaml"))
+    config = yaml.safe_load(open("ex/pstar_sample_complexity/config.yaml"))
     hpo_configs_dir = config["hpo_configs_dir"]
     num_pstar = len(config["nsamples_pstar_values"])
     num_trials = config["hpo_num_trials"]

@@ -22,8 +22,8 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from experiments.ablations.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
-from experiments.utils.hpo.method_specs import METHOD_SPECS
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def _decode(flat_idx: int, config: dict) -> tuple[int, int]:
@@ -134,7 +134,7 @@ def gather_dataset_name(method: str, config: dict) -> str:
 
 
 def gather_output_path(config: dict) -> str:
-    out_dir = config.get("raw_results_dir", "experiments/pstar_sample_complexity/raw_results")
+    out_dir = config.get("raw_results_dir", "ex/pstar_sample_complexity/raw_results")
     # original step2 wrote one h5 per (method, nsamples_pstar); my gather emits one
     # combined file with shape (n_cells, nsamples_test). step3 may need a small
     # update OR a custom gather override that splits into per-pstar h5 files.

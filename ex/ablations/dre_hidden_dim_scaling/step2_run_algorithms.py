@@ -76,7 +76,7 @@ def main():
     args = parser.parse_args()
 
     # === 1.5 VALIDATE CLI ARGUMENTS ===
-    config_path = "experiments/dre_hidden_dim_scaling/config.yaml"
+    config_path = "ex/dre_hidden_dim_scaling/config.yaml"
     config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
 
     try:

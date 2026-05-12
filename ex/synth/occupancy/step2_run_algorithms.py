@@ -361,7 +361,7 @@ def main():
       7. for each method: run_method() with isolated error handling
     """
     args = parse_args()
-    config = load_config("experiments/occupancy/config.yaml")
+    config = load_config("ex/synth/occupancy/config.yaml")
     device = torch.device(config["device"])
 
     np.random.seed(config["seed"])

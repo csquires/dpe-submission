@@ -16,7 +16,7 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from ex.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
 
 
 def parse_args():
@@ -105,7 +105,7 @@ def run_trial(method: str, kl_idx: int, trial_id: int, config: dict, dataset_fil
 
 def main():
     args = parse_args()
-    config = yaml.safe_load(open("experiments/plugin_dre/config.yaml"))
+    config = yaml.safe_load(open("ex/plugin_dre/config.yaml"))
 
     print(f"HPO trial: method={args.method}, kl_idx={args.kl_idx}, trial_id={args.trial_id}")
     print(f"  KL={config['kl_divergences'][args.kl_idx]}, nsamples_train={config['nsamples_train']}")

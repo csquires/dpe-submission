@@ -3,8 +3,8 @@ import abc
 from pathlib import Path
 from typing import Optional, Callable
 import torch
-from experiments.utils.hpo.adapters.eval_split import split_for_eval as _split_for_eval
-from experiments.utils.hpo.adapters.split_utils import stratified_split
+from ex.utils.hpo.adapters.eval_split import split_for_eval as _split_for_eval
+from ex.utils.hpo.adapters.split_utils import stratified_split
 
 
 class ExperimentAdapter(abc.ABC):

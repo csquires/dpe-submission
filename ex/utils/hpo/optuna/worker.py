@@ -18,11 +18,11 @@ import optuna.samplers
 import optuna.exceptions
 
 from pathlib import Path
-from experiments.utils.hpo.optuna.storage import create_or_load
-from experiments.utils.hpo.suggest_hp import get_metadata
-from experiments.utils.hpo.adapters import get_adapter
-from experiments.utils.hpo.optuna.objective import make_objective
-from experiments.utils.hpo.builders import BUILDERS_REGISTRY
+from ex.utils.hpo.optuna.storage import create_or_load
+from ex.utils.hpo.suggest_hp import get_metadata
+from ex.utils.hpo.adapters import get_adapter
+from ex.utils.hpo.optuna.objective import make_objective
+from ex.utils.hpo.builders import BUILDERS_REGISTRY
 
 
 def run_worker(

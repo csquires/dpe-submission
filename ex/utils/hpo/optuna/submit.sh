@@ -1,6 +1,6 @@
 #!/bin/bash
 # submit.sh: thin wrapper that submits a slurm array job, activates conda env,
-# and invokes python -m experiments.utils.hpo.optuna.submit with study config.
+# and invokes python -m ex.utils.hpo.optuna.submit with study config.
 
 set -e -u
 
@@ -57,7 +57,7 @@ sbatch_output=$(sbatch \
 	--mem="${mem}" \
 	--job-name="${job_name}" \
 	--output="logs/optuna_%A_%a.out" \
-	--wrap="source activate fac && python -m experiments.utils.hpo.optuna.submit --config ${config}" \
+	--wrap="source activate fac && python -m ex.utils.hpo.optuna.submit --config ${config}" \
 	2>&1) || { echo "error: sbatch submission failed"; exit 1; }
 
 echo "$sbatch_output"

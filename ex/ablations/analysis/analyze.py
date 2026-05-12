@@ -28,14 +28,14 @@ Primary/secondary pool selection:
 
 Usage:
     cd /home/yizhoulu/dpe-submission
-    python -m experiments.analysis.analyze \\
+    python -m ex.analysis.analyze \\
         --experiment smodice_eldr_estimation \\
         --data-root /data/user_data/yizhoulu/dpe-submission \\
-        --output-dir experiments/analysis/results
+        --output-dir ex/analysis/results
 
     # both experiments
-    for exp in smodice_eldr_estimation elbo_estimation; do
-        python -m experiments.analysis.analyze --experiment $exp
+    for exp in smodice_eldr_estimation elbo; do
+        python -m ex.analysis.analyze --experiment $exp
     done
 """
 from __future__ import annotations
@@ -573,7 +573,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        default="experiments/analysis/results",
+        default="ex/analysis/results",
         help="Directory to write output JSON files (default: %(default)s)",
     )
     parser.add_argument(

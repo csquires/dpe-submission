@@ -13,14 +13,14 @@ from pathlib import Path
 
 import joblib
 
-from experiments.utils.hpo.optuna.study_config import load_config
-from experiments.utils.hpo.optuna.cores_registry import get_cores_for_method
-from experiments.utils.hpo.optuna.storage import (
+from ex.utils.hpo.optuna.study_config import load_config
+from ex.utils.hpo.optuna.cores_registry import get_cores_for_method
+from ex.utils.hpo.optuna.storage import (
     create_or_load,
     cleanup_zombies,
     study_path,
 )
-from experiments.utils.hpo.optuna import worker
+from ex.utils.hpo.optuna import worker
 
 
 # module-level logger and sentinel
@@ -129,10 +129,10 @@ def _run_parallel(
 
 
 def main() -> int:
-    """entrypoint for python -m experiments.utils.hpo.optuna.submit.
+    """entrypoint for python -m ex.utils.hpo.optuna.submit.
 
     cli signature:
-      python -m experiments.utils.hpo.optuna.submit \\
+      python -m ex.utils.hpo.optuna.submit \\
         --config <dotted.module.path> \\
         [--combo-index <int>]
 
@@ -151,7 +151,7 @@ def main() -> int:
     parser.add_argument(
         "--config",
         required=True,
-        help="dotted module path to StudyConfig (e.g., experiments.utils.hpo.optuna.configs.bdre_pilot)",
+        help="dotted module path to StudyConfig (e.g., ex.utils.hpo.optuna.configs.bdre_pilot)",
     )
     parser.add_argument(
         "--combo-index",

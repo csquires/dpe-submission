@@ -38,11 +38,11 @@ from src.utils.pendulum_policies import GaussPolicy, MixPolicy
 from src.utils.pendulum_q import load_or_build_q
 from src.sampling.pendulum_traj import traj_kl_mc
 
-from experiments.pendulum_eldr_estimation.step1_create_data import (
+from ex.pendulum_eldr_estimation.step1_create_data import (
     _build_env_and_q_cfg, _resolve_reward,
 )
-from experiments.utils.alpha_grid import make_alphas
-from experiments.utils.prescribed_kls import hash_pendulum_cfg
+from ex.utils.alpha_grid import make_alphas
+from ex.utils.prescribed_kls import hash_pendulum_cfg
 
 
 def parse_args(args=None):
@@ -50,7 +50,7 @@ def parse_args(args=None):
     p.add_argument("--alpha-idx", type=int, required=True,
                    help="grid index in [0, G_alpha) for this row")
     p.add_argument("--config",
-                   default="experiments/pendulum_eldr_estimation/config.yaml")
+                   default="ex/pendulum_eldr_estimation/config.yaml")
     return p.parse_args(args)
 
 

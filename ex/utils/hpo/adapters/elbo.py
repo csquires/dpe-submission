@@ -7,10 +7,10 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.hpo.adapters.base import ExperimentAdapter
 
 # assumption: config1.yaml is the canonical config (config.yaml does not exist)
-_CONFIG_PATH = Path(__file__).resolve().parents[4] / "experiments/elbo_estimation/config1.yaml"
+_CONFIG_PATH = Path(__file__).resolve().parents[4] / "ex/synth/elbo/config1.yaml"
 
 
 class ELBOAdapter(ExperimentAdapter):
@@ -49,8 +49,8 @@ class ELBOAdapter(ExperimentAdapter):
         self._num_designs_per_setting = cfg["num_designs_per_setting"]
 
     def name(self) -> str:
-        """return "elbo_estimation"."""
-        return "elbo_estimation"
+        """return "elbo"."""
+        return "elbo"
 
     def data_dir(self) -> Path:
         """return Path(config["data_dir"]) with env-var expansion."""

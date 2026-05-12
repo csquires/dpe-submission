@@ -1,4 +1,4 @@
-"""step2_runner adapter for eig_estimation.
+"""step2_runner adapter for eig.
 
 cell axis: row index in design_arr of dataset_d=<D>,nsamples=<N>.h5.
 bucket axis: none — single HP set per (method, exp); per_bucket override unused.
@@ -26,8 +26,8 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from experiments.utils.eig_ldr import joint_and_shuffled
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.eig_ldr import joint_and_shuffled
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def _requires_pstar(method: str) -> bool:
@@ -164,7 +164,7 @@ def gather_dataset_name(method: str, config: dict) -> str:
 
 
 def gather_output_path(config: dict) -> str:
-    out_dir = config.get("raw_results_dir", "experiments/eig_estimation/raw_results")
+    out_dir = config.get("raw_results_dir", "ex/synth/eig/raw_results")
     fname = f"results_d={config['data_dim']},nsamples={config['nsamples']}.h5"
     return os.path.join(out_dir, fname)
 

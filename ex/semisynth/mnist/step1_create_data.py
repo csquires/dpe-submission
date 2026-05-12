@@ -20,7 +20,7 @@ from src.models.flow import (
     sample_class_cond_flow,
     log_prob_class_cond
 )
-from experiments.utils.mnist_imbalance import (
+from ex.utils.mnist_imbalance import (
     sample_dirichlet_weights,
     invert_weights,
     weight_kl,
@@ -233,7 +233,7 @@ def main():
 
     procedure:
         parse CLI args (--alpha-idx, --pair-idx, --force). load config from
-        experiments/mnist/config.yaml. create data directory.
+        ex/semisynth/mnist/config.yaml. create data directory.
         set device and seeds. load VAE and cond_flow on device in eval mode.
         compute or load pstar_latent. load or compute log_p_y. dispatch:
         if both alpha_idx and pair_idx specified, process single pair.
@@ -249,7 +249,7 @@ def main():
     args = parser.parse_args()
 
     # load config
-    config_path = 'experiments/mnist/config.yaml'
+    config_path = 'ex/semisynth/mnist/config.yaml'
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 

@@ -14,8 +14,8 @@ import scipy.stats
 import torch
 import yaml
 
-from experiments.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
-from experiments.utils.diagnostics import (
+from ex.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
+from ex.utils.diagnostics import (
     load_all_pairs, plot_ldr_histograms, plot_pca, plot_kl_scatter,
     plot_ldr_stats, plot_qq, plot_lightweight_figure, compute_hardness,
     print_hardness_table, plot_hardness_figure
@@ -35,7 +35,7 @@ def parse_args(args=None):
     parser.add_argument("--compute-kl", action="store_true",
                         help="heavy mode: load flows, compute latent-space KL")
     parser.add_argument("--config",
-                        default="experiments/mnist_uncond/config.yaml",
+                        default="ex/semisynth/mnist_uncond/config.yaml",
                         help="path to config yaml")
     return parser.parse_args(args)
 
@@ -106,7 +106,7 @@ def compute_ldr_at_points(eval_points, vae_0, vae_1, flow_0, flow_1, vae_global,
         tuple of ([N] log density ratios, dict of flow logprobs)
     """
     from src.models.flow import log_prob
-    from experiments.mnist_uncond.step1_create_data import compute_log_jacobian
+    from ex.semisynth.mnist_uncond.step1_create_data import compute_log_jacobian
 
     batch_enc = 1000
     batch_lp = 500

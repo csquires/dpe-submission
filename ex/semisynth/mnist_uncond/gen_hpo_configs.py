@@ -10,7 +10,7 @@ import math
 import os
 import random
 
-from experiments.mnist_uncond.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def sample_param(spec):

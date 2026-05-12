@@ -12,13 +12,13 @@ import random
 
 import yaml
 
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def _sample_param(spec: tuple):
     """sample a hyperparameter value from a (kind, ...args) spec tuple.
 
-    inlined from the deprecated experiments.utils.hpo.sample module; only the
+    inlined from the deprecated ex.utils.hpo.sample module; only the
     five spec shapes used by METHOD_SPECS search-space declarations are
     supported.
     """
@@ -41,7 +41,7 @@ def _sample_param(spec: tuple):
 def gen_config(registry: dict, method: str, trial_id: int) -> dict:
     """sample a full hyperparameter config for one random-search trial.
 
-    inlined from the deprecated experiments.utils.hpo.sample module. used by
+    inlined from the deprecated ex.utils.hpo.sample module. used by
     the random-search generator below; the new optuna stack does not call
     this function.
     """
@@ -51,7 +51,7 @@ def gen_config(registry: dict, method: str, trial_id: int) -> dict:
 
 
 def main():
-    config = yaml.safe_load(open("experiments/plugin_dre/config.yaml"))
+    config = yaml.safe_load(open("ex/plugin_dre/config.yaml"))
     hpo_configs_dir = config["hpo_configs_dir"]
     num_kls = len(config["kl_divergences"])
     num_trials = config["hpo_num_trials"]

@@ -11,7 +11,7 @@ supports two yaml schemas:
           <bucket_id>: { hyperparams: { ... }, ... }
     provenance: { ... }
 
-  schema B (legacy, used by experiments/<exp>/winners.yaml):
+  schema B (legacy, used by ex/<exp>/winners.yaml):
     <method>:
       <bucket_idx>:
         - hyperparams: { ... }       # top-K list

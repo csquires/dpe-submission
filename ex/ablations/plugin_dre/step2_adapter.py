@@ -4,7 +4,7 @@ cell axis: row index in dataset.h5 (kl_idx * num_instances_per_kl + local_idx).
 bucket axis: f"kl_idx_{kl_idx}".
 per-cell output: shape (num_grid_points,) — predicted ldr at the grid points.
 
-uses experiments.plugin_dre.hpo_search_spaces.SEARCH_SPACES whose builders take
+uses ex.plugin_dre.hpo_search_spaces.SEARCH_SPACES whose builders take
 (input_dim, device, config, **hp); we forward config explicitly.
 """
 from __future__ import annotations
@@ -16,8 +16,8 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from experiments.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
-from experiments.utils.hpo.method_specs import METHOD_SPECS
+from ex.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def load_config(path: str) -> dict:
@@ -117,5 +117,5 @@ def gather_dataset_name(method: str, config: dict) -> str:
 
 
 def gather_output_path(config: dict) -> str:
-    out_dir = config.get("results_dir", "experiments/plugin_dre/results")
+    out_dir = config.get("results_dir", "ex/plugin_dre/results")
     return os.path.join(out_dir, "raw_results.h5")

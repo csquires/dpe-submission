@@ -18,7 +18,7 @@ LEGACY_ALIASES: dict[str, str] = {
 }
 
 
-config = yaml.load(open('experiments/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']

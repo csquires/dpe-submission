@@ -41,7 +41,7 @@ class DefaultWaypointBuilder1D(WaypointBuilder1D):
 
 if __name__ == '__main__':
     from torch.distributions import MultivariateNormal
-    from experiments.utils.two_gaussians_kl import create_two_gaussians_kl
+    from ex.utils.two_gaussians_kl import create_two_gaussians_kl
     
     DIM = 2
     NSAMPLES_TRAIN = 10000

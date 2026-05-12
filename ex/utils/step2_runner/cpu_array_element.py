@@ -11,12 +11,12 @@ watchdog would have eval'd; we discard the sbatch wrapper and extract the
 worker invocation:
     --experiment, --method, --cell-indices, --winners, --output-dir, [--config]
 
-then exec it directly on cpu via `python -m experiments.utils.step2_runner.worker`
+then exec it directly on cpu via `python -m ex.utils.step2_runner.worker`
 with --device cpu. each worker call is idempotent (skips cells with existing
 results), so a duplicate claim is safe.
 
 usage (slurm array element):
-  python -m experiments.utils.step2_runner.cpu_array_element \\
+  python -m ex.utils.step2_runner.cpu_array_element \\
       --queue-file <queue> --lock-file <lock> \\
       --n-per-element K [--method-filter CTSM,BDRE,...] \\
       [--device cpu]
@@ -60,7 +60,7 @@ def pop_lines_back_atomic(queue_file: Path, lock_file: Path, k: int,
                           method_filter: Optional[set[str]] = None) -> list[str]:
     """flock-protected pop of up to k valid lines from the END of queue_file.
 
-    inlined from the deprecated experiments.utils.watchdog module since the
+    inlined from the deprecated ex.utils.watchdog module since the
     step2 runner is the only remaining consumer.
     """
     if k < 1:
@@ -140,7 +140,7 @@ def parse_queue_line(line: str) -> dict | None:
 def run_one(parsed: dict, device: str, workdir: str) -> tuple[bool, float]:
     """run one worker invocation as a subprocess. returns (ok, elapsed_seconds)."""
     cmd = [
-        sys.executable, "-m", "experiments.utils.step2_runner.worker",
+        sys.executable, "-m", "ex.utils.step2_runner.worker",
         "--experiment", parsed["experiment"],
         "--method", parsed["method"],
         "--cell-indices", parsed["cell_indices"],

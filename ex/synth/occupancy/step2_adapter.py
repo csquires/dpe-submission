@@ -36,7 +36,7 @@ import torch
 import yaml
 
 from src.utils.io import _load_config
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 from src.sampling.frozen_flow import FrozenFlow
 
 

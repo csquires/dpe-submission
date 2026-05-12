@@ -21,7 +21,7 @@ from src.methods.reg.tsm import TSM
 from src.methods.cls.mdre.tri import TriangularMDRE
 from src.methods.cls.tdre.tri import TriangularTDRE
 from src.methods.cls.tdre.mh_tri import MultiHeadTriangularTDRE
-from experiments.utils.eig_ldr import joint_and_shuffled
+from ex.utils.eig_ldr import joint_and_shuffled
 
 
 # triangular methods accept a third positional pstar arg at fit; reuse joint.
@@ -86,7 +86,7 @@ def main():
     args = parser.parse_args()
 
     # === 1.5 VALIDATE CLI ARGUMENTS ===
-    config_path = "experiments/ablations/hidden_dim_scaling/config.yaml"
+    config_path = "ex/ablations/hidden_dim_scaling/config.yaml"
     config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
 
     try:

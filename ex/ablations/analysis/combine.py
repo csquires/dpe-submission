@@ -18,12 +18,12 @@ Also writes <exp>_combined/overlap_report.json describing:
 Usage:
     cd /home/yizhoulu/dpe-submission
     # single source (just re-layout your own data into *_combined/)
-    python -m experiments.analysis.combine \\
+    python -m ex.analysis.combine \\
         --experiment smodice_eldr_estimation \\
         --sources /data/user_data/yizhoulu/dpe-submission
 
     # merge two sources
-    python -m experiments.analysis.combine \\
+    python -m ex.analysis.combine \\
         --experiment smodice_eldr_estimation \\
         --sources /data/user_data/yizhoulu/dpe-submission \\
                   /data/user_data/yizhoulu/dpe-submission/mnist_eldr_estimation_avi \\
@@ -197,7 +197,7 @@ def combine_experiment(
     print(f"Combined dir   : {combined_dir}")
     print(
         "\nTo run analysis on the combined data:\n"
-        f"  python -m experiments.analysis.analyze "
+        f"  python -m ex.analysis.analyze "
         f"--experiment {experiment}_combined "
         f"--data-root {output_root}"
     )

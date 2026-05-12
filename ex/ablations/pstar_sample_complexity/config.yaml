@@ -1,11 +1,11 @@
 # directory configuration
-data_dir: "experiments/ablations/pstar_sample_complexity/data"
-raw_results_dir: "experiments/ablations/pstar_sample_complexity/raw_results"
-processed_results_dir: "experiments/ablations/pstar_sample_complexity/processed_results"
-figures_dir: "experiments/ablations/pstar_sample_complexity/figures"
-hpo_configs_dir: "experiments/ablations/pstar_sample_complexity/hpo_configs"
-hpo_results_dir: "experiments/ablations/pstar_sample_complexity/hpo_results"
-hpo_summary_dir: "experiments/ablations/pstar_sample_complexity/hpo_summary"
+data_dir: "ex/ablations/pstar_sample_complexity/data"
+raw_results_dir: "ex/ablations/pstar_sample_complexity/raw_results"
+processed_results_dir: "ex/ablations/pstar_sample_complexity/processed_results"
+figures_dir: "ex/ablations/pstar_sample_complexity/figures"
+hpo_configs_dir: "ex/ablations/pstar_sample_complexity/hpo_configs"
+hpo_results_dir: "ex/ablations/pstar_sample_complexity/hpo_results"
+hpo_summary_dir: "ex/ablations/pstar_sample_complexity/hpo_summary"
 
 # data generation
 data_dim: 3

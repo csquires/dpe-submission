@@ -20,7 +20,7 @@ from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 
-config = yaml.load(open('experiments/elbo_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/synth/elbo/config1.yaml', 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
 # directories
 DATA_DIR = config['data_dir']

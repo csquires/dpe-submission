@@ -8,7 +8,7 @@ from typing import Callable, Optional
 import numpy as np
 import optuna
 
-from experiments.utils.hpo.suggest_hp import get_metadata, suggest_hp
+from ex.utils.hpo.suggest_hp import get_metadata, suggest_hp
 
 
 def stratified_pick(

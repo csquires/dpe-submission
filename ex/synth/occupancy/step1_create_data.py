@@ -10,7 +10,7 @@ from typing import Optional, Dict, Tuple, Any
 
 from src.utils.gridworld import build_gridworld, reward_to_goal, value_iteration, softmax_policy
 from src.utils.occupancy import bellman_occupancy, kl_occupancy, mixture_policy
-from experiments.utils.prescribed_kls import load_or_build_grid, prescribe
+from ex.utils.prescribed_kls import load_or_build_grid, prescribe
 from src.sampling.tabular import (
     sample_occupancy, encode_sa,
     pointwise_discrete_ldr, pointwise_smoothed_ldr,
@@ -350,7 +350,7 @@ def main():
     args = parser.parse_args()
 
     # load config
-    config_path = "experiments/occupancy/config.yaml"
+    config_path = "ex/synth/occupancy/config.yaml"
     config = _load_config(config_path)
 
     # dispatch: single cell, all cells, or smoke test

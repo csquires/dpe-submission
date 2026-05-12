@@ -1,12 +1,12 @@
 """sbatch the cpu array job that drains the step2 queue from the back.
 
 submits one slurm array job to the array partition. each element invokes
-experiments.utils.step2_runner.cpu_array_element to claim K queue lines via
+ex.utils.step2_runner.cpu_array_element to claim K queue lines via
 flock-back-pop and run them inline on cpu. concurrency capped via %N to
 respect the array_qos MaxJobsPU limit.
 
 usage:
-  python -m experiments.utils.step2_runner.cpu_dispatcher \\
+  python -m ex.utils.step2_runner.cpu_dispatcher \\
       --queue-file <path> --lock-file <path> \\
       --array-size N --concurrency 100 \\
       --n-per-element K --walltime HH:MM:SS \\
@@ -35,7 +35,7 @@ def _build_wrap(queue_file: Path, lock_file: Path, n_per_element: int,
                 method_filter: str, device: str) -> str:
     """build --wrap string for the array element."""
     args = [
-        "python", "-m", "experiments.utils.step2_runner.cpu_array_element",
+        "python", "-m", "ex.utils.step2_runner.cpu_array_element",
         "--queue-file", str(queue_file),
         "--lock-file", str(lock_file),
         "--n-per-element", str(n_per_element),

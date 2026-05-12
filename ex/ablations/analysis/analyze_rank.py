@@ -560,7 +560,7 @@ def main() -> None:
         "--data-root", default="/data/user_data/yizhoulu/dpe-submission",
     )
     parser.add_argument(
-        "--output-dir", default="experiments/analysis/results",
+        "--output-dir", default="ex/analysis/results",
     )
     parser.add_argument("--methods", nargs="+", default=None)
     parser.add_argument(

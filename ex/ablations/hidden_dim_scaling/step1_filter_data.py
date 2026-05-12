@@ -1,11 +1,11 @@
 """
 Filter density ratio estimation data to select rows with specific EIG percentage.
 
-Loads data from eig_estimation experiment (600 rows, 6 datasets) and filters to
+Loads data from eig experiment (600 rows, 6 datasets) and filters to
 rows where design_eig_percentage == target value, writing filtered subset to output file.
 
 Algorithm:
-1. Load config from experiments/ablations/hidden_dim_scaling/config.yaml
+1. Load config from ex/ablations/hidden_dim_scaling/config.yaml
 2. Validate source file exists
 3. Load all 6 datasets from source HDF5
 4. Identify rows matching target EIG percentage using numpy.isclose()
@@ -23,7 +23,7 @@ import yaml
 
 def main():
     # step 1: load configuration
-    config_path = "experiments/ablations/hidden_dim_scaling/config.yaml"
+    config_path = "ex/ablations/hidden_dim_scaling/config.yaml"
     with open(config_path, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 

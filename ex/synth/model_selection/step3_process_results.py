@@ -8,7 +8,7 @@ from scipy import stats
 from src.utils.io import _load_config
 
 
-config = _load_config('experiments/model_selection/config.yaml')
+config = _load_config('ex/synth/model_selection/config.yaml')
 
 # directories
 DATA_DIR = config['data_dir']

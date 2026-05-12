@@ -3,7 +3,7 @@
 invocation:
 
     DPE_DATA_ROOT=... DPE_CKPT_ROOT=... \
-    python -m experiments.utils.step2_runner.dispatch \
+    python -m ex.utils.step2_runner.dispatch \
         --experiment model_selection \
         --winners scratch/200broad/winners_pinned/winners.model_selection.uniform_200broad.yaml \
         --max-cells-per-job 20 \
@@ -25,7 +25,7 @@ import json
 import os
 from pathlib import Path
 
-from experiments.utils.step2_runner.load_winners import load_winners, list_methods
+from ex.utils.step2_runner.load_winners import load_winners, list_methods
 
 WORKDIR = os.environ.get("DPE_WORKDIR", "/home/aviamala/dpe-submission")
 CONDA_ENV = os.environ.get("DPE_CONDA_ENV", "fac")
@@ -56,7 +56,7 @@ def queue_line(experiment: str, method: str, cell_chunk: list[int],
     wrap = (
         f"set +u && source ~/.bashrc && conda activate {CONDA_ENV} && set -u && "
         f"export HDF5_USE_FILE_LOCKING=FALSE && cd {WORKDIR} && "
-        "python -m experiments.utils.step2_runner.worker "
+        "python -m ex.utils.step2_runner.worker "
         f"--experiment {experiment} --method {method} "
         f"--cell-indices '{cell_str}' "
         f"--winners {winners} --output-dir {output_dir} {cfg_arg}"
@@ -77,7 +77,7 @@ def main() -> None:
     p.add_argument("--methods", default=None,
                    help="comma-separated method whitelist (default: all in winners)")
     p.add_argument("--config", default=None,
-                   help="experiment config.yaml (default: experiments/<exp>/config.yaml)")
+                   help="experiment config.yaml (default: ex/<exp>/config.yaml)")
     p.add_argument("--out", default=None,
                    help="queue file path (default: $DPE_DATA_ROOT/step2_<exp>_queue.txt)")
     p.add_argument("--skip-existing", action="store_true", default=True,
@@ -85,8 +85,8 @@ def main() -> None:
     args = p.parse_args()
 
     # adapter + config
-    adapter = importlib.import_module(f"experiments.{args.experiment}.step2_adapter")
-    config_path = args.config or f"experiments/{args.experiment}/config.yaml"
+    adapter = importlib.import_module(f"ex.{args.experiment}.step2_adapter")
+    config_path = args.config or f"ex/{args.experiment}/config.yaml"
     config = adapter.load_config(config_path)
 
     # cells

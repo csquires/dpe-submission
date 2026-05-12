@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, Subset
 
 from src.models.vae import MNISTVAE
 from src.models.flow import VelocityMLP, sample_flow
-from experiments.utils.mnist_imbalance import (
+from ex.utils.mnist_imbalance import (
     sample_dirichlet_weights,
     subsample_mnist,
     get_mnist_dataset,
@@ -86,7 +86,7 @@ def img_grid(tensors, nrow):
 
 def main():
     config = yaml.safe_load(
-        open("experiments/mnist_uncond/config.yaml")
+        open("ex/semisynth/mnist_uncond/config.yaml")
     )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

@@ -4,16 +4,16 @@ adapter factory: registry and factory functions.
 minimal factory pattern. resolves experiment names to adapter classes
 and instantiates fresh adapters on demand (no caching).
 """
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
-from experiments.utils.hpo.adapters.mnist import MnistAdapter
-from experiments.utils.hpo.adapters.mnist_uncond import MnistUncondAdapter
-from experiments.utils.hpo.adapters.dbpedia import DbpediaAdapter
-from experiments.utils.hpo.adapters.pendulum import PendulumAdapter
-from experiments.utils.hpo.adapters.model_selection import ModelSelectionAdapter
-from experiments.utils.hpo.adapters.eig_estimation import EIGAdapter
-from experiments.utils.hpo.adapters.elbo_estimation import ELBOAdapter
-from experiments.utils.hpo.adapters.occupancy import OccupancyAdapter
-from experiments.utils.hpo.adapters.dre_sample_complexity import DreSampleComplexityAdapter
+from ex.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.hpo.adapters.mnist import MnistAdapter
+from ex.utils.hpo.adapters.mnist_uncond import MnistUncondAdapter
+from ex.utils.hpo.adapters.dbpedia import DbpediaAdapter
+from ex.utils.hpo.adapters.pendulum import PendulumAdapter
+from ex.utils.hpo.adapters.model_selection import ModelSelectionAdapter
+from ex.utils.hpo.adapters.eig import EIGAdapter
+from ex.utils.hpo.adapters.elbo import ELBOAdapter
+from ex.utils.hpo.adapters.occupancy import OccupancyAdapter
+from ex.utils.hpo.adapters.dre_sample_complexity import DreSampleComplexityAdapter
 
 
 
@@ -27,8 +27,8 @@ _ADAPTERS: dict[str, type[ExperimentAdapter]] = {
     "occupancy": OccupancyAdapter,
     # unrelated, no rename
     "model_selection": ModelSelectionAdapter,
-    "eig_estimation": EIGAdapter,
-    "elbo_estimation": ELBOAdapter,
+    "eig": EIGAdapter,
+    "elbo": ELBOAdapter,
     "dre_sample_complexity": DreSampleComplexityAdapter,
 }
 

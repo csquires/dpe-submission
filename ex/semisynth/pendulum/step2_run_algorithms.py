@@ -316,7 +316,7 @@ def main():
 
     workflow:
       1. parse CLI arguments
-      2. load config from experiments/pendulum/config.yaml
+      2. load config from ex/semisynth/pendulum/config.yaml
       3. set global seeds from config["seed"]
       4. validate input HDF5 exists
       5. create output directory
@@ -326,7 +326,7 @@ def main():
       9. print completion message
     """
     args = parse_args()
-    config = _load_config("experiments/pendulum/config.yaml")
+    config = _load_config("ex/semisynth/pendulum/config.yaml")
 
     device = torch.device(config["device"])
 

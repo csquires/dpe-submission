@@ -3,9 +3,9 @@
 cell axis: flat int over (alpha_idx, pair_idx). 4 alphas x 40 pairs = 160 cells.
 bucket axis: f"alpha_idx_{alpha_idx}". input_dim: config['latent_dim'].
 """
-from experiments.utils.step2_runner.adapter_base import make_adapter_module
-from experiments.utils.step2_runner.adapter_specs import MNIST_UNCOND
-from experiments.mnist_uncond.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.step2_runner.adapter_base import make_adapter_module
+from ex.utils.step2_runner.adapter_specs import MNIST_UNCOND
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 _module = make_adapter_module(MNIST_UNCOND, SEARCH_SPACES)
 

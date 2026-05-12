@@ -16,7 +16,7 @@ import torch
 from tqdm import tqdm
 import yaml
 
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def parse_args():
@@ -52,7 +52,7 @@ def build_estimator(method: str, kl_idx: int, winners: dict, config: dict):
 
 def main():
     args = parse_args()
-    config = yaml.safe_load(open("experiments/plugin_dre/config.yaml"))
+    config = yaml.safe_load(open("ex/plugin_dre/config.yaml"))
 
     device = config["device"]
     data_dir = config["data_dir"]

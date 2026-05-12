@@ -19,7 +19,7 @@ import seaborn as sns
 
 # 1. Configuration Loading
 
-config = yaml.load(open('experiments/ablations/hidden_dim_scaling/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/ablations/hidden_dim_scaling/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']

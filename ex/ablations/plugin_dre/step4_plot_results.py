@@ -19,10 +19,10 @@ from torch.distributions import MultivariateNormal
 import yaml
 import seaborn as sns
 
-from experiments.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from ex.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
 
 
-config = yaml.load(open('experiments/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 RESULTS_DIR = config['results_dir']

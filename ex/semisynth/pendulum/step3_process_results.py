@@ -41,7 +41,7 @@ def parse_args():
     returns: Namespace with config path
     """
     parser = argparse.ArgumentParser(description='process pendulum eldr estimation results')
-    parser.add_argument('--config', default='experiments/pendulum/config.yaml',
+    parser.add_argument('--config', default='ex/semisynth/pendulum/config.yaml',
                        help='path to config yaml')
     return parser.parse_args()
 

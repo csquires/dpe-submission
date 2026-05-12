@@ -9,7 +9,7 @@ import pandas as pd
 import optuna
 
 from . import probe
-from experiments.utils.hpo import suggest_hp
+from ex.utils.hpo import suggest_hp
 
 logger = logging.getLogger(__name__)
 

@@ -23,9 +23,9 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.hpo.adapters.base import ExperimentAdapter
 
-_CONFIG_PATH = Path(__file__).resolve().parents[4] / "experiments/pendulum/config.yaml"
+_CONFIG_PATH = Path(__file__).resolve().parents[4] / "ex/semisynth/pendulum/config.yaml"
 
 
 class PendulumAdapter(ExperimentAdapter):

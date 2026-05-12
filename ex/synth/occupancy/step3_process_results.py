@@ -6,9 +6,9 @@ of pointwise LDR MAE and integrated ELDR error for each method.
 
 Methods are taken from the winners YAML (not config['algorithms'], which is stale).
 Gather must be run first:
-    python -m experiments.utils.step2_runner.gather \
+    python -m ex.utils.step2_runner.gather \
         --experiment smodice_eldr_estimation \
-        --config experiments/occupancy/config.yaml
+        --config ex/synth/occupancy/config.yaml
 """
 
 import os
@@ -32,7 +32,7 @@ def agg_metric(vals):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="experiments/occupancy/config.yaml")
+    parser.add_argument("--config", default="ex/synth/occupancy/config.yaml")
     parser.add_argument(
         "--winners",
         default="scratch/gold_winners/winners.smodice_eldr_estimation.yaml",
@@ -72,9 +72,9 @@ def main():
         raise FileNotFoundError(
             f"Gather output not found: {gather_path}\n"
             "Run gather first:\n"
-            "  python -m experiments.utils.step2_runner.gather \\\n"
+            "  python -m ex.utils.step2_runner.gather \\\n"
             "      --experiment smodice_eldr_estimation \\\n"
-            "      --config experiments/occupancy/config.yaml"
+            "      --config ex/synth/occupancy/config.yaml"
         )
 
     # method list from winners yaml

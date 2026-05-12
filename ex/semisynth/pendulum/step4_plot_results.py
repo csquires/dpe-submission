@@ -34,12 +34,12 @@ def parse_args() -> argparse.Namespace:
     Parse command-line arguments.
 
     Returns argparse.Namespace with:
-      - config: path to config.yaml (default 'experiments/pendulum/config.yaml')
+      - config: path to config.yaml (default 'ex/semisynth/pendulum/config.yaml')
     """
     parser = argparse.ArgumentParser(description='plot pendulum eldr estimation results')
     parser.add_argument(
         '--config',
-        default='experiments/pendulum/config.yaml',
+        default='ex/semisynth/pendulum/config.yaml',
         help='path to config yaml',
     )
     return parser.parse_args()

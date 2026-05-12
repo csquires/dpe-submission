@@ -1,4 +1,4 @@
-"""shared lightweight diagnostics for 2-d (k1, k2) prescribed-kl experiments.
+"""shared lightweight diagnostics for 2-d (k1, k2) prescribed-kl ex.
 
 both pendulum and smodice prescribe (k1, k2) targets via inversion of a 2-d
 KL grid (KL1[alpha], KL2[alpha, beta]). both store per-cell HDF5s with

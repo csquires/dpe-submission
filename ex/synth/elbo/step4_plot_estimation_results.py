@@ -52,8 +52,8 @@ FONT_SIZE = 11
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--config",  default="experiments/elbo_estimation/config1.yaml")
-    p.add_argument("--winners", default="scratch/gold_winners/winners.elbo_estimation.yaml")
+    p.add_argument("--config",  default="ex/synth/elbo/config1.yaml")
+    p.add_argument("--winners", default="scratch/gold_winners/winners.elbo.yaml")
     return p.parse_args()
 
 

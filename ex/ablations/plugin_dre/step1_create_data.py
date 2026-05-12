@@ -13,10 +13,10 @@ import torch
 from torch.distributions import MultivariateNormal
 from tqdm import tqdm
 
-from experiments.utils.prescribed_kls import create_two_gaussians_kl
+from ex.utils.prescribed_kls import create_two_gaussians_kl
 
 
-config = yaml.load(open('experiments/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # directories
 DATA_DIR = config['data_dir']

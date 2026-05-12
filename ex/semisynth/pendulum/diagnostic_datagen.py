@@ -30,12 +30,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from experiments.pendulum.step1_create_data import (
+from ex.semisynth.pendulum.step1_create_data import (
     _build_env_and_q_cfg,
     _resolve_reward,
 )
-from experiments.utils.alpha_grid import make_alphas
-from experiments.utils.diagnostic_kl_grid import (
+from ex.utils.alpha_grid import make_alphas
+from ex.utils.diagnostic_kl_grid import (
     collect_cells,
     compute_hardness,
     load_kl_grid,
@@ -47,7 +47,7 @@ from experiments.utils.diagnostic_kl_grid import (
     plot_prescribed_vs_realized,
     print_hardness_table,
 )
-from experiments.utils.prescribed_kls import hash_pendulum_cfg
+from ex.utils.prescribed_kls import hash_pendulum_cfg
 
 
 KEY_MAP = {
@@ -64,7 +64,7 @@ KEY_MAP = {
 def parse_args(args=None):
     p = argparse.ArgumentParser()
     p.add_argument("--config",
-                   default="experiments/pendulum/config.yaml")
+                   default="ex/semisynth/pendulum/config.yaml")
     p.add_argument("--show-grid", action="store_true",
                    help="plot the cached traj_kl grid (no per-cell HDF5 needed)")
     return p.parse_args(args)
@@ -101,7 +101,7 @@ def find_grid_cache(config: Dict[str, Any]) -> str:
     if not path.exists():
         raise FileNotFoundError(
             f"no cached grid at {path}. run "
-            f"`python -m experiments.pendulum.step1_create_data --smoke` "
+            f"`python -m ex.semisynth.pendulum.step1_create_data --smoke` "
             f"to build it first."
         )
     return str(path)

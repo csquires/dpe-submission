@@ -57,7 +57,7 @@ JID=$(sbatch --parsable \
     --error="$LOGDIR/watchdog.err" \
     --wrap="export DPE_WAVE3='${DPE_WAVE3:-}' DPE_DATA_ROOT='$DPE_DATA_ROOT' DPE_CKPT_ROOT='$DPE_CKPT_ROOT' && \
             source ~/.bashrc && conda activate $CONDA_ENV && cd $WORKDIR && \
-            python -m experiments.utils.watchdog_lite \
+            python -m ex.utils.watchdog_lite \
               --queue-file '$WATCHDOG_QUEUE_FILE' \
               --my-cap $MY_CAP \
               --total-cap $TOTAL_CAP \

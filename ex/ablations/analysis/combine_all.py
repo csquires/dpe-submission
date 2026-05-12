@@ -13,7 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 
 BASE = Path("/data/user_data/yizhoulu/dpe-submission")
-REPORT_PATH = Path("/home/yizhoulu/dpe-submission/experiments/analysis/results/combine_all_report.json")
+REPORT_PATH = Path("/home/yizhoulu/dpe-submission/ex/analysis/results/combine_all_report.json")
 
 # Methods to exclude from model_selection_avi (variant-specific suffixes)
 _VARIANT_SUFFIX_RE = re.compile(
@@ -284,7 +284,7 @@ report["pstar_sample_complexity_combined"] = r
 
 # 9. elbo_estimation_combined
 print("\n=== elbo_estimation_combined ===")
-r = copy_standard(BASE / "elbo_estimation", BASE / "elbo_estimation_combined")
+r = copy_standard(BASE / "elbo", BASE / "elbo_estimation_combined")
 report["elbo_estimation_combined"] = r
 
 # 10. model_selection_combined  (exclude variant-suffix methods)

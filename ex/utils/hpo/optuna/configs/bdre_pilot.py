@@ -3,7 +3,7 @@
 Validates Optuna integration end-to-end before rolling out further.
 """
 
-from experiments.utils.hpo.optuna.study_config import StudyConfig
+from ex.utils.hpo.optuna.study_config import StudyConfig
 
 
 CONFIG = StudyConfig(

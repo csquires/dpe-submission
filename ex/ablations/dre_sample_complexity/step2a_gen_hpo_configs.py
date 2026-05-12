@@ -17,7 +17,7 @@ import random
 
 import yaml
 
-from experiments.ablations.dre_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def sample_param(spec):
@@ -61,7 +61,7 @@ def gen_config(method: str, kl_idx: int, trial_id: int) -> dict:
 
 
 def main():
-    config = yaml.safe_load(open("experiments/dre_sample_complexity/config.yaml"))
+    config = yaml.safe_load(open("ex/dre_sample_complexity/config.yaml"))
     hpo_configs_dir = config["hpo_configs_dir"]
     num_kls = len(config["kl_divergences"])
     num_trials = config["hpo_num_trials"]

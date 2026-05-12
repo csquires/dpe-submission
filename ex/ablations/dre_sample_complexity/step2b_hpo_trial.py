@@ -8,7 +8,7 @@ and writes the result to hpo_results/.
 Designed to be called as an array task on Babel — see slurm/run_hpo_trial.sh.
 
 Usage:
-  python experiments/dre_sample_complexity/step2b_hpo_trial.py \
+  python ex/dre_sample_complexity/step2b_hpo_trial.py \
       --method TSM --kl-idx 0 --trial-id 3
 """
 
@@ -23,7 +23,7 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.ablations.dre_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def parse_args():
@@ -135,7 +135,7 @@ def run_trial(
 
 def main():
     args = parse_args()
-    config = yaml.safe_load(open("experiments/dre_sample_complexity/config.yaml"))
+    config = yaml.safe_load(open("ex/dre_sample_complexity/config.yaml"))
 
     print(f"HPO trial: method={args.method}, kl_idx={args.kl_idx}, trial_id={args.trial_id}")
     print(f"  KL={config['kl_divergences'][args.kl_idx]}, nsamples_train={config['hpo_nsamples_train']}")

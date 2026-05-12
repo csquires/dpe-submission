@@ -7,7 +7,7 @@ from pathlib import Path
 from collections import defaultdict
 
 
-config = yaml.load(open('experiments/pstar_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/pstar_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # extract directory paths
 DATA_DIR = config['data_dir']

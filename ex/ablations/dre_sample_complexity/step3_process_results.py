@@ -6,7 +6,7 @@ from scipy import stats
 import yaml
 
 
-config = yaml.load(open('experiments/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # directories
 DATA_DIR = config['data_dir']

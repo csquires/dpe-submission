@@ -1,7 +1,7 @@
-data_dir: "${DPE_DATA_ROOT}/eig_estimation/data"
-raw_results_dir: "experiments/eig_estimation/raw_results"
-processed_results_dir: "experiments/eig_estimation/processed_results"
-figures_dir: "experiments/eig_estimation/figures"
+data_dir: "${DPE_DATA_ROOT}/eig/data"
+raw_results_dir: "ex/synth/eig/raw_results"
+processed_results_dir: "ex/synth/eig/processed_results"
+figures_dir: "ex/synth/eig/figures"
 data_dim: 3
 eig_min: 0.5
 eig_max: 2

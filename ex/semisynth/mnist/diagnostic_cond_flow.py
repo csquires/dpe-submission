@@ -6,7 +6,7 @@ produces a single figure `cond_flow_diagnostic.png` with four panels:
   C. PCA of cond-flow latent samples colored by class y
   D. per-class NLL on the MNIST test set (classes of poor fit stand out)
 
-usage: python -m experiments.mnist.diagnostic_cond_flow [--config PATH]
+usage: python -m ex.semisynth.mnist.diagnostic_cond_flow [--config PATH]
 """
 import argparse
 import os
@@ -27,13 +27,13 @@ from src.models.flow import (
     sample_class_cond_flow,
     log_prob_class_cond,
 )
-from experiments.utils.mnist_imbalance import get_mnist_dataset
+from ex.utils.mnist_imbalance import get_mnist_dataset
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="class-conditional flow diagnostics")
     p.add_argument("--config",
-                   default="experiments/mnist/config.yaml",
+                   default="ex/semisynth/mnist/config.yaml",
                    help="path to config yaml")
     p.add_argument("--n-recon", type=int, default=10,
                    help="number of VAE reconstruction pairs to show")

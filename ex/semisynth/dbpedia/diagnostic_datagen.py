@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.utils.diagnostics import (
+from ex.utils.diagnostics import (
     load_all_pairs,
     plot_ldr_histograms,
     plot_pca,
@@ -28,7 +28,7 @@ from experiments.utils.diagnostics import (
     print_hardness_table,
     plot_hardness_figure,
 )
-from experiments.utils.dbpedia_imbalance import (
+from ex.utils.dbpedia_imbalance import (
     DBPEDIA_LABEL_NAMES,
     flow_state_hash,
 )
@@ -49,7 +49,7 @@ def parse_args(args=None):
     """
     p = argparse.ArgumentParser()
     p.add_argument("--config",
-                   default="experiments/dbpedia/config.yaml")
+                   default="ex/semisynth/dbpedia/config.yaml")
     p.add_argument("--compute-kl", action="store_true",
                    help="heavy mode: compute latent KL via cond flow")
     p.add_argument("--n-eval", type=int, default=500,

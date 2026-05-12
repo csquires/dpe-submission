@@ -46,7 +46,7 @@ def subsample_dbpedia(ds, weights: np.ndarray, K: int = 14, min_per_class: int =
     return indices of subset where class frequencies match target weights.
 
     mirrors subsample_mnist but generalizes to K classes and uses seeded shuffling
-    per-class before selection. used for balanced p* sampling and arbitrary imbalance experiments.
+    per-class before selection. used for balanced p* sampling and arbitrary imbalance ex.
 
     args:
         ds: HF Dataset with 'label' column

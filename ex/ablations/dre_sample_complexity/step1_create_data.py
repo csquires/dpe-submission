@@ -7,10 +7,10 @@ import numpy as np
 import torch
 from torch.distributions import MultivariateNormal
 
-from experiments.utils.prescribed_kls import create_two_gaussians_kl_range
+from ex.utils.prescribed_kls import create_two_gaussians_kl_range
 
 
-config = yaml.load(open('experiments/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/dre_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 # dataset parameters

@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.utils.diagnostics import (
+from ex.utils.diagnostics import (
     load_all_pairs,
     plot_lightweight_figure,
     compute_hardness,
@@ -22,7 +22,7 @@ from experiments.utils.diagnostics import (
     plot_hardness_figure,
     plot_qq,
 )
-from experiments.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
+from ex.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
 from src.models.flow import ClassCondVelocityMLP, log_prob_class_cond
 
 
@@ -86,7 +86,7 @@ def parse_args(args=None):
     """
     p = argparse.ArgumentParser()
     p.add_argument("--config",
-                   default="experiments/mnist/config.yaml")
+                   default="ex/semisynth/mnist/config.yaml")
     p.add_argument("--compute-kl", action="store_true",
                    help="heavy mode: compute latent KL via cond flow")
     p.add_argument("--n-eval", type=int, default=500,

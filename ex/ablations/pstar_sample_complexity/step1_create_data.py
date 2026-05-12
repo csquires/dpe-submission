@@ -6,11 +6,11 @@ import torch
 from torch.distributions import MultivariateNormal
 from tqdm import tqdm
 
-from experiments.utils.prescribed_kls import create_two_gaussians_kl
+from ex.utils.prescribed_kls import create_two_gaussians_kl
 
 
 # load config
-config = yaml.load(open('experiments/pstar_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/pstar_sample_complexity/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # extract constants
 DATA_DIR = config['data_dir']

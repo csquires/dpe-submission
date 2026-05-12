@@ -12,7 +12,7 @@ parser.add_argument('--force', action='store_true', help='Force re-run of all al
 args = parser.parse_args()
 
 # load config
-config = yaml.load(open('experiments/ablations/eig_vertex_sweep/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/ablations/eig_vertex_sweep/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # extract and bind scalar config values
 DEVICE = config['device']
@@ -36,7 +36,7 @@ torch.manual_seed(SEED)
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.methods.cls.mdre.tri import TriangularMDRE
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
-from experiments.utils.eig_ldr import joint_and_shuffled
+from ex.utils.eig_ldr import joint_and_shuffled
 
 
 def fit_predict_eig_split(dre, theta, y, train_ratio):

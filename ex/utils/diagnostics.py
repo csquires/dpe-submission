@@ -8,7 +8,7 @@ import torch
 from pathlib import Path
 from sklearn.decomposition import PCA
 
-from experiments.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
+from ex.utils.mnist_imbalance import get_mnist_dataset, subsample_mnist
 
 
 def load_all_pairs(data_dir, alphas, num_pairs):
@@ -287,7 +287,7 @@ def plot_hardness_figure(stats, alphas, config, heavy_stats=None, K=None):
         K: number of classes (10 for MNIST, 14 for DBpedia). when None, no
            analytical overlay is drawn.
     """
-    from experiments.utils.mnist_imbalance import bound_moments, expected_kl_jensen_ub
+    from ex.utils.mnist_imbalance import bound_moments, expected_kl_jensen_ub
 
     all_metrics = dict(stats)
     if heavy_stats is not None:

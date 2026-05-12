@@ -9,9 +9,9 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.hpo.adapters.base import ExperimentAdapter
 
-_CONFIG_PATH = Path(__file__).resolve().parents[4] / "experiments/occupancy/config.yaml"
+_CONFIG_PATH = Path(__file__).resolve().parents[4] / "ex/synth/occupancy/config.yaml"
 
 
 def _encoding_subdir(enc_cfg: dict, base: str) -> str:

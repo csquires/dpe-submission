@@ -11,7 +11,7 @@ from src.utils.io import _load_config
 
 logger = logging.getLogger(__name__)
 
-config = _load_config('experiments/model_selection/config.yaml')
+config = _load_config('ex/synth/model_selection/config.yaml')
 # directories
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']

@@ -2,9 +2,9 @@
 
 cell axis: flat int over (alpha_idx, pair_idx). bucket axis: alpha_idx_<n>.
 """
-from experiments.utils.step2_runner.adapter_base import make_adapter_module
-from experiments.utils.step2_runner.adapter_specs import MNIST_COND
-from experiments.mnist.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.step2_runner.adapter_base import make_adapter_module
+from ex.utils.step2_runner.adapter_specs import MNIST_COND
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 _module = make_adapter_module(MNIST_COND, SEARCH_SPACES)
 

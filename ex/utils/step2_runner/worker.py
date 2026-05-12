@@ -2,7 +2,7 @@
 
 invocation (typically from a watchdog-spawned sbatch job):
 
-    python -m experiments.utils.step2_runner.worker \
+    python -m ex.utils.step2_runner.worker \
         --experiment <exp_short_name> \
         --method <method_name> \
         --cell-indices "0,1,2,3,...,19" \
@@ -32,13 +32,13 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from experiments.utils.step2_runner.load_winners import load_winners, resolve_hp
+from ex.utils.step2_runner.load_winners import load_winners, resolve_hp
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--experiment", required=True,
-                   help="experiment short name (matches experiments/<exp>/step2_adapter.py)")
+                   help="experiment short name (matches ex/<exp>/step2_adapter.py)")
     p.add_argument("--method", required=True)
     p.add_argument("--cell-indices", required=True,
                    help="comma-separated list of cell indices to process")
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", required=True,
                    help="root output dir; per-cell results written under <method>/cell_<idx>.h5")
     p.add_argument("--config", default=None,
-                   help="path to experiment config.yaml (default: experiments/<exp>/config.yaml)")
+                   help="path to experiment config.yaml (default: ex/<exp>/config.yaml)")
     p.add_argument("--device", default=None)
     return p.parse_args()
 
@@ -77,14 +77,14 @@ def main() -> None:
         raise SystemExit("--cell-indices empty")
 
     # load adapter
-    adapter_mod = f"experiments.{args.experiment}.step2_adapter"
+    adapter_mod = f"ex.{args.experiment}.step2_adapter"
     try:
         adapter = importlib.import_module(adapter_mod)
     except ImportError as e:
         raise SystemExit(f"could not import {adapter_mod}: {e}")
 
     # load config
-    config_path = args.config or f"experiments/{args.experiment}/config.yaml"
+    config_path = args.config or f"ex/{args.experiment}/config.yaml"
     config = adapter.load_config(config_path)
 
     # load winners

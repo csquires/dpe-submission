@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from experiments.utils.step2_runner.adapter_specs import AdapterSpec
+from ex.utils.step2_runner.adapter_specs import AdapterSpec
 
 
 _FAST = {"BDRE", "MDRE_15", "TDRE_5", "MultiHeadTDRE", "MultiHeadTriangularTDRE",

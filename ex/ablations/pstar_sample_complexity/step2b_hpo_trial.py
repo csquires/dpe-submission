@@ -8,7 +8,7 @@ samples, computes mean MAE, and writes the result to hpo_results/.
 Designed to be called as an array task on Babel — see slurm/run_hpo_trial.sh.
 
 Usage:
-  python experiments/pstar_sample_complexity/step2b_hpo_trial.py \\
+  python ex/pstar_sample_complexity/step2b_hpo_trial.py \\
       --method TriangularTSM --pstar-idx 1 --trial-id 5
 """
 
@@ -23,7 +23,7 @@ import numpy as np
 import torch
 import yaml
 
-from experiments.ablations.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def parse_args():
@@ -128,7 +128,7 @@ def run_trial(
 
 def main():
     args = parse_args()
-    config = yaml.safe_load(open("experiments/pstar_sample_complexity/config.yaml"))
+    config = yaml.safe_load(open("ex/pstar_sample_complexity/config.yaml"))
 
     nsamples_pstar = config["nsamples_pstar_values"][args.pstar_idx]
     print(f"HPO trial: method={args.method}, pstar_idx={args.pstar_idx}, trial_id={args.trial_id}")

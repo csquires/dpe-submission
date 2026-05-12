@@ -16,7 +16,7 @@ from src.models.multiclass_classification import make_multiclass_classifier
 from src.methods import BDRE, MDRE, TDRE, TSM, TriangularTSM
 from src.methods.cls.mdre.tri import TriangularMDRE
 from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
-from experiments.utils.eig_ldr import joint_and_shuffled
+from ex.utils.eig_ldr import joint_and_shuffled
 
 
 # methods whose fit signature takes a third positional pstar arg.
@@ -36,7 +36,7 @@ def fit_predict_eig(alg, alg_name, theta, y):
         return alg.predict_eldr(joint)
 
 
-config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/synth/eig/config1.yaml', 'r'), Loader=yaml.FullLoader)
 DEVICE = config['device']
 # directories
 DATA_DIR = config['data_dir']

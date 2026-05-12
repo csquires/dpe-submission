@@ -1,4 +1,4 @@
-"""step2_runner adapter for elbo_estimation.
+"""step2_runner adapter for elbo.
 
 cell axis: row index in design_arr of dataset_d=<D>,nsamples=<N>.h5 (24000 rows).
 bucket axis: none — single HP set per (method, exp); per_bucket override unused.
@@ -10,7 +10,7 @@ the original step2 output dataset name.
 quirks:
 - input_dim is data_dim + 1 (theta has data_dim coords, y has 1 coord, concatenated).
 - TriangularMDRE takes 3-arg fit (p0, p1, pstar); other methods take 2-arg fit.
-- elbo_estimation has no integration_steps in any HP; keep it that way.
+- elbo has no integration_steps in any HP; keep it that way.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 # methods that need pstar at fit time (forwarded from SEARCH_SPACES.requires_pstar)
@@ -173,7 +173,7 @@ def gather_dataset_name(method: str, config: dict) -> str:
 
 
 def gather_output_path(config: dict) -> str:
-    out_dir = config.get("raw_results_dir", "experiments/elbo_estimation/raw_results")
+    out_dir = config.get("raw_results_dir", "ex/synth/elbo/raw_results")
     stem = config.get("dataset_filename", f"dataset_d={config['data_dim']},nsamples={config['nsamples']}.h5")
     stem = stem.replace("dataset_", "results_").removesuffix(".h5")
     return os.path.join(out_dir, f"{stem}.h5")

@@ -10,8 +10,8 @@ from src.utils.pendulum import PendulumCfg, F, sample_mu0, log_mu0, r_upright, r
 from src.utils.pendulum_q import QGridCfg, load_or_build_q
 from src.utils.pendulum_policies import GaussPolicy, MixPolicy
 from src.sampling.pendulum_traj import rollout, log_density, pack
-from experiments.utils.prescribed_kls import load_or_build_traj_grid, prescribe_traj
-from experiments.utils.alpha_grid import make_alphas
+from ex.utils.prescribed_kls import load_or_build_traj_grid, prescribe_traj
+from ex.utils.alpha_grid import make_alphas
 
 
 def _resolve_reward(name: str) -> Callable:
@@ -333,7 +333,7 @@ def main():
       --force: force recomputation (ignore existing HDF5 files)
 
     behaviors:
-      1. load config from experiments/pendulum/config.yaml
+      1. load config from ex/semisynth/pendulum/config.yaml
       2. --smoke: pick first available (k1_idx=0, k2_idx=0, seed=0) and run per_cell.
          - if config["kl_targets"]["k1_values"] is empty: print message explaining that
            user should populate kl_targets after seeing feasible region, then call
@@ -363,7 +363,7 @@ def main():
     parser.add_argument("--smoke", action="store_true", help="smoke test: 1 cell")
     args = parser.parse_args()
 
-    config_path = "experiments/pendulum/config.yaml"
+    config_path = "ex/semisynth/pendulum/config.yaml"
     config = _load_config(config_path)
 
     if args.smoke:

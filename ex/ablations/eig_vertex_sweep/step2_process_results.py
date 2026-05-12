@@ -5,7 +5,7 @@ import numpy as np
 import yaml
 
 
-config = yaml.load(open('experiments/ablations/eig_vertex_sweep/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/ablations/eig_vertex_sweep/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 RAW_RESULTS_DIR = config['raw_results_dir']

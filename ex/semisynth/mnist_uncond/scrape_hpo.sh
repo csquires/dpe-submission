@@ -6,7 +6,7 @@ set -eu
 
 JOBID=${1:?"usage: $0 <JOBID>"}
 REMOTE_SUFFIX="aviamala/ckpt/dpe-submission/mnist_eldr_estimation"
-LOCAL="experiments/mnist_uncond/hpo_results"
+LOCAL="ex/semisynth/mnist_uncond/hpo_results"
 
 mkdir -p "$LOCAL"
 

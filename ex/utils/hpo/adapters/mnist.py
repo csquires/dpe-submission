@@ -7,10 +7,10 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.hpo.adapters.base import ExperimentAdapter
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_CONFIG_PATH = _REPO_ROOT / "experiments/mnist/config.yaml"
+_CONFIG_PATH = _REPO_ROOT / "ex/semisynth/mnist/config.yaml"
 
 
 class MnistAdapter(ExperimentAdapter):

@@ -1,7 +1,7 @@
 """
 memory profiler for step2 methods.
 tracks gpu memory at each stage of fit() and predict_ldr() for all methods.
-usage: python -m experiments.mnist_uncond.diagnostic_mem_profile --alpha-idx 0 --pair-idx 0
+usage: python -m ex.semisynth.mnist_uncond.diagnostic_mem_profile --alpha-idx 0 --pair-idx 0
 """
 
 import argparse
@@ -66,7 +66,7 @@ def main():
     parser.add_argument("--alpha-idx", type=int, default=0)
     parser.add_argument("--pair-idx", type=int, default=0)
     parser.add_argument("--config",
-                        default="experiments/mnist_uncond/config.yaml",
+                        default="ex/semisynth/mnist_uncond/config.yaml",
                         help="path to config yaml")
     args = parser.parse_args()
 

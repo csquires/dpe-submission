@@ -55,7 +55,7 @@ echo "method_filter:   ${METHOD_FILTER:-(none)}"
 echo
 echo "[1/2] submitting watchdog_lite (front-pop -> preempt GPU)..."
 WATCHDOG_RUN_ID="${RUN_ID}_lite" \
-    bash "$WORKDIR/experiments/utils/submit_watchdog_lite.sh" \
+    bash "$WORKDIR/ex/utils/submit_watchdog_lite.sh" \
         "$QUEUE_FILE" "$WATCHDOG_MY_CAP" "$WATCHDOG_TOTAL_CAP" 60
 
 # 2. back-pop: cpu array dispatcher drains cpu-eligible lines into array partition.
@@ -68,7 +68,7 @@ fi
 
 set +u && source ~/.bashrc && conda activate "$CONDA_ENV" && set -u
 cd "$WORKDIR"
-python -m experiments.utils.step2_runner.cpu_dispatcher \
+python -m ex.utils.step2_runner.cpu_dispatcher \
     --queue-file "$QUEUE_FILE" \
     --array-size "$CPU_ARRAY_SIZE" \
     --concurrency "$CPU_CONCURRENCY" \

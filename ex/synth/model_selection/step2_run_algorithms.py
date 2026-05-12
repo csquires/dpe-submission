@@ -26,7 +26,7 @@ import yaml
 from pathlib import Path
 
 from src.utils.io import _load_config
-from experiments.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -264,7 +264,7 @@ def main():
     args = parser.parse_args()
 
     # load config
-    config = _load_config("experiments/model_selection/config.yaml")
+    config = _load_config("ex/synth/model_selection/config.yaml")
     required_keys = [
         "data_dir",
         "raw_results_dir",
@@ -299,7 +299,7 @@ def main():
     device = config["device"]
 
     # load winners
-    winners_path = "experiments/model_selection/winners.yaml"
+    winners_path = "ex/synth/model_selection/winners.yaml"
     winners = load_winners(winners_path)
 
     # validate list-only format

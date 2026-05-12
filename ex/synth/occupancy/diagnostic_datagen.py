@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from experiments.utils.diagnostic_kl_grid import (
+from ex.utils.diagnostic_kl_grid import (
     collect_cells,
     compute_hardness,
     load_kl_grid,
@@ -46,7 +46,7 @@ from experiments.utils.diagnostic_kl_grid import (
     plot_prescribed_vs_realized,
     print_hardness_table,
 )
-from experiments.utils.prescribed_kls import hash_mdp_config
+from ex.utils.prescribed_kls import hash_mdp_config
 
 
 KEY_MAP = {
@@ -63,7 +63,7 @@ KEY_MAP = {
 def parse_args(args=None):
     p = argparse.ArgumentParser()
     p.add_argument("--config",
-                   default="experiments/occupancy/config.yaml")
+                   default="ex/synth/occupancy/config.yaml")
     p.add_argument("--show-grid", action="store_true",
                    help="plot the cached kl grid (no per-cell HDF5 needed)")
     p.add_argument("--encoding-type", default=None,
@@ -101,7 +101,7 @@ def find_grid_cache(config: Dict[str, Any]) -> str:
     if not path.exists():
         raise FileNotFoundError(
             f"no cached grid at {path}. run "
-            f"`python -m experiments.occupancy.step1_create_data --smoke` "
+            f"`python -m ex.synth.occupancy.step1_create_data --smoke` "
             f"to build it first."
         )
     return str(path)

@@ -16,7 +16,7 @@ import os
 
 import yaml
 
-from experiments.ablations.pstar_sample_complexity.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def load_trials(hpo_results_dir: str, method: str, pstar_idx: int) -> list[dict]:
@@ -49,7 +49,7 @@ def pick_best(trials: list[dict]) -> dict | None:
 
 
 def main():
-    config = yaml.safe_load(open("experiments/pstar_sample_complexity/config.yaml"))
+    config = yaml.safe_load(open("ex/pstar_sample_complexity/config.yaml"))
     hpo_results_dir = config["hpo_results_dir"]
     hpo_summary_dir = config["hpo_summary_dir"]
     nsamples_pstar_values = config["nsamples_pstar_values"]

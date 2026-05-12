@@ -37,9 +37,9 @@ log_prob_chunk_size: 100
 ckpt_dir: "${DPE_CKPT_ROOT}/dbpedia_smoke/ckpt"
 data_dir: "${DPE_DATA_ROOT}/dbpedia_smoke/data"
 hf_cache_dir: "${DPE_DATA_ROOT}/dbpedia_eldr_cond_flow/data/hf_cache"
-raw_results_dir: "experiments/dbpedia/raw_results_smoke"
-processed_results_dir: "experiments/dbpedia/processed_results_smoke"
-figures_dir: "experiments/dbpedia/figures/smoke"
+raw_results_dir: "ex/semisynth/dbpedia/raw_results_smoke"
+processed_results_dir: "ex/semisynth/dbpedia/processed_results_smoke"
+figures_dir: "ex/semisynth/dbpedia/figures/smoke"
 
 # Compute Configuration
 device: "cuda"

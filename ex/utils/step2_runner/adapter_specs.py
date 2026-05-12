@@ -27,7 +27,7 @@ MNIST_UNCOND = AdapterSpec(
     walltimes={"fast": 60, "medium": 120, "slow": 240, "default": 120},
     mem_slow="--gpus=1 --cpus-per-task=4 --mem=24G",
     mem_default="--gpus=1 --cpus-per-task=2 --mem=16G",
-    default_output_dir="experiments/mnist_uncond/raw_results",
+    default_output_dir="ex/semisynth/mnist_uncond/raw_results",
     input_dim_fn=lambda c: c["latent_dim"],
 )
 
@@ -36,7 +36,7 @@ MNIST_COND = AdapterSpec(
     walltimes={"fast": 30, "medium": 60, "slow": 120, "default": 60},
     mem_slow="--gpus=1 --cpus-per-task=4 --mem=16G",
     mem_default="--gpus=1 --cpus-per-task=2 --mem=16G",
-    default_output_dir="experiments/mnist_eldr/raw_results",
+    default_output_dir="ex/mnist_eldr/raw_results",
     input_dim_fn=lambda c: c["latent_dim"],
 )
 
@@ -45,6 +45,6 @@ DBPEDIA_COND = AdapterSpec(
     walltimes={"fast": 60, "medium": 120, "slow": 180, "default": 120},
     mem_slow="--gpus=1 --cpus-per-task=4 --mem=16G",
     mem_default="--gpus=1 --cpus-per-task=2 --mem=16G",
-    default_output_dir="experiments/dbpedia_eldr/raw_results",
+    default_output_dir="ex/dbpedia_eldr/raw_results",
     input_dim_fn=lambda c: c.get("pca_dim", c["latent_dim"]),
 )

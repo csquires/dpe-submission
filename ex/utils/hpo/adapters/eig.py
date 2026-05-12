@@ -22,10 +22,10 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
-from experiments.utils.hpo.adapters.base import ExperimentAdapter
-from experiments.utils.eig_ldr import joint_and_shuffled, true_ldrs_gaussian_linear
+from ex.utils.hpo.adapters.base import ExperimentAdapter
+from ex.utils.eig_ldr import joint_and_shuffled, true_ldrs_gaussian_linear
 
-_CONFIG_PATH = Path(__file__).resolve().parents[4] / "experiments/eig_estimation/config1.yaml"
+_CONFIG_PATH = Path(__file__).resolve().parents[4] / "ex/synth/eig/config1.yaml"
 
 
 class EIGAdapter(ExperimentAdapter):
@@ -41,7 +41,7 @@ class EIGAdapter(ExperimentAdapter):
         self._num_designs = cfg["num_priors"] * cfg["num_designs_per_setting"]
 
     def name(self) -> str:
-        return "eig_estimation"
+        return "eig"
 
     def data_dir(self) -> Path:
         return Path(self._data_dir)
@@ -148,5 +148,5 @@ class EIGAdapter(ExperimentAdapter):
 
     def split_for_eval_seeded(self, data: dict, *, seed: int) -> tuple[dict, dict]:
         """per-trial-seeded variant of split_for_eval used by eval_cell."""
-        from experiments.utils.hpo.adapters.eval_split import split_for_eval
+        from ex.utils.hpo.adapters.eval_split import split_for_eval
         return split_for_eval(data, seed=seed)

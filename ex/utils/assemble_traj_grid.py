@@ -4,7 +4,7 @@ reads ${cache_dir}/traj_alpha_{i}_{hash}.h5 for i in [0, G_alpha) and writes
 ${cache_dir}/traj_grid_{hash}.h5 in the same schema as build_traj_kl_grid.
 
 usage:
-  python -m experiments.utils.assemble_traj_grid [--config <path>] [--rebuild]
+  python -m ex.utils.assemble_traj_grid [--config <path>] [--rebuild]
 
 errors out if any per-alpha file is missing (assembler must run after the
 sbatch array completes successfully).
@@ -20,15 +20,15 @@ from src.utils.io import _load_config, _write_hdf5_atomic
 from src.utils.pendulum import F, sample_mu0, log_mu0
 from src.utils.pendulum_q import load_or_build_q
 
-from experiments.pendulum_eldr_estimation.step1_create_data import _resolve_reward
-from experiments.utils.build_traj_alpha import build_grid_cfg
-from experiments.utils.prescribed_kls import hash_pendulum_cfg, assert_monotone, monotone_project
+from ex.pendulum_eldr_estimation.step1_create_data import _resolve_reward
+from ex.utils.build_traj_alpha import build_grid_cfg
+from ex.utils.prescribed_kls import hash_pendulum_cfg, assert_monotone, monotone_project
 
 
 def parse_args(args=None):
     p = argparse.ArgumentParser()
     p.add_argument("--config",
-                   default="experiments/pendulum_eldr_estimation/config.yaml")
+                   default="ex/pendulum_eldr_estimation/config.yaml")
     p.add_argument("--rebuild", action="store_true",
                    help="rewrite traj_grid_{hash}.h5 even if present")
     return p.parse_args(args)

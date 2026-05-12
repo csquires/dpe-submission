@@ -6,11 +6,11 @@ DRE/score-based + 2 tabular oracle plug-in) from distributed experiments into a
 single source of truth. each entry maps a method name to its builder function,
 oracle requirement, num_waypoints (if applicable), search space, and tabular flag.
 
-consumed by experiments/utils/hpo/registry.py, which exposes both canonical names
+consumed by ex/utils/hpo/registry.py, which exposes both canonical names
 and alias shortcuts for convenience.
 """
 
-from experiments.utils.hpo.builders import (
+from ex.utils.hpo.builders import (
     build_TSM,
     build_CTSM,
     build_VFM,
@@ -444,7 +444,7 @@ _WAVE3_LOCKS = {
 def _midpoint(spec_tuple):
     """return a sensible single value at the center of a spec_tuple.
 
-    spec_tuple forms (matching experiments.utils.hpo.sample.sample_param):
+    spec_tuple forms (matching ex.utils.hpo.sample.sample_param):
       ("choice", [v1, v2, ...])          -> middle element
       ("uniform", lo, hi)                -> (lo + hi) / 2
       ("log_uniform", lo, hi)            -> sqrt(lo * hi)

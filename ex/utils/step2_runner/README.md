@@ -15,7 +15,7 @@ drain modes:
 ## components
 
 ```
-experiments/utils/step2_runner/
+ex/utils/step2_runner/
   load_winners.py        schema-aware winners.yaml loader
   dispatch.py            emits sbatch queue file: chunks cells into N per job
   worker.py              per-job worker: fits and evals (method, cell_chunk)
@@ -29,7 +29,7 @@ experiments/utils/step2_runner/
 
 ## per-experiment adapter (required)
 
-each experiment provides `experiments/<exp>/step2_adapter.py` exposing:
+each experiment provides `ex/<exp>/step2_adapter.py` exposing:
 
 ```
 load_config(path)            -> dict
@@ -46,7 +46,7 @@ method_label(method) -> str            # for cap_for matching in watchdog
 optional hooks consumed by gather.py:
 ```
 gather_dataset_name(method, config) -> str   # default: 'est_ldrs_arr_<method>'
-gather_output_path(config) -> str            # default: experiments/<exp>/raw_results/results.h5
+gather_output_path(config) -> str            # default: ex/<exp>/raw_results/results.h5
 ```
 
 ## canonical winners path
@@ -56,7 +56,7 @@ all winners yamls live at `scratch/gold_winners/winners.<exp>.yaml`. see
 score schema.
 
 most experiments share the same short name as the directory (`model_selection`,
-`elbo_estimation`, etc.) but a few experiment dirs have an `_eldr` suffix that
+`elbo`, etc.) but a few experiment dirs have an `_eldr` suffix that
 the winners filename omits — see the `winners.yaml` column below.
 
 ## per-experiment status (11 experiments, all ported)
@@ -64,8 +64,8 @@ the winners filename omits — see the `winners.yaml` column below.
 | experiment dir | cell axis | n_cells | bucket axis | output ds name | gather output | winners.yaml |
 |---|---|---|---|---|---|---|
 | model_selection | row idx | 70 | `kl_idx_<n>` | `est_ldrs_arr_<m>` | `results.h5` | `winners.model_selection.yaml` |
-| elbo_estimation | design row | 24000 | none | `est_eigs_arr_<m>` | `results_d=D,nsamples=N.h5` | `winners.elbo_estimation.yaml` |
-| eig_estimation | design row | 6000 | none | `est_eigs_arr_<m>` | `results_d=D,nsamples=N.h5` | `winners.eig_estimation.yaml` (+ `true_eigs_arr` post-step via `gather_postprocess`) |
+| elbo | design row | 24000 | none | `est_eigs_arr_<m>` | `results_d=D,nsamples=N.h5` | `winners.elbo.yaml` |
+| eig | design row | 6000 | none | `est_eigs_arr_<m>` | `results_d=D,nsamples=N.h5` | `winners.eig.yaml` (+ `true_eigs_arr` post-step via `gather_postprocess`) |
 | smodice_eldr_estimation | flat (k1,k2,seed) | 480 | `k1_idx_<n>` | `est_ldrs_<m>` | `<encoding>/<sigma>/results_all_cells.h5` | `winners.smodice_eldr_estimation.yaml` |
 | pendulum_eldr_estimation | flat (k1,k2,seed) | 160 | `k1_idx_<n>` | `est_ldrs_<m>` | `results_all_cells.h5` | `winners.pendulum_eldr_estimation.yaml` |
 | mnist_eldr_estimation | flat (alpha,pair) | 160 | `alpha_idx_<n>` | `est_ldrs_<m>` | `results_all_cells.h5` | `winners.mnist_eldr_estimation.yaml` |
@@ -80,8 +80,8 @@ quirks worth knowing for each:
 - **smodice / mnist_eldr_cond_flow / dbpedia_eldr_cond_flow / pstar_sample_complexity**: the original step2 wrote one h5 per cell with multiple method datasets inside; this runner emits a single combined h5 instead. step3/4 may need a small slicing update for these.
 - **pstar_sample_complexity**: no v2 winners yaml exists (no non-triangular HPO data in 200broad); pass a custom `--winners` if you have one, or add per-bucket overrides for triangular methods to a hand-written yaml.
 - **plugin_dre / dre_sample_complexity**: builders take an extra `config` kwarg (`build_X(input_dim, device, config, **hp)`) — passed through automatically by these adapters.
-- **eig_estimation**: writes a `true_eigs_arr` post-step via `adapter.gather_postprocess(config, out_path)` — a deterministic function of dataset (`Sigma_pi`, `design`). gather.py invokes it automatically if defined.
-- **model_selection**: `experiments/model_selection/hpo_search_spaces.py` is broken (stale TDRE_5 reference); this adapter bypasses it and uses METHOD_SPECS directly. all other experiments use their own SEARCH_SPACES module which imports cleanly.
+- **eig**: writes a `true_eigs_arr` post-step via `adapter.gather_postprocess(config, out_path)` — a deterministic function of dataset (`Sigma_pi`, `design`). gather.py invokes it automatically if defined.
+- **model_selection**: `ex/synth/model_selection/hpo_search_spaces.py` is broken (stale TDRE_5 reference); this adapter bypasses it and uses METHOD_SPECS directly. all other experiments use their own SEARCH_SPACES module which imports cleanly.
 
 ## winners.yaml schema
 
@@ -112,7 +112,7 @@ export DPE_DATA_ROOT=/data/user_data/$USER/dpe-submission
 export DPE_CKPT_ROOT=/scratch/$USER/ckpt/dpe-submission
 
 # 1. dispatch: emit queue (one line per (method, cell_chunk))
-python -m experiments.utils.step2_runner.dispatch \
+python -m ex.utils.step2_runner.dispatch \
     --experiment model_selection \
     --winners scratch/gold_winners/winners.model_selection.yaml \
     --max-cells-per-job 20 \
@@ -121,12 +121,12 @@ python -m experiments.utils.step2_runner.dispatch \
 # emits $DPE_DATA_ROOT/step2_<exp>_queue.txt
 
 # 2. drain via watchdog_lite (existing infrastructure)
-bash experiments/utils/submit_watchdog_lite.sh \
+bash ex/utils/submit_watchdog_lite.sh \
     $DPE_DATA_ROOT/step2_model_selection_queue.txt \
     22 800 60   # my-cap=22, total-cap=800, orphan-scan=60s
 
 # 3. when results land, assemble per-cell h5 fragments into results.h5
-python -m experiments.utils.step2_runner.gather \
+python -m ex.utils.step2_runner.gather \
     --experiment model_selection
 ```
 
@@ -138,21 +138,21 @@ roughly doubles vs single-drain when both partitions have headroom.
 
 ```bash
 # dispatch the same way (queue is sorted: gpu-only at front, cpu-eligible at back)
-python -m experiments.utils.step2_runner.dispatch \
+python -m ex.utils.step2_runner.dispatch \
     --experiment model_selection \
     --winners scratch/gold_winners/winners.model_selection.yaml \
     --max-cells-per-job 20
 
 # submit BOTH drains via the wrapper
-bash experiments/utils/step2_runner/submit_dual.sh \
+bash ex/utils/step2_runner/submit_dual.sh \
     $DPE_DATA_ROOT/step2_model_selection_queue.txt \
     22 800              # watchdog: my-cap=22, total-cap=800
     64 100 2            # cpu_array: array_size=64, concurrency=100, n_per_element=2
     BDRE,MDRE_15,CTSM   # method_filter: only these methods drain via array partition
 
 # OR submit them separately for finer control:
-bash experiments/utils/submit_watchdog_lite.sh $DPE_DATA_ROOT/step2_<exp>_queue.txt 22 800 60
-python -m experiments.utils.step2_runner.cpu_dispatcher \
+bash ex/utils/submit_watchdog_lite.sh $DPE_DATA_ROOT/step2_<exp>_queue.txt 22 800 60
+python -m ex.utils.step2_runner.cpu_dispatcher \
     --queue-file $DPE_DATA_ROOT/step2_<exp>_queue.txt \
     --array-size 64 --concurrency 100 --n-per-element 2 \
     --output-root $DPE_DATA_ROOT/<exp>/step2_dual/$(date +%Y%m%d)/cpu_array \
@@ -161,7 +161,7 @@ python -m experiments.utils.step2_runner.cpu_dispatcher \
     --device cpu
 
 # gather as usual when results land (idempotent; safe to run incrementally)
-python -m experiments.utils.step2_runner.gather --experiment model_selection
+python -m ex.utils.step2_runner.gather --experiment model_selection
 ```
 
 ### picking dual-drain parameters
@@ -202,7 +202,7 @@ worker doesn't loop on them. gather treats them as missing.
 
 ## adding a new experiment
 
-1. write `experiments/<exp>/step2_adapter.py` implementing the contract above.
+1. write `ex/<exp>/step2_adapter.py` implementing the contract above.
 2. create a `winners.<exp>.<tag>.yaml` (any path; passed via `--winners`).
 3. run the dispatch + watchdog + gather flow as above.
 

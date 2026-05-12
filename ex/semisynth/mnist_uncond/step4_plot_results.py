@@ -1,12 +1,12 @@
 """Thin CLI for step4_plot_results on mnist_uncond.
 
 Loads mae_summary.h5 and plots alpha vs MAE with error bands.
-Delegates to experiments.utils.results.plot_results_main(config_path).
+Delegates to ex.utils.results.plot_results_main(config_path).
 """
-from experiments.utils.results import plot_results_main
+from ex.utils.results import plot_results_main
 
 
-CONFIG_PATH = 'experiments/mnist_uncond/config.yaml'
+CONFIG_PATH = 'ex/semisynth/mnist_uncond/config.yaml'
 
 
 if __name__ == '__main__':

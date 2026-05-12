@@ -15,12 +15,12 @@ import yaml
 from tqdm import tqdm
 
 from src.models.flow import ClassCondVelocityMLP, sample_class_cond_flow
-from experiments.utils.mnist_imbalance import (
+from ex.utils.mnist_imbalance import (
     sample_dirichlet_weights,
     invert_weights,
     weight_kl,
 )
-from experiments.utils.dbpedia_imbalance import flow_state_hash
+from ex.utils.dbpedia_imbalance import flow_state_hash
 
 
 def expand_paths(config):
@@ -194,7 +194,7 @@ def main():
 
     procedure:
         parse CLI args (--alpha-idx, --pair-idx, --force). load config from
-        experiments/dbpedia/config.yaml. expand paths.
+        ex/semisynth/dbpedia/config.yaml. expand paths.
         create data directory. set device and seeds.
         load cond_flow on device in eval mode.
         compute flowhash and load pstar_codes + log_p_y.
@@ -209,7 +209,7 @@ def main():
     parser.add_argument('--force', action='store_true',
                         help='force recomputation (ignore cache)')
     parser.add_argument('--config', type=str,
-                        default='experiments/dbpedia/config.yaml',
+                        default='ex/semisynth/dbpedia/config.yaml',
                         help='path to config yaml')
     args = parser.parse_args()
 

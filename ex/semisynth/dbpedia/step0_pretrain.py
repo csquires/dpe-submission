@@ -9,10 +9,10 @@ from scipy.spatial.distance import pdist, squareform
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 
-from experiments.utils.pretrain import get_device
-from experiments.utils.sbert import encode_corpus, load_or_encode
-from experiments.utils.pca import fit_pca_basis, apply_basis
-from experiments.utils.dbpedia_imbalance import (
+from ex.utils.pretrain import get_device
+from ex.utils.sbert import encode_corpus, load_or_encode
+from ex.utils.pca import fit_pca_basis, apply_basis
+from ex.utils.dbpedia_imbalance import (
     get_dbpedia_dataset,
     subsample_dbpedia,
     flow_state_hash,
@@ -400,7 +400,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="experiments/dbpedia/config.yaml",
+        default="ex/semisynth/dbpedia/config.yaml",
         help="path to config yaml",
     )
     args = parser.parse_args()

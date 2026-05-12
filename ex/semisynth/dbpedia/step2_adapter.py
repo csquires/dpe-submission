@@ -3,9 +3,9 @@
 cell axis: flat int over (alpha_idx, pair_idx). bucket: alpha_idx_<n>.
 input_dim resolved from config.get('pca_dim', config['latent_dim']).
 """
-from experiments.utils.step2_runner.adapter_base import make_adapter_module
-from experiments.utils.step2_runner.adapter_specs import DBPEDIA_COND
-from experiments.dbpedia.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.step2_runner.adapter_base import make_adapter_module
+from ex.utils.step2_runner.adapter_specs import DBPEDIA_COND
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 _module = make_adapter_module(DBPEDIA_COND, SEARCH_SPACES)
 

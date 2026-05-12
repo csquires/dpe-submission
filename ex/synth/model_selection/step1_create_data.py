@@ -7,10 +7,10 @@ import numpy as np
 import torch
 from torch.distributions import MultivariateNormal
 
-from experiments.utils.prescribed_kls import create_two_gaussians_kl_range
+from ex.utils.prescribed_kls import create_two_gaussians_kl_range
 
 
-config = _load_config('experiments/model_selection/config.yaml')
+config = _load_config('ex/synth/model_selection/config.yaml')
 # directories
 DATA_DIR = config['data_dir']
 # dataset parameters

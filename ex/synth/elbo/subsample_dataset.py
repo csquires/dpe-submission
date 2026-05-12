@@ -13,7 +13,7 @@ import h5py
 import yaml
 from tqdm import trange
 
-config = yaml.load(open("experiments/elbo_estimation/config1.yaml"), Loader=yaml.FullLoader)
+config = yaml.load(open("ex/synth/elbo/config1.yaml"), Loader=yaml.FullLoader)
 DATA_DIR = config["data_dir"]
 
 N_P0P1  = 20_000

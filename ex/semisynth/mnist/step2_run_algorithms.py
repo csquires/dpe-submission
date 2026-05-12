@@ -5,10 +5,10 @@ import numpy as np
 import torch
 from pathlib import Path
 
-from experiments.utils.run_algorithms import (
+from ex.utils.run_algorithms import (
     load_winners, load_data, create_estimator, run_method,
 )
-from experiments.mnist.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 
 
 def parse_args(args=None):
@@ -49,13 +49,13 @@ def main():
     args = parse_args()
 
     # load config and set random seeds
-    config = load_config("experiments/mnist/config.yaml")
+    config = load_config("ex/semisynth/mnist/config.yaml")
     DEVICE = config["device"]
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
 
     # load winners from hpo winners.yaml
-    winners_path = "experiments/mnist/winners.yaml"
+    winners_path = "ex/semisynth/mnist/winners.yaml"
     winners = load_winners(winners_path)
 
     # build filenames

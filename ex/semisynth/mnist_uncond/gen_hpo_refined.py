@@ -12,8 +12,8 @@ import os
 import random
 import glob
 
-from experiments.mnist_uncond.hpo_search_spaces import SEARCH_SPACES
-from experiments.mnist_uncond.gen_hpo_configs import sample_param
+from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.semisynth.mnist_uncond.gen_hpo_configs import sample_param
 
 
 ALPHA_PAIRS = {

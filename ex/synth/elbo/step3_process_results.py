@@ -5,11 +5,11 @@ Reads the gathered results file and computes per-(alpha, design_eig_percentage)
 summaries of ELBO estimation MAE for each method.
 
 Run gather first:
-    python -m experiments.utils.step2_runner.gather \
-        --experiment elbo_estimation \
-        --config experiments/elbo_estimation/config1.yaml
+    python -m ex.utils.step2_runner.gather \
+        --experiment elbo \
+        --config ex/synth/elbo/config1.yaml
 Then run this script:
-    DPE_DATA_ROOT=/data/... python -u experiments/elbo_estimation/step3_process_results.py
+    DPE_DATA_ROOT=/data/... python -u ex/synth/elbo/step3_process_results.py
 """
 import argparse
 import logging
@@ -21,7 +21,7 @@ import torch
 import yaml
 
 from src.utils.io import _load_config
-from experiments.elbo_estimation.step2_adapter import gather_output_path, list_cells
+from ex.synth.elbo.step2_adapter import gather_output_path, list_cells
 
 
 def compute_true_eldr(mu_pi, Sigma_pi, mu_q, Sigma_q, xi, obs_y) -> float:
@@ -78,8 +78,8 @@ def agg_metric(vals):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config",  default="experiments/elbo_estimation/config1.yaml")
-    parser.add_argument("--winners", default="scratch/gold_winners/winners.elbo_estimation.yaml")
+    parser.add_argument("--config",  default="ex/synth/elbo/config1.yaml")
+    parser.add_argument("--winners", default="scratch/gold_winners/winners.elbo.yaml")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
@@ -131,9 +131,9 @@ def main():
         raise FileNotFoundError(
             f"Gathered file not found: {gathered}\n"
             "Run gather first:\n"
-            "  python -m experiments.utils.step2_runner.gather \\\n"
-            "      --experiment elbo_estimation \\\n"
-            "      --config experiments/elbo_estimation/config1.yaml"
+            "  python -m ex.utils.step2_runner.gather \\\n"
+            "      --experiment elbo \\\n"
+            "      --config ex/synth/elbo/config1.yaml"
         )
     print(f"Reading gathered results: {gathered}")
     est_by_method = {}

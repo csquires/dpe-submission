@@ -47,7 +47,7 @@ FONT_SIZE = 12
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--config", default="experiments/occupancy/config.yaml")
+    p.add_argument("--config", default="ex/synth/occupancy/config.yaml")
     p.add_argument("--winners", default="scratch/gold_winners/winners.smodice_eldr_estimation.yaml")
     p.add_argument("--metric", default=None, choices=["pointwise_mae", "eldr_err"],
                    help="metric to plot; omit to plot both")
