@@ -1,0 +1,163 @@
+from dataclasses import dataclass
+from typing import Optional, Dict, List
+import importlib
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StudyConfig:
+    """Per-study HPO configuration with validation.
+
+    Holds hyperparameter search metadata, resource budgets, and I/O paths.
+    Validation in __post_init__ ensures all constraints are satisfied.
+
+    Attributes:
+        study_seed: random seed for optuna sampler and trial determinism.
+        experiment: experiment name, must be non-empty; not validated against
+            registry here.
+        methods: method names to optimize; validated against SUGGEST_HP_REGISTRY.
+        walltime_minutes: wall-clock timeout per task (minutes); must >
+            walltime_margin_minutes.
+        min_resource: hyperband min budget steps; must <= max_resource.
+        max_resource: hyperband max budget steps; used as step count in
+            pruner config.
+        reduction_factor: hyperband reduction factor; must > 1.
+        holdout_top_k: number of trials to evaluate on holdout pool; must > 0.
+        walltime_margin_minutes: buffer before hard timeout; must <
+            walltime_minutes.
+        nfs_base: root for journal files; defaults to $DPE_DATA_ROOT/optuna at
+            runtime. If set, overrides env var lookup; must be absolute path
+            string.
+        cores_per_trial: per-method core count; if set, method names must be
+            in registry. If None, uses cores_registry defaults.
+        n_jobs_per_task: parallel trials per slurm task; default computed at
+            runtime from (cores_per_node //
+            max(cores_per_trial[m] for m in methods)).
+        resume_existing: load existing study journal if present, else start
+            fresh.
+        include_tabular: if True, methods may include tabular; warn if True
+            but methods has no tabular.
+        schema_version: config schema version; mismatch logs warning, does not
+            error.
+    """
+
+    study_seed: int
+    experiment: str
+    methods: List[str]
+    walltime_minutes: int
+
+    min_resource: int = 100
+    max_resource: int = 10000
+    reduction_factor: int = 3
+    holdout_top_k: int = 5
+
+    walltime_margin_minutes: int = 10
+    nfs_base: Optional[str] = None
+    cores_per_trial: Optional[Dict[str, int]] = None
+    n_jobs_per_task: Optional[int] = None
+
+    resume_existing: bool = True
+    include_tabular: bool = False
+    schema_version: str = "1.0"
+
+    def __post_init__(self):
+        """Validate all fields after initialization.
+
+        Coerce methods to list[str] if string. Cross-check method names against
+        SUGGEST_HP_REGISTRY. Validate resource and timeout constraints.
+        Raises ValueError if any constraint violated.
+        """
+        # coerce methods to list if string
+        if isinstance(self.methods, str):
+            self.methods = [self.methods]
+
+        # assert experiment non-empty
+        if not self.experiment or not self.experiment.strip():
+            raise ValueError("experiment must be non-empty string")
+
+        # validate method names exist in registry
+        from experiments.utils.hpo.suggest_hp import SUGGEST_HP_REGISTRY
+        missing = [m for m in self.methods if m not in SUGGEST_HP_REGISTRY]
+        if missing:
+            raise ValueError(f"methods {missing} not in SUGGEST_HP_REGISTRY")
+
+        # validate timeouts
+        if self.walltime_minutes <= self.walltime_margin_minutes:
+            raise ValueError(
+                f"walltime_minutes ({self.walltime_minutes}) must > margin "
+                f"({self.walltime_margin_minutes})"
+            )
+
+        # validate resource budget
+        if self.min_resource > self.max_resource:
+            raise ValueError(
+                f"min_resource ({self.min_resource}) must <= max_resource "
+                f"({self.max_resource})"
+            )
+
+        # validate reduction factor
+        if self.reduction_factor <= 1:
+            raise ValueError(
+                f"reduction_factor must > 1, got {self.reduction_factor}"
+            )
+
+        # validate holdout_top_k
+        if self.holdout_top_k <= 0:
+            raise ValueError(f"holdout_top_k must > 0, got {self.holdout_top_k}")
+
+        # validate n_jobs_per_task if set
+        if self.n_jobs_per_task is not None and self.n_jobs_per_task <= 0:
+            raise ValueError(
+                f"n_jobs_per_task must > 0 if set, got {self.n_jobs_per_task}"
+            )
+
+        # validate cores_per_trial if provided
+        if self.cores_per_trial is not None:
+            for method, cores in self.cores_per_trial.items():
+                if method not in SUGGEST_HP_REGISTRY:
+                    raise ValueError(
+                        f"cores_per_trial key '{method}' not in "
+                        f"SUGGEST_HP_REGISTRY"
+                    )
+                if cores <= 0:
+                    raise ValueError(
+                        f"cores_per_trial['{method}'] must > 0, got {cores}"
+                    )
+
+
+def load_config(module_path: str) -> StudyConfig:
+    """Load StudyConfig from a config module at runtime.
+
+    Dynamically imports module at module_path and extracts module.CONFIG.
+    Validates CONFIG is a StudyConfig instance.
+
+    Args:
+        module_path: import path, e.g. 'experiments.configs.hpo.bdre_pilot'
+
+    Returns:
+        StudyConfig instance
+
+    Raises:
+        ModuleNotFoundError: if module does not exist
+        AttributeError: if module lacks CONFIG attribute
+        TypeError: if CONFIG is not a StudyConfig instance
+    """
+    try:
+        mod = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            f"config module not found: {module_path}"
+        ) from e
+
+    if not hasattr(mod, "CONFIG"):
+        raise AttributeError(f"{module_path} missing CONFIG attribute")
+
+    config = mod.CONFIG
+    if not isinstance(config, StudyConfig):
+        raise TypeError(
+            f"{module_path}.CONFIG is {type(config)}, expected StudyConfig"
+        )
+
+    return config
