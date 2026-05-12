@@ -129,6 +129,7 @@ def cleanup_zombies(study: optuna.Study) -> int:
     count = 0
     for trial in study.trials:
         if trial.state == TrialState.RUNNING:
-            study.tell(trial, state=TrialState.FAIL)
+            # study.trials returns FrozenTrial; study.tell accepts a trial number
+            study.tell(trial.number, state=TrialState.FAIL)
             count += 1
     return count
