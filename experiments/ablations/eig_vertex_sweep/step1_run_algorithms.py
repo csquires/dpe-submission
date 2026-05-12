@@ -57,7 +57,7 @@ def fit_predict_eig_split(dre, theta, y, train_ratio):
         dre.fit(joint_tr, shuffled_tr, joint_tr)
         eval_joint = torch.cat([theta[ev], y[ev]], dim=1)
     with torch.no_grad():
-        return dre.predict_ldr(eval_joint).mean()
+        return dre.predict_eldr(eval_joint)
 
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:

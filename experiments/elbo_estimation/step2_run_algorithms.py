@@ -82,14 +82,7 @@ algorithms = [
 ]
 
 
-def estimate_eldr_from_dre(dre, samples_pstar, samples_p0, samples_p1, alg_name=""):
-    """Estimate ELDR using a density ratio estimator (fit/predict pattern)."""
-    if alg_name in {"TriangularMDRE"}:
-        dre.fit(samples_p0, samples_p1, samples_pstar)  # 3-arg fit
-    else:
-        dre.fit(samples_p0, samples_p1)  # 2-arg fit
-    est_ldrs = dre.predict_ldr(samples_pstar)
-    return torch.mean(est_ldrs)
+_PSTAR_METHODS = {"TriangularMDRE"}
 
 
 os.makedirs(RAW_RESULTS_DIR, exist_ok=True)
@@ -120,9 +113,11 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
             y1 = torch.from_numpy(dataset_file['y1_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, 1)
             samples_p1 = torch.cat([theta1, y1], dim=1)  # (NSAMPLES, DATA_DIM+1)
 
-            # estimate ELDR using fit/predict pattern
-            est_eldr = estimate_eldr_from_dre(alg, samples_pstar, samples_p0, samples_p1, alg_name=alg_name)
-            est_eldrs_arr[idx] = est_eldr.item() if isinstance(est_eldr, torch.Tensor) else est_eldr
+            if alg_name in _PSTAR_METHODS:
+                alg.fit(samples_p0, samples_p1, samples_pstar)
+            else:
+                alg.fit(samples_p0, samples_p1)
+            est_eldrs_arr[idx] = alg.predict_eldr(samples_pstar).item()
 
         with h5py.File(results_filename, 'a') as f:
             if dataset_name in f:

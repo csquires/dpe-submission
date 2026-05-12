@@ -55,17 +55,15 @@ export DPE_DATA_ROOT=/path/to/nfs/scratch # only if using HPO
 
 **DRE** (`src/methods/common/base.py`)
 - `fit(samples_p0, samples_p1, *, step_cb=None, eval_data=None, step_cb_interval=50)` - train on samples from two distributions. the three keyword-only arguments are optional HPO instrumentation hooks (see HPO).
-- `predict_ldr(xs)` - predict log density ratio at points `xs`.
+- `predict_ldr(xs)` - per-sample log density ratios at `xs`, shape `[N]`.
+- `predict_eldr(xs)` - expected log density ratio: `mean(predict_ldr(xs))`. the natural scalar summary; subclasses may override for smarter reductions. used directly as the EIG estimate when `xs` are joint samples and as the ELDR estimate when `xs` are p* samples.
 
 **ELDR** (`src/methods/common/base.py`)
 - subclass of `DRE` whose `fit` also accepts `samples_pstar`. enforced via an `__init_subclass__` hook that inspects the positional-parameter prefix at class-definition time.
 
-**EIGEstimator** (`src/eig_estimation/base.py`)
-- `estimate_eig(samples_theta, samples_y)` - estimate expected information gain.
-
-**Plug-in estimation** (`src/eig_estimation/plugin.py`):
-- EIG plug-in: constructs joint samples `(theta, y)` as `p0` and shuffled marginals as `p1`, fits a `DRE`, returns the mean ldr (mutual information via kl between joint and product of marginals).
-- accepts any `DRE` via dependency injection, enabling swap-in comparison of BDRE / TDRE / MDRE / TSM / VFM / FMDRE as subroutines.
+**EIG via density-ratio estimation** (`experiments/utils/eig_ldr.py`)
+- `joint_and_shuffled(theta, y)` builds the (p0, p1) pair: p0 = concat(theta, y) and p1 = independently-shuffled rows of theta and y. fitting any DRE on this pair and calling `predict_eldr(joint)` recovers the MI between theta and y.
+- `true_ldrs_gaussian_linear(theta, y, mu_pi, Sigma_pi, xi)` returns the closed-form per-sample log ratio for the gaussian linear model. used as the HPO eval signal (MAE on r) for the `eig_estimation` experiment.
 
 ## DRE methods
 

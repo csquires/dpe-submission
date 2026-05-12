@@ -25,14 +25,15 @@ _PSTAR_METHODS = {"TriangularTSM", "TriangularMDRE"}
 
 
 def fit_predict_eig(alg, alg_name, theta, y):
-    """fit alg on (joint, shuffled-marginals); return mean predict_ldr(joint)."""
+    """fit alg on (joint, shuffled-marginals); return predict_eldr(joint)
+    (the expected log-density ratio under the joint, i.e. the EIG estimate)."""
     joint, shuffled = joint_and_shuffled(theta, y)
     if alg_name in _PSTAR_METHODS:
         alg.fit(joint, shuffled, joint)
     else:
         alg.fit(joint, shuffled)
     with torch.no_grad():
-        return alg.predict_ldr(joint).mean()
+        return alg.predict_eldr(joint)
 
 
 config = yaml.load(open('experiments/eig_estimation/config1.yaml', 'r'), Loader=yaml.FullLoader)

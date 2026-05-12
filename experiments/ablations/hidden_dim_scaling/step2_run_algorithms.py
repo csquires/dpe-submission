@@ -35,14 +35,14 @@ def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1
 
 
 def fit_predict_eig(dre, alg_name, theta, y):
-    """fit dre on (joint, shuffled-marginals); return mean predict_ldr(joint)."""
+    """fit dre on (joint, shuffled-marginals); return predict_eldr(joint)."""
     joint, shuffled = joint_and_shuffled(theta, y)
     if alg_name in _PSTAR_METHODS:
         dre.fit(joint, shuffled, joint)
     else:
         dre.fit(joint, shuffled)
     with torch.no_grad():
-        return dre.predict_ldr(joint).mean()
+        return dre.predict_eldr(joint)
 
 
 def validate_subset(user_values, config_values, param_name):

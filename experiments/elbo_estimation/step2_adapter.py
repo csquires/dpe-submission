@@ -123,8 +123,7 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
         estimator.fit(samples_p0, samples_p1)
 
     with torch.no_grad():
-        est_ldrs = estimator.predict_ldr(samples_pstar)
-    eldr = float(torch.mean(est_ldrs).item())
+        eldr = float(estimator.predict_eldr(samples_pstar).item())
 
     return {
         # gather expects 'est_ldrs' as the per-cell array; we wrap the scalar in shape (1,)
