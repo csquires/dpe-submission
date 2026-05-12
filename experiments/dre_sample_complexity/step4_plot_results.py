@@ -74,7 +74,6 @@ colors = {
     "TriangularCTSM_V1": "#17becf",
     "TriangularVFM_V1": "#bcbd22",
     "MultiHeadTriangularTDRE": "#e377c2",
-}
     "FMDRE": "#e377c2",
     "FMDRE_S2": "#7f7f7f",
 }
