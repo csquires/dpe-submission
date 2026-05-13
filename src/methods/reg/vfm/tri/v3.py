@@ -1,7 +1,7 @@
 """TriangularVFM2D: VFM DRE with 2D-time stacked interpolant.
 
 trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially on a
-2D-time stacked interpolant; integrates the time-score along a Curve2D at inference.
+2D-time stacked interpolant; integrates the time-score along a curve at inference.
 """
 from typing import Optional, Literal
 import warnings
@@ -10,14 +10,19 @@ import torch
 
 from ....common.base import ELDR
 from ...common._cfgs import (
-    OptimCfg, SchedCfg, EmaCfg, TimeCfg,
+    OptimCfg, SchedCfg, EmaCfg,
     make_optim, make_sched, make_ema,
 )
 from ...common._weighting import resolve_outer_lambda
+from ...common._estimator_helpers import _validate_and_store_slots
+from ...common._paradigm_funcs import vfm_velocity_target_2d, vfm_time_score_2d
+from ...common._predict_ldr import predict_ldr_via_curve
+from ...common._curves import Curve, LowArcCurve2D
+from ...common._integrators import Integrator, integrator_trapezoid
+from src.waypoints.dataclass_paths import TriangularPath2D
+from src.waypoints.path_builders import stacked_2d_triangular_path
+from src.methods.reg.common._time_samplers import TimeSampler2D, make_uniform, make_product
 from src.models.flow.div_estimators import build_div_fn
-from src.waypoints.path_2d import VfmPath2D
-from src.waypoints.triangular_continuous_2d import Stacked2DVfm
-from src.waypoints.curve_2d import Curve2D
 from src.models.time_score_matching.velocity_network_2d import MLP2D
 
 
@@ -26,8 +31,7 @@ class TriangularVFM2D(ELDR):
 
     trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially
     on three distributions p_0, p_1, p_*. inference integrates the time-score
-    along self.curve from tau=eps to 1-eps. uses cfg-based optimization surface
-    with factory-built optimizers, schedulers, and ema wrappers per network.
+    along self.curve from tau=eps to 1-eps via predict_ldr_via_curve.
 
     contract: fit(samples_p0, samples_p1, samples_pstar) with three [n, d]
     tensors; predict_ldr(xs) returns log(p_0/p_1) as [n_samples] cpu tensor.
@@ -36,19 +40,19 @@ class TriangularVFM2D(ELDR):
     def __init__(
         self,
         input_dim: int,
-        path: Optional[VfmPath2D] = None,
-        curve: Optional[Curve2D] = None,
+        *,
+        path: Optional[TriangularPath2D] = None,
+        time: Optional[TimeSampler2D] = None,
+        curve: Optional[Curve] = None,
+        integrator: Integrator = integrator_trapezoid,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
-        *,
-        optim: OptimCfg,
-        sched: SchedCfg = SchedCfg(),
-        ema: EmaCfg = EmaCfg(),
-        time: TimeCfg = TimeCfg(),
+        optim: Optional[OptimCfg] = None,
+        sched: Optional[SchedCfg] = None,
+        ema: Optional[EmaCfg] = None,
         device: Optional[str] = None,
-        # TriangularVFM2D-specific (explicit)
         antithetic: bool = True,
         div_method: Literal['hutchinson', 'exact'] = 'hutchinson',
         div_noise: Literal['rademacher', 'gaussian'] = 'rademacher',
@@ -58,112 +62,132 @@ class TriangularVFM2D(ELDR):
         layernorm: str = "off",
         reweight: bool = False,
     ) -> None:
-        """initialize triangularvfm2d with cfg-based optimization surface.
+        """initialize triangularvfm2d with four-slot surface and 2d-time sampling.
 
-        args:
-            input_dim: dimensionality of data.
-            path: optional vfmpath2d; defaults to stacked2dvfm(eps=time.eps).
-                  must be positional-or-keyword before * to reflect estimator identity.
-            curve: optional curve2d; defaults to curve2d(path_height=1.0).
-            hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training shape.
-            optim: required optimcfg (optimizer config with lr, grad_clip_norm, etc.).
-            sched: schedcfg for learning rate schedule (default schedcfg()).
-            ema: emacfg for exponential moving average (default emacfg()).
-            time: timecfg for time sampling and eps (default timecfg()).
-            device: torch device (defaults to cuda if available, else cpu).
-            antithetic: whether to use antithetic sampling in velocity loss.
-            div_method, div_noise, n_hutch_samples: divergence estimation config.
-            integration_steps: number of tau quadrature points (uniform grid).
-            activation: mlp activation choice.
-            reweight: whether to apply path-variance reweighting to losses.
+        trains two velocity heads (b1, b2) and one denoiser (eta) sequentially on
+        a 2d-time stacked interpolant path; integrates the time-score along curve
+        at inference via predict_ldr_via_curve.
+
+        constructor arguments:
+          input_dim: dimensionality of data.
+          path: optional triangularpath2d; defaults to stacked_2d_triangular_path(k=20.0, ...).
+                defines the stacked 2d interpolant and its eps and t2_max bounds.
+          time: optional timesampler2d; defaults to make_product of two make_uniform samplers.
+                returns (t1, t2, iw) on each call; scaled to path.t2_max.
+          curve: optional curve; defaults to lowarccurve2d(path_height=1.0).
+                maps tau in [eps, 1-eps] to (t1, t2) coordinates; must have dim=2.
+          integrator: callable(scores [n_points, n_samples], tau [n_points]) -> [n_samples].
+                defaults to integrator_trapezoid. trapezoid, mean, or simpson.
+          hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training shape.
+          optim, sched, ema: configuration objects (optimcfg, schedcfg, emacfg).
+          device: torch device string; defaults to cuda if available, else cpu.
+          antithetic: bool; apply antithetic variance reduction in b-phase velocity loss.
+          div_method, div_noise, n_hutch_samples: divergence estimation (hutchinson or exact).
+          integration_steps: number of tau quadrature points for time-score integration.
+          activation: mlp activation; one of {elu, gelu, silu}.
+          layernorm: layer norm; one of {off, pre, post}.
+          reweight: bool; apply path-variance reweighting to per-sample losses.
 
         raises:
-            valueerror: if time.eps < 1e-3 (boundary regularity requirement).
-            valueerror: if div_method, div_noise, activation invalid.
+          valueerror: if path.eps < 1e-3 (boundary regularity requirement).
+          typeerror: if path is not triangularpath2d, time is not callable,
+                    curve.dim != 2, or integrator is not callable.
         """
-        # validate time.eps >= 1e-3
-        if time.eps < 1e-3:
-            raise ValueError(
-                f"timecfg.eps must be >= 1e-3 for boundary regularity of b*eta/gamma; "
-                f"got eps={time.eps}"
-            )
-
         super().__init__(input_dim)
 
-        # store cfg objects and scalar hyperparams
+        # resolve all four slots BEFORE validation
+        if path is None:
+            path = stacked_2d_triangular_path(
+                k=20.0, gamma_schedule="linear-stiff", t2_max=0.3, eps=1e-3
+            )
+        if curve is None:
+            curve = LowArcCurve2D(path_height=1.0)
+        if time is None:
+            # make_uniform_scaled helper for t2 dimension scaling
+            def make_uniform_scaled(*, eps: float, t2_max: float):
+                """wrap make_uniform to scale tau by t2_max for t2 dimension."""
+                base = make_uniform(eps=eps)
+                def sampler(B, device):
+                    tau, iw = base(B, device)
+                    tau_scaled = tau * t2_max  # scale [eps, 1-eps] to [eps*t2_max, t2_max]
+                    return tau_scaled, iw
+                return sampler
+
+            time = make_product(
+                make_uniform(eps=path.eps),
+                make_uniform_scaled(eps=path.eps, t2_max=path.t2_max)
+            )
+
+        # validate and store slots
+        _validate_and_store_slots(
+            self,
+            input_dim=input_dim,
+            path=path,
+            time=time,
+            curve=curve,
+            integrator=integrator,
+            expected_path_type=TriangularPath2D,
+            expected_curve_dim=2,
+            device=device,
+        )
+
+        # coverage gate: curve peak_t2 must not exceed path.t2_max
+        assert self.curve.peak_t2() <= self.path.t2_max + 1e-9, (
+            f"curve peak_t2 {self.curve.peak_t2()} exceeds path.t2_max "
+            f"{self.path.t2_max} + 1e-9 tolerance"
+        )
+
+        # store training/network scalars
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.optim = optim
-        self.sched = sched
-        self.ema = ema
-        self.time = time
-        self.integration_steps = integration_steps
+        self.optim = optim if optim is not None else OptimCfg(lr=1e-3)
+        self.sched = sched if sched is not None else SchedCfg()
+        self.ema = ema if ema is not None else EmaCfg()
         self.antithetic = antithetic
+        self.div_method = div_method
+        self.div_noise = div_noise
+        self.n_hutch_samples = n_hutch_samples
+        self.integration_steps = integration_steps
+        self.activation = activation
+        self.layernorm = layernorm
+        self.reweight = reweight
 
-        # validate div_method, div_noise, n_hutch_samples
+        # validate scalars
+        if activation not in ("elu", "gelu", "silu"):
+            raise ValueError(f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}")
+        if layernorm not in ("off", "pre", "post"):
+            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
         if div_method not in ('hutchinson', 'exact'):
             raise ValueError(f"div_method must be 'hutchinson' or 'exact'; got {div_method!r}")
         if div_noise not in ('rademacher', 'gaussian'):
             raise ValueError(f"div_noise must be 'rademacher' or 'gaussian'; got {div_noise!r}")
         if n_hutch_samples < 1:
             raise ValueError(f"n_hutch_samples must be >= 1; got {n_hutch_samples}")
-        self.div_method = div_method
-        self.div_noise = div_noise
-        self.n_hutch_samples = n_hutch_samples
 
-        # validate activation
-        if activation not in ("elu", "gelu", "silu"):
-            raise ValueError(
-                f"activation must be in {{'elu', 'gelu', 'silu'}}; got {activation!r}"
-            )
-        self.activation = activation
-        if layernorm not in ("off", "pre", "post"):
-            raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
-        self.layernorm = layernorm
-        self.reweight = reweight
-
-        # resolve device
-        if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = torch.device(device)
-
-        # resolve path (default to Stacked2DVfm if not provided)
-        if path is None:
-            self.path = Stacked2DVfm(
-                k=20.0, gamma_schedule="linear-stiff", t2_max=0.3, eps=time.eps
-            )
-        else:
-            self.path = path
-
-        # no path-conflict guard: timecfg holds an explicit timesampler instance.
-        # users who want path-driven sampling pass timecfg(sampler=pathsampler(path)).
-
-        # resolve curve default
-        self.curve = curve if curve is not None else Curve2D(path_height=1.0)
-
-        # bind divergence estimator once; predict_ldr time-score holds no branches.
-        self._div_fn = build_div_fn(div_method, noise=div_noise, n_samples=n_hutch_samples)
-
-        # coverage assertion: curve t_2 range must lie within trained t_2 range
-        peak = float(self.curve.peak_t2())
-        t2_max = float(self.path.t2_max)
-        assert peak <= t2_max + 1e-9, (
-            f"curve peak_t2 {peak} exceeds path.t2_max {t2_max}"
+        # build divergence estimator
+        self._div_fn = build_div_fn(
+            self.div_method,
+            noise=self.div_noise,
+            n_samples=self.n_hutch_samples
         )
 
         # network placeholders
-        self.net_b1 = None
-        self.net_b2 = None
-        self.net_eta = None
-        self.ema_b1: Optional[object] = None  # type will be emaWrapper from make_ema
+        self.net_b1: Optional[object] = None
+        self.net_b2: Optional[object] = None
+        self.net_eta: Optional[object] = None
+        self.ema_b1: Optional[object] = None
         self.ema_b2: Optional[object] = None
         self.ema_eta: Optional[object] = None
 
     def init_model(self) -> None:
-        """instantiate net_b1, net_b2, and net_eta as mlp2d; drop inline ema construction."""
+        """instantiate net_b1, net_b2, net_eta as mlp2d on self.device.
+
+        called once at the start of fit(); networks are moved to self.device
+        and ready for training. layer norm and activation are read from
+        self.activation and self.layernorm (from Pillar A / spec 04).
+        """
         self.net_b1 = MLP2D(
             self.input_dim,
             self.hidden_dim,
@@ -195,10 +219,14 @@ class TriangularVFM2D(ELDR):
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
     ) -> None:
-        """init b1/b2/eta nets and build optimizers/schedulers/emas from cfgs, then train.
+        """init networks; train b1/b2 and eta sequentially via two-phase optimization.
 
-        uses shared cfg objects (optim, sched, ema) to create separate optimizer,
-        scheduler, and ema for each phase (b and eta).
+        uses self.path, self.time, self.optim, self.sched, self.ema configs
+        to build optimizers, schedulers, and ema wrappers per network.
+        self.time(B, device) -> (t1, t2, iw) replaces hardcoded torch.rand.
+
+        args:
+            samples_p0, samples_p1, samples_pstar: [n, d] sample tensors.
         """
         n_star = samples_pstar.shape[0]
 
@@ -257,12 +285,13 @@ class TriangularVFM2D(ELDR):
         ema_b1: object,
         ema_b2: object,
     ) -> None:
-        """train b_1 and b_2 jointly with eta frozen.
+        """train b1 and b2 jointly; eta frozen.
 
-        velocity matching via inline losses (half-norm minus dot). per-direction
-        losses computed separately; sum is back-propagated. antithetic variance
-        reduction applied if self.antithetic=true. iw and outer_lambda reweighting
-        applied to per-sample losses before mean reduction.
+        samples (t1, t2, iw) via self.time (replaces hardcoded torch.rand).
+        computes velocity targets for both t1 and t2 directions via
+        vfm_velocity_target_2d; builds per-direction losses (one for b1, one for b2).
+        antithetic variance reduction applied per-direction if self.antithetic=true.
+        iw and outer_lambda reweighting applied before mean reduction.
         """
         n0 = samples_p0.shape[0]
         n1 = samples_p1.shape[0]
@@ -272,75 +301,76 @@ class TriangularVFM2D(ELDR):
         self.net_b2.train()
         self.net_eta.eval()
 
-        t2_max = float(self.path.t2_max)
-        eps_t = self.time.eps
         path = self.path
         net_b1 = self.net_b1
         net_b2 = self.net_b2
         reweight = self.reweight
 
-        # bind antithetic vs non-antithetic body once; the inner loop calls compute_losses()
-        # for both regimes via the same shape.
+        # bind antithetic vs non-antithetic body once
         if self.antithetic:
             def compute_losses(x0, x1, xstar):
-                t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*eps_t) + eps_t
-                t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - eps_t) + eps_t
-                z = torch.randn_like(x0)
-                outer = resolve_outer_lambda(reweight, t1)
-                mu = path.mu(x0, x1, xstar, t1, t2).detach()
-                dmu_dt1 = path.dmu_dt1(x0, x1, xstar, t1, t2).detach()
-                dmu_dt2 = path.dmu_dt2(x0, x1, xstar, t1, t2).detach()
-                gamma_t = path.gamma(t1, t2).detach()
-                dgamma_dt1 = path.dgamma_dt1(t1, t2).detach()
-                dgamma_dt2 = path.dgamma_dt2(t1, t2).detach()
+                # sample 2D time via self.time (replaces hardcoded torch.rand)
+                t1, t2, iw = self.time(self.batch_size, self.device)  # [B, 1] each
+                z = torch.randn_like(x0)  # [B, D]
+                outer = resolve_outer_lambda(reweight, t1)  # [B, 1]
 
-                x_t_plus = mu + gamma_t * z
-                x_t_minus = mu - gamma_t * z
-                b1_plus = net_b1(t1, t2, x_t_plus)
-                b2_plus = net_b2(t1, t2, x_t_plus)
-                b1_minus = net_b1(t1, t2, x_t_minus)
-                b2_minus = net_b2(t1, t2, x_t_minus)
-                target_1_plus = dmu_dt1 + dgamma_dt1 * z
-                target_2_plus = dmu_dt2 + dgamma_dt2 * z
-                target_1_minus = dmu_dt1 - dgamma_dt1 * z
-                target_2_minus = dmu_dt2 - dgamma_dt2 * z
+                # velocity targets for both directions
+                x_t, v1_star, v2_star = vfm_velocity_target_2d(
+                    path, x0, x1, xstar, t1, t2, z
+                )
+
+                # positive and negative perturbations
+                x_t_plus = x_t
+                x_t_minus = x_t - 2 * torch.sqrt(path.gamma(t1, t2)) * z
+
+                # b1 predictions
+                b1_plus = net_b1(t1, t2, x_t_plus)    # [B, D]
+                b1_minus = net_b1(t1, t2, x_t_minus)  # [B, D]
+
+                # b2 predictions
+                b2_plus = net_b2(t1, t2, x_t_plus)    # [B, D]
+                b2_minus = net_b2(t1, t2, x_t_minus)  # [B, D]
+
+                # per-sample b1 loss (antithetic)
                 per_b1 = (
                     0.25 * (b1_plus ** 2).sum(dim=-1)
-                    - 0.5 * (target_1_plus * b1_plus).sum(dim=-1)
+                    - 0.5 * (v1_star * b1_plus).sum(dim=-1)
                     + 0.25 * (b1_minus ** 2).sum(dim=-1)
-                    - 0.5 * (target_1_minus * b1_minus).sum(dim=-1)
-                ) * outer
+                    - 0.5 * (v1_star * b1_minus).sum(dim=-1)
+                ) * outer.squeeze(-1)  # [B]
+
+                # per-sample b2 loss (antithetic)
                 per_b2 = (
                     0.25 * (b2_plus ** 2).sum(dim=-1)
-                    - 0.5 * (target_2_plus * b2_plus).sum(dim=-1)
+                    - 0.5 * (v2_star * b2_plus).sum(dim=-1)
                     + 0.25 * (b2_minus ** 2).sum(dim=-1)
-                    - 0.5 * (target_2_minus * b2_minus).sum(dim=-1)
-                ) * outer
+                    - 0.5 * (v2_star * b2_minus).sum(dim=-1)
+                ) * outer.squeeze(-1)  # [B]
+
                 return per_b1.mean() + per_b2.mean()
         else:
             def compute_losses(x0, x1, xstar):
-                t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*eps_t) + eps_t
-                t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - eps_t) + eps_t
+                t1, t2, iw = self.time(self.batch_size, self.device)
                 z = torch.randn_like(x0)
                 outer = resolve_outer_lambda(reweight, t1)
-                mu = path.mu(x0, x1, xstar, t1, t2).detach()
-                dmu_dt1 = path.dmu_dt1(x0, x1, xstar, t1, t2).detach()
-                dmu_dt2 = path.dmu_dt2(x0, x1, xstar, t1, t2).detach()
-                gamma_t = path.gamma(t1, t2).detach()
-                dgamma_dt1 = path.dgamma_dt1(t1, t2).detach()
-                dgamma_dt2 = path.dgamma_dt2(t1, t2).detach()
 
-                x_t = mu + gamma_t * z
+                x_t, v1_star, v2_star = vfm_velocity_target_2d(
+                    path, x0, x1, xstar, t1, t2, z
+                )
+
                 b1_pred = net_b1(t1, t2, x_t)
                 b2_pred = net_b2(t1, t2, x_t)
-                target_1 = dmu_dt1 + dgamma_dt1 * z
-                target_2 = dmu_dt2 + dgamma_dt2 * z
+
                 per_b1 = (
-                    0.5 * (b1_pred ** 2).sum(dim=-1) - (target_1 * b1_pred).sum(dim=-1)
-                ) * outer
+                    0.5 * (b1_pred ** 2).sum(dim=-1)
+                    - (v1_star * b1_pred).sum(dim=-1)
+                ) * outer.squeeze(-1)
+
                 per_b2 = (
-                    0.5 * (b2_pred ** 2).sum(dim=-1) - (target_2 * b2_pred).sum(dim=-1)
-                ) * outer
+                    0.5 * (b2_pred ** 2).sum(dim=-1)
+                    - (v2_star * b2_pred).sum(dim=-1)
+                ) * outer.squeeze(-1)
+
                 return per_b1.mean() + per_b2.mean()
 
         # bind post-step callbacks once.
@@ -379,10 +409,11 @@ class TriangularVFM2D(ELDR):
         scheduler_eta: object,
         ema_eta: object,
     ) -> None:
-        """train eta with b_1 and b_2 frozen.
+        """train eta with b1 and b2 frozen.
 
-        denoising loss (half-norm minus dot with noise). reweighting applied to
-        per-sample losses before mean reduction.
+        samples (t1, t2, iw) via self.time (replaces hardcoded torch.rand).
+        denoising loss: 0.5 * ||eta - z||^2 (half-norm minus dot).
+        iw and outer_lambda reweighting applied before mean reduction.
         """
         n0 = samples_p0.shape[0]
         n1 = samples_p1.shape[0]
@@ -392,13 +423,11 @@ class TriangularVFM2D(ELDR):
         self.net_b2.eval()
         self.net_eta.train()
 
-        t2_max = float(self.path.t2_max)
-        eps_t = self.time.eps
         path = self.path
         net_eta = self.net_eta
         reweight = self.reweight
 
-        # bind post-step callbacks once.
+        # bind post-step callbacks once
         grad_clip = self.optim.grad_clip_norm
         if grad_clip is not None and grad_clip > 0:
             eta_params = list(net_eta.parameters())
@@ -407,7 +436,7 @@ class TriangularVFM2D(ELDR):
                 torch.nn.utils.clip_grad_norm_(eta_params, max_norm=grad_clip)
         else:
             def do_clip():
-                return None
+                pass
         do_sched = scheduler_eta.step if scheduler_eta is not None else (lambda: None)
         do_ema = (lambda: ema_eta.update(net_eta)) if ema_eta is not None else (lambda: None)
 
@@ -419,16 +448,22 @@ class TriangularVFM2D(ELDR):
             x1 = samples_p1[idx1]
             xstar = samples_pstar[idx_star]
 
-            t1 = torch.rand(self.batch_size, 1, device=self.device) * (1 - 2*eps_t) + eps_t
-            t2 = torch.rand(self.batch_size, 1, device=self.device) * (t2_max - eps_t) + eps_t
+            # sample 2D time (replaces hardcoded torch.rand)
+            t1, t2, iw = self.time(self.batch_size, self.device)
 
             z = torch.randn_like(x0)
-            x_t = path.sample(x0, x1, xstar, t1, t2, z).detach()
+
+            # compute interpolated samples via path
+            w = path.weights(t1, t2)
+            mu = w.alpha * x0 + w.beta * x1 + w.w_star * xstar
+            gamma_t = path.gamma(t1, t2)
+            x_t = (mu + gamma_t * z).detach()
+
             outer = resolve_outer_lambda(reweight, t1)
             eta_pred = net_eta(t1, t2, x_t)
             per_sample = (
                 0.5 * (eta_pred ** 2).sum(dim=-1) - (z * eta_pred).sum(dim=-1)
-            ) * outer
+            ) * outer.squeeze(-1)
             loss_eta = per_sample.mean()
 
             optimizer_eta.zero_grad()
@@ -439,19 +474,20 @@ class TriangularVFM2D(ELDR):
             do_ema()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """estimate log p_0(x) / p_1(x) via time-score line integral on self.curve.
+        """estimate log p_0(x) / p_1(x) via time-score line integral.
 
-        computes one divergence per velocity head (two total) per integration step.
-        the two jacrev calls have different signatures; do NOT collapse them.
+        integrates the time-score (from net_b1, net_b2, net_eta) along self.curve
+        in [path.eps, 1-path.eps] via predict_ldr_via_curve and self.integrator.
+        ema applied/restored around the inference block.
 
         args:
-            xs: [n, d] test points (cpu or device); moved to self.device.
+            xs: [n, d] test points; moved to self.device.
 
         returns:
             [n] log density ratios, cpu float32.
 
         raises:
-            runtimeerror: if any of self.net_b1, self.net_b2, self.net_eta is none.
+            runtimeerror: if any network is uninitialized (call fit first).
         """
         if self.net_b1 is None or self.net_b2 is None or self.net_eta is None:
             raise RuntimeError(
@@ -461,27 +497,10 @@ class TriangularVFM2D(ELDR):
         self.net_b1.eval()
         self.net_b2.eval()
         self.net_eta.eval()
+
         samples = xs.float().to(self.device)  # [n_samples, D]
-        n_samples = samples.shape[0]
 
-        # create uniform tau grid and pack curve outputs
-        n_points = self.integration_steps
-        tau_vals = torch.linspace(
-            self.time.eps, 1.0 - self.time.eps, steps=n_points, device=self.device
-        )  # [n_points]
-
-        curve = self.curve
-        tau_list = tau_vals.tolist()  # n_points python floats
-        t_data = torch.tensor(
-            [
-                [curve.t1(tau), curve.t2(tau), curve.dt1(tau), curve.dt2(tau)]
-                for tau in tau_list
-            ],
-            device=self.device,
-            dtype=samples.dtype,
-        )  # [n_points, 4]
-
-        # apply ema if active
+        # apply ema wrappers
         if self.ema_b1 is not None:
             self.ema_b1.apply_to(self.net_b1)
         if self.ema_b2 is not None:
@@ -489,26 +508,41 @@ class TriangularVFM2D(ELDR):
         if self.ema_eta is not None:
             self.ema_eta.apply_to(self.net_eta)
 
-        try:
-            # chunked inference: vmap over leading dim of t_data to avoid oom
-            chunk_size = max(1, 100000 // n_samples)
-            compute_vmapped = torch.vmap(
-                self._compute_time_score_single,
-                in_dims=(0, None),
-                out_dims=0,
-                randomness="different",  # required for hutchinson noise inside
+        # define time_score_fn callback
+        def time_score_fn(path, ts, samples):
+            """closure over net_b1, net_b2, net_eta, _div_fn.
+
+            args:
+                path: triangularpath2d (passed by predict_ldr_via_curve).
+                ts: [chunk_len, 2] curve points (t1, t2 coordinates).
+                samples: [n_samples, D] test points (broadcast).
+
+            returns:
+                [chunk_len, n_samples, 2] raw per-axis time-scores (s1, s2).
+                chain rule applied inside predict_ldr_via_curve.
+            """
+            t1 = ts[:, 0:1]  # [chunk_len, 1]
+            t2 = ts[:, 1:2]  # [chunk_len, 1]
+
+            s1, s2 = vfm_time_score_2d(
+                self.net_b1, self.net_b2, self.net_eta,
+                path, samples, t1, t2, self._div_fn
             )
 
-            time_score_chunks = []
-            for i in range(0, n_points, chunk_size):
-                t_chunk = t_data[i : i + chunk_size]  # [chunk_len, 4]
-                chunk_scores = compute_vmapped(t_chunk, samples).detach()  # [chunk_len, n_samples]
-                time_score_chunks.append(chunk_scores)
+            # vfm_time_score_2d returns (s1, s2) both [chunk_len, n_samples]
+            # stack into [chunk_len, n_samples, 2] for chain rule in predict_ldr_via_curve
+            return torch.stack([s1, s2], dim=-1)
 
-            time_scores = torch.cat(time_score_chunks, dim=0)  # [n_points, n_samples]
-
-            # integrate via trapezoidal rule
-            return -torch.trapezoid(time_scores, tau_vals, dim=0).cpu()  # [n_samples]
+        try:
+            ldr = predict_ldr_via_curve(
+                time_score_fn=time_score_fn,
+                path=self.path,
+                curve=self.curve,
+                integrator=self.integrator,
+                n_points=self.integration_steps,
+                samples=samples,
+            )
+            return ldr  # [n_samples] on CPU
         finally:
             # restore original weights if ema was applied
             if self.ema_b1 is not None:
@@ -517,65 +551,3 @@ class TriangularVFM2D(ELDR):
                 self.ema_b2.restore(self.net_b2)
             if self.ema_eta is not None:
                 self.ema_eta.restore(self.net_eta)
-
-    def _compute_time_score_single(
-        self, t_tau: torch.Tensor, x: torch.Tensor
-    ) -> torch.Tensor:
-        """Compute time-score d log rho / d tau at a single tau via 2D-time decomposition.
-
-        Unpack curve outputs (t_1, t_2, dt_1/dtau, dt_2/dtau), evaluate b_1, b_2, eta,
-        compute divergences separately, and combine via chain rule.
-
-        Args:
-            t_tau: [4] packed (t_1, t_2, dt_1/dtau, dt_2/dtau) as 0-d slices
-                   produced by outer vmap over [n_points, 4].
-            x: [n_samples, D] test points (broadcast, not vmapped).
-
-        Returns:
-            [n_samples] time scores at the current tau.
-        """
-        # unpack 0-d tensors from curve
-        t1_s = t_tau[0]  # 0-d
-        t2_s = t_tau[1]  # 0-d
-        dt1_s = t_tau[2]  # 0-d
-        dt2_s = t_tau[3]  # 0-d
-
-        n_samples = x.shape[0]
-
-        # expand 0-d tensors to [n_samples, 1] for network interface
-        t1_batch = t1_s.view(1, 1).expand(n_samples, 1)  # [n_samples, 1]
-        t2_batch = t2_s.view(1, 1).expand(n_samples, 1)  # [n_samples, 1]
-
-        # gamma at scalar (t_1, t_2)
-        gamma_t = self.path.gamma(t1_s.view(1, 1), t2_s.view(1, 1)).squeeze()  # 0-d
-
-        # network forwards (full batch)
-        b1_pred = self.net_b1(t1_batch, t2_batch, x)  # [n_samples, D]
-        b2_pred = self.net_b2(t1_batch, t2_batch, x)  # [n_samples, D]
-        eta_pred = self.net_eta(t1_batch, t2_batch, x)  # [n_samples, D]
-
-        # divergence via vmap(jacrev) per head; two separate calls, do NOT collapse
-        t1_one = t1_s.view(1, 1)
-        t2_one = t2_s.view(1, 1)
-
-        def b1_single(x_single):
-            return self.net_b1(t1_one, t2_one, x_single.unsqueeze(0)).squeeze(0)
-
-        def b2_single(x_single):
-            return self.net_b2(t1_one, t2_one, x_single.unsqueeze(0)).squeeze(0)
-
-        # divergences via the init-bound _div_fn (no per-tau branch on div_method).
-        div_b1 = self._div_fn(b1_single, x)  # [n_samples]
-        div_b2 = self._div_fn(b2_single, x)  # [n_samples]
-
-        # dot products
-        b1_dot_eta = (b1_pred * eta_pred).sum(dim=-1)  # [n_samples]
-        b2_dot_eta = (b2_pred * eta_pred).sum(dim=-1)  # [n_samples]
-
-        # directional time-score components
-        s_1 = -div_b1 + b1_dot_eta / gamma_t  # [n_samples]
-        s_2 = -div_b2 + b2_dot_eta / gamma_t  # [n_samples]
-
-        # combine via curve derivatives (chain rule)
-        time_score = s_1 * dt1_s + s_2 * dt2_s  # [n_samples]
-        return time_score
