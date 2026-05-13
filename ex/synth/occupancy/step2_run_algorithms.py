@@ -6,9 +6,12 @@ import torch
 import yaml
 from src.methods import (
     BDRE, MDRE, TSM, CTSM, TriangularMDRE, MultiHeadTriangularTDRE,
-    TriangularCTSM, TriangularVFM, TabularPluginDRE, SmoothedTabularPluginDRE,
+    TriangularCTSMV1 as TriangularCTSM,
+    TriangularVFMV1 as TriangularVFM,
+    TabularPluginDRE, SmoothedTabularPluginDRE,
 )
-from src.waypoints.triangular_continuous import BarycentricCtsm1D, BarycentricVfm1D
+from src.waypoints.path_builders import ctsm_bary_path, vfm_bary_path
+from src.methods.reg.common._cfgs import OptimCfg
 from src.models.binary_classification import make_binary_classifier, make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.sampling.frozen_flow import FrozenFlow
@@ -190,36 +193,43 @@ def create_estimator(method, config, encoding_cfg, n_states, n_actions, device):
 
     elif method == "TSM":
         hp = HPO_PARAMS["TSM"]
-        return TSM(input_dim=input_dim, device=device, **hp)
+        return TSM(
+            input_dim=input_dim, device=device,
+            n_epochs=hp["n_epochs"], batch_size=hp["batch_size"],
+            optim=OptimCfg(lr=hp["lr"]),
+        )
 
     elif method == "CTSM":
         hp = HPO_PARAMS["CTSM"]
-        return CTSM(input_dim=input_dim, device=device, **hp)
+        return CTSM(
+            input_dim=input_dim, device=device,
+            n_epochs=hp["n_epochs"], batch_size=hp["batch_size"],
+            sigma=hp["sigma"],
+            optim=OptimCfg(lr=hp["lr"]),
+        )
 
     elif method == "TriangularCTSM":
         hp = HPO_PARAMS["CTSM"]
-        path = BarycentricCtsm1D(sigma=hp["sigma"], vertex=0.5, eps=hp["eps"])
+        path = ctsm_bary_path(sigma=hp["sigma"], vertex=0.5, eps=max(hp["eps"], 1e-3))
         return TriangularCTSM(
             input_dim=input_dim,
             path=path,
             n_epochs=hp["n_epochs"],
-            lr=hp["lr"],
+            optim=OptimCfg(lr=hp["lr"]),
             batch_size=hp["batch_size"],
-            eps=hp["eps"],
             device=device,
         )
 
     elif method == "TriangularVFM":
         hp = HPO_PARAMS["VFM"]
         eps = max(hp["eps"], 1e-3)
-        path = BarycentricVfm1D(k=hp["k"], vertex=0.5, eps=eps)
+        path = vfm_bary_path(k=hp["k"], vertex=0.5, eps=eps)
         return TriangularVFM(
             input_dim=input_dim,
             path=path,
             n_epochs=hp["n_epochs"],
-            lr=hp["lr"],
+            optim=OptimCfg(lr=hp["lr"]),
             batch_size=hp["batch_size"],
-            eps=eps,
             integration_steps=hp["integration_steps"],
             device=device,
         )
