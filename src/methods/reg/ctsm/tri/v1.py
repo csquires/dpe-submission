@@ -5,6 +5,7 @@ regression target via MSE loss. Default time sampler is uniform (no path-aware
 singularity avoidance like V2).
 """
 from typing import Optional, Callable
+import warnings
 
 import torch
 from torch import Tensor
@@ -18,7 +19,7 @@ from ...common._trainer import train_loop
 from ...common._losses import make_sb_loss
 from src.waypoints.dataclass_paths import TriangularPath1D
 from src.waypoints.path_builders import (
-    barycentric_ctsm_path_1d,
+    ctsm_bary_path,
 )
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 
@@ -31,11 +32,16 @@ class TriangularCTSMV1(ELDR):
         input_dim: int,
         *,
         path: Optional[TriangularPath1D] = None,
+        test_path: Optional[TriangularPath1D] = None,
         time = None,
         curve = None,
         integrator = None,
         sigma: float = 1.0,
         vertex: float = 0.5,
+        inner_eps: float = 0.0,
+        gamma_min: float = 0.0,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
@@ -53,10 +59,48 @@ class TriangularCTSMV1(ELDR):
         defaults: path uses barycentric+CTSM-gamma; time uses uniform sampler;
         curve is identity; integrator is trapezoid. all defaults resolved before
         slot validation.
+
+        clamping scalars inner_eps, gamma_min (train) and test_inner_eps,
+        test_gamma_min (test, inference) control coordinate and value clamping
+        in the path gamma and weights. defaults: all 0.0 (smooth gamma, no
+        singularities at interior tau).
         """
         # step 1: resolve path default
         if path is None:
-            path = barycentric_ctsm_path_1d(sigma=sigma, vertex=vertex, eps=1e-3)
+            path = ctsm_bary_path(
+                sigma=sigma, vertex=vertex,
+                inner_eps=inner_eps, gamma_min=gamma_min,
+                eps=1e-3
+            )
+
+        # step 1b: resolve test_path default (uses test_* clamping kwargs)
+        if test_path is None:
+            test_path = ctsm_bary_path(
+                sigma=sigma, vertex=vertex,
+                inner_eps=test_inner_eps, gamma_min=test_gamma_min,
+                eps=1e-3
+            )
+
+        # F2/F3: sampler/path inner_eps consistency
+        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
+        if (samp_ie > 0) != (inner_eps > 0):
+            warnings.warn(
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
+                "Probably unintentional.", UserWarning, stacklevel=2,
+            )
+        elif samp_ie > 0 and inner_eps > 0:
+            assert abs(samp_ie - inner_eps) < 1e-9, \
+                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
+
+        # F4: inactive gamma_min warning (CTSM-style sigma paths only)
+        if inner_eps > 0 and gamma_min > 0:
+            eff_inner = sigma * (inner_eps * (1.0 - inner_eps)) ** 0.5
+            if gamma_min < eff_inner:
+                warnings.warn(
+                    f"gamma_min={gamma_min} below coord-clamp effective floor "
+                    f"{eff_inner:.4g}; gamma_min is inactive in compose order.",
+                    UserWarning, stacklevel=2,
+                )
 
         # step 2: resolve time default (uniform sampler on [eps, 1-eps])
         if time is None:
@@ -90,6 +134,15 @@ class TriangularCTSMV1(ELDR):
             expected_curve_dim=1,
             device=device,
         )
+
+        # store test_path (same type by construction; no separate validation)
+        self.test_path = test_path
+
+        # store legacy scalars for HPO introspection
+        self.inner_eps = inner_eps
+        self.gamma_min = gamma_min
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
 
         # step 6: store network scalars
         self.hidden_dim = hidden_dim
@@ -194,7 +247,7 @@ class TriangularCTSMV1(ELDR):
             from ...common._predict_ldr import predict_ldr_via_curve
             ldr = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
-                path=self.path,
+                path=self.test_path,
                 curve=self.curve,
                 integrator=self.integrator,
                 n_points=self.integration_steps,

@@ -4,8 +4,13 @@ when ``inner_eps > 0`` the path defines a forbidden support band around
 tau=vertex. default time sampler uses piecewise_sb_sampler to avoid the band.
 user may override both path and time sampler; in that case they take
 responsibility for band-related bias.
+
+dual-path mode: train path (self.path) uses (gamma_min, inner_eps);
+test path (self.test_path) uses (test_gamma_min, test_inner_eps).
+inference uses test path; training uses train path.
 """
 from typing import Optional, Literal
+import warnings
 
 import torch
 
@@ -24,7 +29,7 @@ from ...common._integrators import Integrator, integrator_trapezoid
 from src.models.flow.div_estimators import build_div_fn
 from src.models.common.mlp import MLP
 from src.waypoints.dataclass_paths import TriangularPath1D
-from src.waypoints.path_builders import piecewise_sb_triangular_path_1d
+from src.waypoints.path_builders import psb_path
 
 
 def build_velocity_net(
@@ -91,6 +96,8 @@ class TriangularVFMV2(ELDR):
         vertex: float = 0.5,
         gamma_min: float = 5e-2,
         inner_eps: float = 0.0,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
@@ -107,19 +114,26 @@ class TriangularVFMV2(ELDR):
         activation: str = "gelu",
         layernorm: str = "off",
         reweight: bool = False,
+        test_path: Optional[TriangularPath1D] = None,
     ) -> None:
-        """initialize triangular vfm v2 with four-slot surface.
+        """initialize triangular vfm v2 with dual paths (train/test).
 
         args:
             input_dim: dimensionality of data.
-            path: optional triangularpath1d; defaults to
-                  piecewise_sb_triangular_path_1d(..., eps=1e-3).
+            path: optional triangularpath1d (train); defaults to
+                  psb_path(..., eps=1e-3).
+            test_path: optional triangularpath1d (test); defaults to
+                  psb_path with test_* clamps.
             time: optional timesampler1d; when inner_eps > 0, defaults to
                   make_piecewise_sb_sampler(...). when inner_eps == 0,
                   defaults to make_uniform(...).
             curve: optional curve; defaults to identitycurve1d().
             integrator: optional integrator; defaults to integrator_trapezoid.
-            sigma, vertex, gamma_min, inner_eps: path geometry scalars.
+            sigma, vertex: path geometry scalars.
+            gamma_min: floor on gamma(tau) for train path (default 0.05).
+            inner_eps: inner coordinate clamp for train path (default 0.0).
+            test_gamma_min: floor on gamma(tau) for test path (default 0.0).
+            test_inner_eps: inner coordinate clamp for test path (default 0.0).
             hidden_dim, n_hidden_layers, n_epochs, batch_size: network and
                   training shape.
             optim: required optimcfg (optimizer config with lr, etc.).
@@ -135,11 +149,20 @@ class TriangularVFMV2(ELDR):
         """
         # step 1: resolve defaults before validation
         if path is None:
-            path = piecewise_sb_triangular_path_1d(
+            path = psb_path(
                 sigma=sigma,
                 vertex=vertex,
                 gamma_min=gamma_min,
                 inner_eps=inner_eps,
+                eps=1e-3,
+            )
+
+        if test_path is None:
+            test_path = psb_path(
+                sigma=sigma,
+                vertex=vertex,
+                gamma_min=test_gamma_min,
+                inner_eps=test_inner_eps,
                 eps=1e-3,
             )
 
@@ -153,7 +176,18 @@ class TriangularVFMV2(ELDR):
             else:
                 time = make_uniform(eps=path.eps)
 
-        # step 2: validate and store slots
+        # step 2: f2/f3 sampler/path consistency check
+        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
+        if (samp_ie > 0) != (inner_eps > 0):
+            warnings.warn(
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
+                "Probably unintentional.", UserWarning, stacklevel=2,
+            )
+        elif samp_ie > 0 and inner_eps > 0:
+            assert abs(samp_ie - inner_eps) < 1e-9, \
+                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
+
+        # step 3: validate and store slots
         _validate_and_store_slots(
             self,
             input_dim=input_dim,
@@ -166,13 +200,18 @@ class TriangularVFMV2(ELDR):
             device=device,
         )
 
-        # step 3: store v2-specific scalars
+        # step 4: store test path and clamp scalars
+        self.test_path = test_path
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
+
+        # step 5: store v2-specific scalars (train path)
         self.sigma = sigma
         self.vertex = vertex
         self.gamma_min = gamma_min
         self.inner_eps = inner_eps
 
-        # step 4: store network and training scalars
+        # step 6: store network and training scalars
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_epochs = n_epochs
@@ -189,14 +228,14 @@ class TriangularVFMV2(ELDR):
         self.layernorm = layernorm
         self.reweight = reweight
 
-        # step 5: build divergence estimator function
+        # step 7: build divergence estimator function
         self._div_fn = build_div_fn(
             method=div_method,
             noise=div_noise,
             n_samples=n_hutch_samples,
         )
 
-        # step 6: network placeholders (frozen attribute names for checkpoint compat)
+        # step 8: network placeholders (frozen attribute names for checkpoint compat)
         self.net_b = None
         self.net_eta = None
         self.ema_b: Optional[object] = None
@@ -234,44 +273,54 @@ class TriangularVFMV2(ELDR):
             samples_p1: [n_samples, input_dim] batch from p_1.
             samples_pstar: [n_samples, input_dim] batch from p_*.
         """
-        x0, x1, xstar = samples_p0, samples_p1, samples_pstar
-        self.init_model()
-        optimizer = self.optim.build(
-            list(self.net_b.parameters()) + list(self.net_eta.parameters()),
-        )
-        scheduler = self.sched.build(optimizer) if self.sched else None
-        ema_helper = self.ema.build(self) if self.ema else None
+        from ...common._cfgs import make_optim, make_sched, make_ema
+        samples_p0 = samples_p0.float().to(self.device)
+        samples_p1 = samples_p1.float().to(self.device)
+        samples_pstar = samples_pstar.float().to(self.device)
 
-        loss_b = make_velo_loss(
-            path=self.path,
-            div_fn=self._div_fn,
-            net_eta=self.net_eta,
-        )
-        loss_eta = make_denoiser_loss(
-            path=self.path,
-            net_b=self.net_b,
-        )
+        self.init_model()
+        optim_b = make_optim(self.net_b.parameters(), self.optim)
+        optim_eta = make_optim(self.net_eta.parameters(), self.optim)
+        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
+        ema_b = make_ema(self.net_b, self.ema)
+        ema_eta = make_ema(self.net_eta, self.ema)
+        self.ema_b = ema_b
+        self.ema_eta = ema_eta
+
+        loss_b = make_velo_loss(path=self.path, antithetic=self.antithetic, reweight=self.reweight)
+        loss_eta = make_denoiser_loss(path=self.path, reweight=self.reweight)
 
         train_two_phase(
-            estimator=self,
-            x0=x0,
-            x1=x1,
-            xstar=xstar,
+            model_b=self.net_b,
+            model_eta=self.net_eta,
+            samples_p0=samples_p0,
+            samples_p1=samples_p1,
+            samples_pstar=samples_pstar,
             loss_b=loss_b,
             loss_eta=loss_eta,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            ema_helper=ema_helper,
-            n_epochs=self.n_epochs,
+            optim_b=optim_b,
+            optim_eta=optim_eta,
+            n_steps_b=self.n_epochs,
+            n_steps_eta=self.n_epochs,
             batch_size=self.batch_size,
             time_sampler=self.time,
-            antithetic=self.antithetic,
-            integration_steps=self.integration_steps,
-            device=self.device,
+            scheduler_b=sched_b,
+            scheduler_eta=sched_eta,
+            ema_b=ema_b,
+            ema_eta=ema_eta,
+            grad_clip_norm_b=self.optim.grad_clip_norm,
+            grad_clip_norm_eta=self.optim.grad_clip_norm,
+            eps=self.path.eps,
         )
+
+        self.net_b.eval()
+        self.net_eta.eval()
 
     def predict_ldr(self, samples: torch.Tensor) -> torch.Tensor:
         """infer log density ratio via path integral over velocity field.
+
+        uses test_path (inference-time clamping), not train path.
 
         args:
             samples: [n_samples, input_dim] batch of test points.
@@ -281,16 +330,18 @@ class TriangularVFMV2(ELDR):
         """
         n_points = self.integration_steps
 
+        def time_score_fn(path, ts, xs):
+            """loop per curve point; vfm_time_score_1d expects tau:[B,1] matching xs:[B,D]."""
+            n = xs.shape[0]
+            out = []
+            for i in range(ts.shape[0]):
+                tau_i = ts[i:i+1].expand(n, 1)
+                out.append(vfm_time_score_1d(self.net_b, self.net_eta, path, xs, tau_i, self._div_fn))
+            return torch.stack(out, dim=0)
+
         return predict_ldr_via_curve(
-            time_score_fn=lambda tau_samples: vfm_time_score_1d(
-                net_b=self.net_b,
-                net_eta=self.net_eta,
-                path=self.path,
-                x=samples,
-                tau=tau_samples,
-                div_fn=self._div_fn,
-            ),
-            path=self.path,
+            time_score_fn=time_score_fn,
+            path=self.test_path,
             curve=self.curve,
             integrator=self.integrator,
             n_points=n_points,

@@ -21,7 +21,7 @@ from ..common._curves import IdentityCurve1D, Curve
 from ..common._integrators import integrator_trapezoid, Integrator
 from ..common._predict_ldr import predict_ldr_via_curve
 from src.waypoints.dataclass_paths import DirectPath1D
-from src.waypoints.path_builders import direct_path_1d
+from src.waypoints.path_builders import vfm_direct_path
 from ...common.base import DRE
 from src.models.common.mlp import MLP
 from src.models.flow.div_estimators import build_div_fn
@@ -46,6 +46,11 @@ class VFM(DRE):
         curve: Curve = None,
         integrator: Integrator = None,
         k: float = 0.5,
+        inner_eps: float = 0.0,
+        gamma_min: float = 0.0,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
+        test_path: Optional["DirectPath1D"] = None,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
@@ -68,16 +73,30 @@ class VFM(DRE):
 
         # resolve all four slots before validation
         if path is None:
-            path = direct_path_1d(k=k, eps=1e-3)
+            path = vfm_direct_path(k=k, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
 
         if time is None:
             time = make_uniform(eps=path.eps)
+
+        if test_path is None:
+            test_path = vfm_direct_path(k=k, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
 
         if curve is None:
             curve = IdentityCurve1D()
 
         if integrator is None:
             integrator = integrator_trapezoid
+
+        # F2/F3 sampler/path inner_eps consistency
+        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
+        if (samp_ie > 0) != (inner_eps > 0):
+            warnings.warn(
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
+                "Probably unintentional.", UserWarning, stacklevel=2,
+            )
+        elif samp_ie > 0 and inner_eps > 0:
+            assert abs(samp_ie - inner_eps) < 1e-9, \
+                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
 
         # validate and store four-slot surface
         _validate_and_store_slots(
@@ -91,6 +110,13 @@ class VFM(DRE):
             expected_curve_dim=1,
             device=device,
         )
+
+        # store test path and clamping scalars
+        self.test_path = test_path
+        self.inner_eps = inner_eps
+        self.gamma_min = gamma_min
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
 
         # store network and training hyperparameters
         self.hidden_dim = hidden_dim
@@ -192,11 +218,11 @@ class VFM(DRE):
                 z = torch.randn_like(x0)
                 # positive noise
                 x_t_p, v_star_p = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                b_p = model(tau.unsqueeze(-1), x_t_p)
+                b_p = model(tau, x_t_p)
                 l_p = 0.5 * (b_p ** 2).sum(-1) - (v_star_p * b_p).sum(-1)
                 # negative noise
                 x_t_m, v_star_m = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
-                b_m = model(tau.unsqueeze(-1), x_t_m)
+                b_m = model(tau, x_t_m)
                 l_m = 0.5 * (b_m ** 2).sum(-1) - (v_star_m * b_m).sum(-1)
                 outer = resolve_outer_lambda(reweight, tau)
                 return (0.5 * (l_p + l_m) * outer * iw.squeeze(-1)).mean()
@@ -207,7 +233,7 @@ class VFM(DRE):
                 z = torch.randn_like(x0)
                 x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
                 outer = resolve_outer_lambda(reweight, tau)
-                b = model(tau.unsqueeze(-1), x_t)
+                b = model(tau, x_t)
                 return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
             loss_b = loss_b_naive
 
@@ -218,7 +244,7 @@ class VFM(DRE):
             x0, x1 = batch["x0"], batch["x1"]
             z = torch.randn_like(x0)
             x_t, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-            eta = model(tau.unsqueeze(-1), x_t)
+            eta = model(tau, x_t)
             outer = resolve_outer_lambda(reweight, tau)
             return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
@@ -264,14 +290,13 @@ class VFM(DRE):
         samples = xs.float().to(self.device)
 
         def time_score_fn(path, ts, xs):
-            """closure that evaluates vfm_time_score_1d at curve points ts."""
-            # ts: [n_points, 1] (curve points)
-            # xs: [n_samples, input_dim]
-            # returns: [n_points, n_samples] (one score per time point per sample)
-            tau = ts[:, 0]  # extract tau from curve points
-            return vfm_time_score_1d(
-                self.net_b, self.net_eta, path, xs, tau, self._div_fn
-            )
+            """loop per curve point; vfm_time_score_1d expects tau:[B,1] matching xs:[B,D]."""
+            n = xs.shape[0]
+            out = []
+            for i in range(ts.shape[0]):
+                tau_i = ts[i:i+1].expand(n, 1)
+                out.append(vfm_time_score_1d(self.net_b, self.net_eta, path, xs, tau_i, self._div_fn))
+            return torch.stack(out, dim=0)
 
         if self.ema_b is not None:
             self.ema_b.apply_to(self.net_b)
@@ -281,7 +306,7 @@ class VFM(DRE):
         try:
             ldr = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
-                path=self.path,
+                path=self.test_path,
                 curve=self.curve,
                 integrator=self.integrator,
                 n_points=self.integration_steps,

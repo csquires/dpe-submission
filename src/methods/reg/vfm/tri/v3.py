@@ -20,7 +20,7 @@ from ...common._predict_ldr import predict_ldr_via_curve
 from ...common._curves import Curve, LowArcCurve2D
 from ...common._integrators import Integrator, integrator_trapezoid
 from src.waypoints.dataclass_paths import TriangularPath2D
-from src.waypoints.path_builders import stacked_2d_triangular_path
+from src.waypoints.path_builders import vfm_stack2d_path
 from src.methods.reg.common._time_samplers import TimeSampler2D, make_uniform, make_product
 from src.models.flow.div_estimators import build_div_fn
 from src.models.time_score_matching.velocity_network_2d import MLP2D
@@ -32,6 +32,10 @@ class TriangularVFM2D(ELDR):
     trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially
     on three distributions p_0, p_1, p_*. inference integrates the time-score
     along self.curve from tau=eps to 1-eps via predict_ldr_via_curve.
+    clamping: inner_eps and gamma_min for train path; test_inner_eps and
+    test_gamma_min for inference path. train path uses gamma_min=0.05 by default
+    (legacy vfm v3 behavior); test path uses gamma_min=0.0 by default for unclipped
+    inference.
 
     contract: fit(samples_p0, samples_p1, samples_pstar) with three [n, d]
     tensors; predict_ldr(xs) returns log(p_0/p_1) as [n_samples] cpu tensor.
@@ -42,9 +46,14 @@ class TriangularVFM2D(ELDR):
         input_dim: int,
         *,
         path: Optional[TriangularPath2D] = None,
+        test_path: Optional[TriangularPath2D] = None,
         time: Optional[TimeSampler2D] = None,
         curve: Optional[Curve] = None,
         integrator: Integrator = integrator_trapezoid,
+        inner_eps: float = 0.0,
+        gamma_min: float = 0.05,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_epochs: int = 1000,
@@ -70,14 +79,24 @@ class TriangularVFM2D(ELDR):
 
         constructor arguments:
           input_dim: dimensionality of data.
-          path: optional triangularpath2d; defaults to stacked_2d_triangular_path(k=20.0, ...).
+          path: optional triangularpath2d; defaults to vfm_stack2d_path(k=20.0, ...).
                 defines the stacked 2d interpolant and its eps and t2_max bounds.
+          test_path: optional triangularpath2d for inference; if none, built from
+                     vfm_stack2d_path with test_inner_eps, test_gamma_min.
           time: optional timesampler2d; defaults to make_product of two make_uniform samplers.
                 returns (t1, t2, iw) on each call; scaled to path.t2_max.
           curve: optional curve; defaults to lowarccurve2d(path_height=1.0).
                 maps tau in [eps, 1-eps] to (t1, t2) coordinates; must have dim=2.
           integrator: callable(scores [n_points, n_samples], tau [n_points]) -> [n_samples].
                 defaults to integrator_trapezoid. trapezoid, mean, or simpson.
+          inner_eps: float; coordinate clamping window half-width for train path.
+                     defaults to 0.0 (no coord clamping).
+          gamma_min: float; lower bound on gamma(t) for train path.
+                     defaults to 0.05 (legacy vfm v3 gamma_min).
+          test_inner_eps: float; coordinate clamping for test path.
+                          defaults to 0.0.
+          test_gamma_min: float; value floor for test path.
+                          defaults to 0.0.
           hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training shape.
           optim, sched, ema: configuration objects (optimcfg, schedcfg, emacfg).
           device: torch device string; defaults to cuda if available, else cpu.
@@ -97,8 +116,14 @@ class TriangularVFM2D(ELDR):
 
         # resolve all four slots BEFORE validation
         if path is None:
-            path = stacked_2d_triangular_path(
-                k=20.0, gamma_schedule="linear-stiff", t2_max=0.3, eps=1e-3
+            path = vfm_stack2d_path(
+                k=20.0, t2_max=0.3,
+                inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3
+            )
+        if test_path is None:
+            test_path = vfm_stack2d_path(
+                k=20.0, t2_max=0.3,
+                inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3
             )
         if curve is None:
             curve = LowArcCurve2D(path_height=1.0)
@@ -118,6 +143,17 @@ class TriangularVFM2D(ELDR):
                 make_uniform_scaled(eps=path.eps, t2_max=path.t2_max)
             )
 
+        # f2/f3 sampler/path inner_eps consistency check
+        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
+        if (samp_ie > 0) != (inner_eps > 0):
+            warnings.warn(
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
+                "Probably unintentional.", UserWarning, stacklevel=2,
+            )
+        elif samp_ie > 0 and inner_eps > 0:
+            assert abs(samp_ie - inner_eps) < 1e-9, \
+                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
+
         # validate and store slots
         _validate_and_store_slots(
             self,
@@ -136,6 +172,15 @@ class TriangularVFM2D(ELDR):
             f"curve peak_t2 {self.curve.peak_t2()} exceeds path.t2_max "
             f"{self.path.t2_max} + 1e-9 tolerance"
         )
+
+        # store test_path (no separate validation; same type by construction)
+        self.test_path = test_path
+
+        # store clamping scalars for hpo introspection
+        self.inner_eps = inner_eps
+        self.gamma_min = gamma_min
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
 
         # store training/network scalars
         self.hidden_dim = hidden_dim
@@ -521,22 +566,24 @@ class TriangularVFM2D(ELDR):
                 [chunk_len, n_samples, 2] raw per-axis time-scores (s1, s2).
                 chain rule applied inside predict_ldr_via_curve.
             """
-            t1 = ts[:, 0:1]  # [chunk_len, 1]
-            t2 = ts[:, 1:2]  # [chunk_len, 1]
-
-            s1, s2 = vfm_time_score_2d(
-                self.net_b1, self.net_b2, self.net_eta,
-                path, samples, t1, t2, self._div_fn
-            )
-
-            # vfm_time_score_2d returns (s1, s2) both [chunk_len, n_samples]
-            # stack into [chunk_len, n_samples, 2] for chain rule in predict_ldr_via_curve
-            return torch.stack([s1, s2], dim=-1)
+            # loop over chunk_len; vfm_time_score_2d expects t1, t2 [B,1]
+            # matching samples [B, D] batch dim.
+            m = samples.shape[0]
+            outs = []
+            for i in range(ts.shape[0]):
+                t1_i = ts[i:i+1, 0:1].expand(m, 1)
+                t2_i = ts[i:i+1, 1:2].expand(m, 1)
+                s1, s2 = vfm_time_score_2d(
+                    self.net_b1, self.net_b2, self.net_eta,
+                    path, samples, t1_i, t2_i, self._div_fn,
+                )
+                outs.append(torch.stack([s1, s2], dim=-1))
+            return torch.stack(outs, dim=0)  # [chunk_len, n_samples, 2]
 
         try:
             ldr = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
-                path=self.path,
+                path=self.test_path,
                 curve=self.curve,
                 integrator=self.integrator,
                 n_points=self.integration_steps,

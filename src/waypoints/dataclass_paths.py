@@ -1,20 +1,14 @@
-"""
-path archetypes for vfm and ctsm: frozen geometry containers with callable weight/gamma fields.
+"""path archetypes for vfm and ctsm: frozen dataclasses bundling callable
+weight/gamma fields and a scalar eps boundary.
 
-three path families are defined:
-- DirectPath1D: two-source path without singular point (vfm/ctsm direct mode).
-- TriangularPath1D: triangular path with x_star singular point (vfm/ctsm v1/v2).
-- TriangularPath2D: 2d triangular path over (t1, t2) domain (vfm/ctsm v3).
+three path families:
+- DirectPath1D: two-source path (no anchor); stock vfm/ctsm.
+- TriangularPath1D: three-source path with x_star anchor; v1/v2.
+- TriangularPath2D: 2d-time triangular path; v3.
 
-weights are encapsulated in NamedTuple bundles (DirectWeights1D, TriangularWeights1D,
-TriangularWeights2D) to preserve joint data dependency across outputs and ensure
-clean vmap compatibility. builders in path_builders.py populate the Callable fields;
-paths are immutable after construction via frozen=True.
-
-each path callable takes time argument(s) and returns either a weight bundle or a
-scalar tensor. gamma schedules enforce positivity on interior [eps, 1-eps] (1d) or
-[eps, 1-eps] x [eps, t2_max] (2d) to support logarithmic time reparameterization
-and flow matching.
+weights are NamedTuple bundles to preserve joint shape across outputs and stay
+vmap-friendly. builders in path_builders.py populate the Callable fields; the
+frozen=True dataclasses prevent post-construction mutation.
 """
 
 from dataclasses import dataclass

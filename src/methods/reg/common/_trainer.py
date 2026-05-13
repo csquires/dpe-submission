@@ -197,7 +197,7 @@ def train_loop(
 
     for _ in range(n_steps):
         batch = build_batch()
-        tau, iw = time_sampler(batch_size, eps, device)
+        tau, iw = time_sampler(batch_size, device)
 
         loss = loss_fn(model, batch, tau, iw, **loss_kw)
 

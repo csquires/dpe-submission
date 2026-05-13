@@ -120,7 +120,6 @@ def ctsm_regression_target_1d(
     xstar: Tensor,  # [B, D]
     tau: Tensor,    # [B, 1]
     epsilon: Tensor, # [B, D]; standard Gaussian noise
-    sigma: float,   # noise amplitude scale
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Return (x_t, target, lambda_t) where target and lambda_t detached.
 
@@ -135,10 +134,12 @@ def ctsm_regression_target_1d(
     alpha_t, beta_t, w_star_t = w.alpha, w.beta, w.w_star
     d_alpha_t, d_beta_t, d_w_star_t = w.d_alpha, w.d_beta, w.d_w_star
 
-    # noise variance and its derivative
-    g_t = tau * (1 - tau)                       # [B, 1]
-    dg_dtau_t = 1 - 2 * tau                     # [B, 1]
-    std_t = sigma * torch.sqrt(g_t)             # [B, 1]
+    # noise variance and its derivative (derived from path)
+    gamma_t = path.gamma(tau)                   # [B, 1]
+    dgamma_t = path.dgamma_dtau(tau)            # [B, 1]
+    var_t = gamma_t ** 2                        # [B, 1]
+    d_var_t = 2 * gamma_t * dgamma_t            # [B, 1]
+    std_t = gamma_t                             # [B, 1]
 
     # path mean and drift direction
     mu_tau = alpha_t * x0 + beta_t * x1 + w_star_t * xstar  # [B, D]
@@ -151,10 +152,6 @@ def ctsm_regression_target_1d(
     epsilon_sq = (epsilon ** 2).sum(dim=-1, keepdim=True)   # [B, 1]
     delta_dot_epsilon = (Delta * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
     dim = epsilon.shape[-1]
-
-    # variance schedule
-    var_t = sigma ** 2 * g_t                    # [B, 1]
-    d_var_t = sigma ** 2 * dg_dtau_t            # [B, 1]
 
     # chord-norm normalization (endpoint-based, not path-velocity-based)
     delta_endpoint_sq = ((x1 - x0) ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
@@ -173,7 +170,6 @@ def ctsm_regression_target_direct_1d(
     x1: Tensor,     # [B, D]
     tau: Tensor,    # [B, 1]
     epsilon: Tensor, # [B, D]
-    sigma: float,
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Return (x_t, target, lambda_t) where target and lambda_t detached. No xstar.
 
@@ -187,10 +183,12 @@ def ctsm_regression_target_direct_1d(
     alpha_t, beta_t = w.alpha, w.beta
     d_alpha_t, d_beta_t = w.d_alpha, w.d_beta
 
-    # noise schedule
-    g_t = tau * (1 - tau)                       # [B, 1]
-    dg_dtau_t = 1 - 2 * tau                     # [B, 1]
-    std_t = sigma * torch.sqrt(g_t)             # [B, 1]
+    # noise variance and its derivative (derived from path)
+    gamma_t = path.gamma(tau)                   # [B, 1]
+    dgamma_t = path.dgamma_dtau(tau)            # [B, 1]
+    var_t = gamma_t ** 2                        # [B, 1]
+    d_var_t = 2 * gamma_t * dgamma_t            # [B, 1]
+    std_t = gamma_t                             # [B, 1]
 
     # path mean and drift direction
     mu_tau = alpha_t * x0 + beta_t * x1  # [B, D]
@@ -203,10 +201,6 @@ def ctsm_regression_target_direct_1d(
     epsilon_sq = (epsilon ** 2).sum(dim=-1, keepdim=True)   # [B, 1]
     delta_dot_epsilon = (Delta * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
     dim = epsilon.shape[-1]
-
-    # variance schedule
-    var_t = sigma ** 2 * g_t                    # [B, 1]
-    d_var_t = sigma ** 2 * dg_dtau_t            # [B, 1]
 
     # chord-norm normalization
     delta_endpoint_sq = ((x1 - x0) ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
@@ -227,7 +221,6 @@ def ctsm_regression_target_2d(
     t1: Tensor,     # [B, 1]
     t2: Tensor,     # [B, 1]
     epsilon: Tensor, # [B, D]
-    sigma: float,
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Return (x_t, target [B, 2], lambda_t [B, 2]) where target, lambda_t detached.
 
@@ -244,34 +237,33 @@ def ctsm_regression_target_2d(
     i_1 = (1.0 - t1) * x0 + t1 * x1                 # [B, D]
     mu  = (1.0 - t2) * i_1 + t2 * xstar             # [B, D]
 
-    # noise schedule and std
-    g    = path.gamma(t1, t2)                       # [B, 1]
-    std  = sigma * torch.sqrt(g)                    # [B, 1]
+    # noise variance and its derivative (derived from path)
+    gamma_t = path.gamma(t1, t2)                    # [B, 1]
+    dgamma_t_dt1 = path.dgamma_dt1(t1, t2)         # [B, 1]
+    dgamma_t_dt2 = path.dgamma_dt2(t1, t2)         # [B, 1]
+    var_t = gamma_t ** 2                           # [B, 1]
+    d_var_t_dt1 = 2 * gamma_t * dgamma_t_dt1      # [B, 1]
+    d_var_t_dt2 = 2 * gamma_t * dgamma_t_dt2      # [B, 1]
+    std_t = gamma_t                                # [B, 1]
 
     # noisy sample on path
-    x    = mu + std * epsilon                       # [B, D]
+    x    = mu + std_t * epsilon                     # [B, D]
 
     # partial derivatives of mu w.r.t. t_1, t_2
     dmu_dt1 = (1.0 - t2) * (x1 - x0)                # [B, D]
     dmu_dt2 = xstar - i_1                           # [B, D]
-
-    # partial derivatives of g w.r.t. t_1, t_2
-    dg_dt1 = path.dgamma_dt1(t1, t2)                # [B, 1]
-    dg_dt2 = path.dgamma_dt2(t1, t2)                # [B, 1]
 
     # quantities reused in target
     eps_sq        = (epsilon ** 2).sum(dim=-1, keepdim=True)         # [B, 1]
     dim           = epsilon.shape[-1]
     dmu_dt1_dot_e = (dmu_dt1 * epsilon).sum(dim=-1, keepdim=True)    # [B, 1]
     dmu_dt2_dot_e = (dmu_dt2 * epsilon).sum(dim=-1, keepdim=True)    # [B, 1]
-    sigma_sq      = sigma ** 2
 
     # Option A2 (uniform weighting) — currently active
-    target_1 = sigma_sq * dg_dt1 * (eps_sq - dim) / 2.0 + std * dmu_dt1_dot_e   # [B, 1]
-    target_2 = sigma_sq * dg_dt2 * (eps_sq - dim) / 2.0 + std * dmu_dt2_dot_e   # [B, 1]
-    target   = torch.cat([target_1, target_2], dim=-1)                          # [B, 2]
-    lam      = sigma_sq * g                                                     # [B, 1]
-    lambda_t = lam.expand(-1, 2)                                                # [B, 2]
+    target_1 = d_var_t_dt1 * (eps_sq - dim) / 2.0 + std_t * dmu_dt1_dot_e  # [B, 1]
+    target_2 = d_var_t_dt2 * (eps_sq - dim) / 2.0 + std_t * dmu_dt2_dot_e  # [B, 1]
+    target   = torch.cat([target_1, target_2], dim=-1)                      # [B, 2]
+    lambda_t = var_t.expand(-1, 2)                                          # [B, 2]
 
     return x, target.detach(), lambda_t.detach()
 
@@ -298,7 +290,11 @@ def vfm_time_score_1d(
     b = net_b(x, tau)  # [B, D]
     eta = net_eta(x, tau)  # [B, D]
 
-    div_b = div_fn(net_b, x, tau)  # [B] or [B, 1]
+    # div_fn vmaps both x and tau; vecfield takes single-sample (xx, t) -> [D]
+    div_b = div_fn(
+        lambda xx, t: net_b(xx.unsqueeze(0), t.unsqueeze(0)).squeeze(0),
+        x, state=tau,
+    )
 
     gamma_t = path.gamma(tau)  # [B, 1]
 
@@ -334,8 +330,14 @@ def vfm_time_score_2d(
     b2 = net_b2(x, t1, t2)  # [B, D]
     eta = net_eta(x, t1, t2)  # [B, D]
 
-    div_b1 = div_fn(net_b1, x, t1, t2)  # [B] or [B, 1]
-    div_b2 = div_fn(net_b2, x, t1, t2)  # [B] or [B, 1]
+    # for 2d, stack (t1, t2) into a per-sample 2-vector state
+    state12 = torch.cat([t1, t2], dim=-1)  # [B, 2]
+    def _vf1(xx, s):
+        return net_b1(xx.unsqueeze(0), s[0:1].unsqueeze(0), s[1:2].unsqueeze(0)).squeeze(0)
+    def _vf2(xx, s):
+        return net_b2(xx.unsqueeze(0), s[0:1].unsqueeze(0), s[1:2].unsqueeze(0)).squeeze(0)
+    div_b1 = div_fn(_vf1, x, state=state12)
+    div_b2 = div_fn(_vf2, x, state=state12)
 
     gamma_dt1 = path.dgamma_dt1(t1, t2)  # [B, 1]
     gamma_dt2 = path.dgamma_dt2(t1, t2)  # [B, 1]

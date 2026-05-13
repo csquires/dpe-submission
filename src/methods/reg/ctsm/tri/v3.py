@@ -4,6 +4,7 @@ Trains a 2-vector score network on the closed-form regression target;
 predicts log(p0/p1) by integrating -score along a 1D curve in the (t1, t2) square.
 """
 from typing import Optional
+import warnings
 
 import torch
 
@@ -19,7 +20,7 @@ from ...common._predict_ldr import predict_ldr_via_curve
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
 from src.waypoints.dataclass_paths import TriangularPath2D
 from src.methods.reg.common._curves import Curve
-from src.waypoints.path_builders import stacked_2d_ctsm_path
+from src.waypoints.path_builders import ctsm_stack2d_path
 from src.methods.reg.common._curves import LowArcCurve2D
 from src.methods.reg.common._integrators import Integrator, integrator_trapezoid
 from src.methods.reg.common._time_samplers import (
@@ -43,6 +44,11 @@ class TriangularCTSM2D(ELDR):
         time: Optional[TimeSampler2D] = None,
         curve: Optional[Curve] = None,
         integrator: Integrator = integrator_trapezoid,
+        inner_eps: float = 0.02,
+        gamma_min: float = 0.0,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
+        test_path: Optional[TriangularPath2D] = None,
         # network / training scalars
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
@@ -100,7 +106,10 @@ class TriangularCTSM2D(ELDR):
 
         # resolve defaults before validation
         if path is None:
-            path = stacked_2d_ctsm_path(sigma=1.0, t2_max=0.3, eps=1e-3)
+            path = ctsm_stack2d_path(sigma=1.0, t2_max=0.3, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
+
+        if test_path is None:
+            test_path = ctsm_stack2d_path(sigma=1.0, t2_max=0.3, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
 
         if time is None:
             time = make_product(
@@ -110,6 +119,16 @@ class TriangularCTSM2D(ELDR):
 
         if curve is None:
             curve = LowArcCurve2D(path_height=1.0)
+
+        # F4 inactive gamma_min warning (CTSM-style sigma paths only)
+        if inner_eps > 0 and gamma_min > 0:
+            eff_inner = 1.0 * (inner_eps * (1.0 - inner_eps)) ** 0.5
+            if gamma_min < eff_inner:
+                warnings.warn(
+                    f"gamma_min={gamma_min} below coord-clamp effective floor "
+                    f"{eff_inner:.4g}; gamma_min is inactive in compose order.",
+                    UserWarning, stacklevel=2,
+                )
 
         # validate and store the four slots
         _validate_and_store_slots(
@@ -133,6 +152,13 @@ class TriangularCTSM2D(ELDR):
                 f"the network would be queried at untrained t_2 values. "
                 f"Increase path.t2_max or reduce curve.path_height."
             )
+
+        # store test path and clamping scalars
+        self.test_path = test_path
+        self.inner_eps = inner_eps
+        self.gamma_min = gamma_min
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
 
         # lazy initialization placeholder
         self.model = None
@@ -214,7 +240,7 @@ class TriangularCTSM2D(ELDR):
 
             # closed-form 2-vector target
             x_t, target, lambda_t = ctsm_regression_target_2d(
-                path, x0, x1, xstar, t1, t2, path.eps, sigma=1.0
+                path, x0, x1, xstar, t1, t2, epsilon,
             )  # x_t [B, D], target [B, 2], lambda_t [B, 2]
 
             # forward
@@ -267,11 +293,17 @@ class TriangularCTSM2D(ELDR):
                 Returns:
                     [n, m, 2] scores; axis 2 is (score_t1, score_t2).
                 """
-                return self.model(samples, ts[:, 0:1], ts[:, 1:2])  # [m, 2] broadcast to [n, m, 2]
+                m = samples.shape[0]
+                out = []
+                for i in range(ts.shape[0]):
+                    t1_i = ts[i:i+1, 0:1].expand(m, 1)
+                    t2_i = ts[i:i+1, 1:2].expand(m, 1)
+                    out.append(self.model(samples, t1_i, t2_i))
+                return torch.stack(out, dim=0)  # [n, m, 2]
 
             result = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
-                path=self.path,
+                path=self.test_path,
                 curve=self.curve,
                 integrator=self.integrator,
                 n_points=self.integration_steps,

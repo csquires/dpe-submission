@@ -15,7 +15,7 @@ from ...common._cfgs import (
 from ...common._trainer import train_two_phase
 from ...common._losses import make_velo_loss, make_denoiser_loss
 from src.waypoints.dataclass_paths import TriangularPath1D
-from src.waypoints.path_builders import barycentric_triangular_path_1d
+from src.waypoints.path_builders import vfm_bary_path
 from src.methods.reg.common._time_samplers import TimeSampler1D, make_uniform
 from src.methods.reg.common._curves import Curve, IdentityCurve1D
 from src.methods.reg.common._integrators import Integrator, integrator_trapezoid
@@ -55,15 +55,33 @@ class TriangularVFMV1(ELDR):
         activation: str = "gelu",
         layernorm: str = "off",
         reweight: bool = False,
+        inner_eps: float = 0.0,
+        gamma_min: float = 0.0,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
     ) -> None:
         """barycentric VFM on triangular path; defaults use k and vertex if path is None."""
         super().__init__(input_dim)
 
         # resolve defaults before validation
         if path is None:
-            path = barycentric_triangular_path_1d(k=k, vertex=vertex, eps=1e-3)
+            path = vfm_bary_path(k=k, vertex=vertex, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
         if time is None:
             time = make_uniform(eps=path.eps)
+
+        # build test path unconditionally
+        test_path = vfm_bary_path(k=k, vertex=vertex, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
+
+        # f2/f3 sampler/path inner_eps consistency check
+        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
+        if (samp_ie > 0) != (inner_eps > 0):
+            warnings.warn(
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
+                "Probably unintentional.", UserWarning, stacklevel=2,
+            )
+        elif samp_ie > 0 and inner_eps > 0:
+            assert abs(samp_ie - inner_eps) < 1e-9, \
+                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
 
         # validate and store path/time/curve/integrator slots
         _validate_and_store_slots(
@@ -77,6 +95,12 @@ class TriangularVFMV1(ELDR):
             expected_curve_dim=1,
             device=device,
         )
+        # store test_path and clamping scalars
+        self.test_path = test_path
+        self.inner_eps = inner_eps
+        self.gamma_min = gamma_min
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
 
         # store network hyperparameters for hpo introspection
         self.hidden_dim = hidden_dim
@@ -230,8 +254,14 @@ class TriangularVFMV1(ELDR):
 
             returns: [n_points, n_samples] (one score per time-sample pair)
             """
-            tau = ts[:, 0]  # extract scalar tau for 1D path
-            return vfm_time_score_1d(self.net_b, self.net_eta, path, x, tau, self._div_fn)
+            # ts: [chunk_len, 1]; loop per time-point since vfm_time_score_1d
+            # expects tau:[B,1] with B matching x.
+            n = x.shape[0]
+            out = []
+            for i in range(ts.shape[0]):
+                tau_i = ts[i:i+1].expand(n, 1)
+                out.append(vfm_time_score_1d(self.net_b, self.net_eta, path, x, tau_i, self._div_fn))
+            return torch.stack(out, dim=0)
 
         # apply EMA, call shared inference, restore networks
         try:
@@ -242,7 +272,7 @@ class TriangularVFMV1(ELDR):
 
             result = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
-                path=self.path,
+                path=self.test_path,
                 curve=self.curve,
                 integrator=self.integrator,
                 n_points=self.integration_steps,

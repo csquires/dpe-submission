@@ -9,11 +9,12 @@ Explicit time sampler can be provided; users accepting the default assume the ti
 avoids the forbidden band.
 """
 from typing import Optional
+import warnings
 
 import torch
 from torch import Tensor
 
-from src.waypoints.path_builders import piecewise_sb_ctsm_path_1d
+from src.waypoints.path_builders import psb_path
 from src.waypoints.dataclass_paths import TriangularPath1D
 
 from ...common._time_samplers import (
@@ -46,8 +47,10 @@ class TriangularCTSMV2(ELDR):
         integrator: Integrator = integrator_trapezoid,
         sigma: float = 1.0,
         vertex: float = 0.5,
-        gamma_min: float = 5e-2,
-        inner_eps: float = 0.0,
+        inner_eps: float = 0.02,
+        gamma_min: float = 0.0,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
         # network and training scalars
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
@@ -70,16 +73,17 @@ class TriangularCTSMV2(ELDR):
         Args:
             input_dim: data dimensionality.
             path: optional TriangularPath1D. If None, auto-construct from
-                sigma, vertex, gamma_min, inner_eps.
+                sigma, vertex, inner_eps, gamma_min (training defaults).
             time: optional TimeSampler1D. If None, auto-construct based on
                 inner_eps: path-aware sampler if inner_eps > 0, else uniform.
             curve: Curve protocol instance (default IdentityCurve1D).
             integrator: Integrator callable (default integrator_trapezoid).
             sigma: noise amplitude scale for CTSM variance schedule.
             vertex: triangular path peak (default 0.5).
-            gamma_min: hard floor for gamma at vertex (default 5e-2).
-            inner_eps: half-width of forbidden band around vertex.
-                If 0, no forbidden band; time sampler defaults to uniform.
+            inner_eps: coordinate-clamp half-width (default 0.02, legacy V2).
+            gamma_min: value floor for gamma (default 0.0, no floor).
+            test_inner_eps: coordinate-clamp for inference (default 0.0, unclamped).
+            test_gamma_min: value floor for inference (default 0.0, unclamped).
             hidden_dim, n_hidden_layers, n_epochs, batch_size, activation,
             integration_steps, reweight: network and training parameters.
             optim, sched, ema: optimizer, scheduler, EMA configs.
@@ -89,13 +93,22 @@ class TriangularCTSMV2(ELDR):
 
         # resolve defaults before validation (contract requirement)
         if path is None:
-            path = piecewise_sb_ctsm_path_1d(
+            path = psb_path(
                 sigma=sigma,
                 vertex=vertex,
-                gamma_min=gamma_min,
                 inner_eps=inner_eps,
+                gamma_min=gamma_min,
                 eps=1e-3,
             )
+
+        # always build test_path with test defaults
+        test_path = psb_path(
+            sigma=sigma,
+            vertex=vertex,
+            inner_eps=test_inner_eps,
+            gamma_min=test_gamma_min,
+            eps=1e-3,
+        )
 
         if time is None:
             if inner_eps > 0:
@@ -106,6 +119,30 @@ class TriangularCTSMV2(ELDR):
                 )
             else:
                 time = make_uniform(eps=path.eps)
+
+        # F2/F3: sampler/path inner_eps consistency
+        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
+        if (samp_ie > 0) != (inner_eps > 0):
+            warnings.warn(
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
+                "Probably unintentional.",
+                UserWarning,
+                stacklevel=2,
+            )
+        elif samp_ie > 0 and inner_eps > 0:
+            assert abs(samp_ie - inner_eps) < 1e-9, \
+                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
+
+        # F4: inactive gamma_min warning (CTSM-family sigma paths only)
+        if inner_eps > 0 and gamma_min > 0:
+            eff_inner = sigma * (inner_eps * (1 - inner_eps)) ** 0.5
+            if gamma_min < eff_inner:
+                warnings.warn(
+                    f"gamma_min={gamma_min} below coord-clamp effective floor "
+                    f"{eff_inner:.4g}; gamma_min is inactive in compose order.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         # validate and store four-slot surface
         _validate_and_store_slots(
@@ -120,11 +157,16 @@ class TriangularCTSMV2(ELDR):
             device=device,
         )
 
+        # store test_path and clamping scalars for HPO introspection
+        self.test_path = test_path
+        self.inner_eps = inner_eps
+        self.gamma_min = gamma_min
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
+
         # store CTSM-specific scalars for HPO introspection
         self.sigma = sigma
         self.vertex = vertex
-        self.gamma_min = gamma_min
-        self.inner_eps = inner_eps
 
         # store training hyperparameters
         self.hidden_dim = hidden_dim
@@ -228,8 +270,8 @@ class TriangularCTSMV2(ELDR):
 
         try:
             ts = torch.linspace(
-                self.path.eps,
-                1.0 - self.path.eps,
+                self.test_path.eps,
+                1.0 - self.test_path.eps,
                 self.integration_steps,
                 device=self.device,
             )
@@ -240,7 +282,7 @@ class TriangularCTSMV2(ELDR):
                     -self.model(xs, torch.full((n, 1), float(t.item()), device=self.device))
                     for t in ts
                 ]).squeeze(-1)  # [n_points, B]
-            dt = (1.0 - 2.0 * self.path.eps) / (self.integration_steps - 1)
+            dt = (1.0 - 2.0 * self.test_path.eps) / (self.integration_steps - 1)
             return torch.trapezoid(vals, dx=dt, dim=0).cpu()  # [B]
         finally:
             if self.ema_obj is not None:

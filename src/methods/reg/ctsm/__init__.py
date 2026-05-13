@@ -11,6 +11,7 @@ integrator and curve (typically identity 1D for closed-form tau integration).
 triangular variants (V1 barycentric, V2 piecewise-SB, V3 2D) live under `.tri`.
 """
 from typing import Optional
+import warnings
 
 import torch
 
@@ -20,13 +21,12 @@ from ..common._cfgs import (
 )
 from ..common._ema import EMA
 from ..common._trainer import train_loop
-from ..common._losses import make_sb_loss
 from ..common._paradigm_funcs import ctsm_regression_target_direct_1d
 from ..common._estimator_helpers import _validate_and_store_slots
 from ..common._predict_ldr import predict_ldr_via_curve
 from ..common._time_samplers import make_uniform
 from src.waypoints.dataclass_paths import DirectPath1D
-from src.waypoints.path_builders import direct_path_1d
+from src.waypoints.path_builders import ctsm_direct_path
 from src.methods.reg.common._curves import IdentityCurve1D
 from src.methods.reg.common._integrators import integrator_trapezoid
 from ...common.base import DRE
@@ -37,8 +37,8 @@ class CTSM(DRE):
     """four-slot CTSM for DRE via SB loss; single regression head.
 
     trains s_phi(x, tau) under SB loss (Schroedinger-bridge setting,
-    path parameterization via DirectPath1D).
-    integrates -score over tau in [eps, 1-eps] at inference.
+    direct path with optional coord/value clamping).
+    integrates -score over tau in [eps, 1-eps] at inference using separate test-path.
     """
 
     def __init__(
@@ -61,13 +61,18 @@ class CTSM(DRE):
         activation: str = "elu",
         integration_steps: int = 200,
         reweight: bool = False,
+        inner_eps: float = 0.0,
+        gamma_min: float = 0.0,
+        test_inner_eps: float = 0.0,
+        test_gamma_min: float = 0.0,
+        test_path: Optional["DirectPath1D"] = None,
     ) -> None:
         """four-slot CTSM for DRE via SB loss; single regression head.
 
         Args:
             input_dim: feature dimension.
             path: DirectPath1D with linear weights (no x_star) and noise schedule gamma.
-                if None, defaults to direct_path_1d(k=0.5, eps=1e-3).
+                if None, defaults to ctsm_direct_path with train clamping.
             time: TimeSampler1D callable returning (tau, iw) for training.
                 if None, defaults to make_uniform(eps=path.eps).
             curve: Curve object with .points(tau) and .derivatives(tau); must have dim==1.
@@ -86,12 +91,28 @@ class CTSM(DRE):
             activation: nonlinearity {"elu", "gelu", "silu"}.
             integration_steps: discretization points for inference over [eps, 1-eps].
             reweight: apply outer reweighting in loss.
+            inner_eps: coord-clamp window half-width for train path.
+            gamma_min: value floor for train path gamma schedule.
+            test_inner_eps: coord-clamp window for test path; defaults to 0.0.
+            test_gamma_min: value floor for test path gamma schedule; defaults to 0.0.
         """
         super().__init__(input_dim)
 
         # step 3a: path and time defaults
         if path is None:
-            path = direct_path_1d(k=0.5, eps=1e-3)
+            path = ctsm_direct_path(
+                sigma=sigma,
+                inner_eps=inner_eps,
+                gamma_min=gamma_min,
+                eps=1e-3,
+            )
+        if test_path is None:
+            test_path = ctsm_direct_path(
+                sigma=sigma,
+                inner_eps=test_inner_eps,
+                gamma_min=test_gamma_min,
+                eps=1e-3,
+            )
         if time is None:
             time = make_uniform(eps=path.eps)
         if curve is None:
@@ -102,6 +123,27 @@ class CTSM(DRE):
             sched = SchedCfg()
         if ema is None:
             ema = EmaCfg()
+
+        # F2/F3 sampler/path inner_eps consistency
+        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
+        if (samp_ie > 0) != (inner_eps > 0):
+            warnings.warn(
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
+                "Probably unintentional.", UserWarning, stacklevel=2,
+            )
+        elif samp_ie > 0 and inner_eps > 0:
+            assert abs(samp_ie - inner_eps) < 1e-9, \
+                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
+
+        # F4 inactive gamma_min warning (CTSM-style sigma paths only)
+        if inner_eps > 0 and gamma_min > 0:
+            eff_inner = sigma * (inner_eps * (1.0 - inner_eps)) ** 0.5
+            if gamma_min < eff_inner:
+                warnings.warn(
+                    f"gamma_min={gamma_min} below coord-clamp effective floor "
+                    f"{eff_inner:.4g}; gamma_min is inactive in compose order.",
+                    UserWarning, stacklevel=2,
+                )
 
         # step 3b: validate and store four slots
         _validate_and_store_slots(
@@ -115,6 +157,15 @@ class CTSM(DRE):
             expected_curve_dim=1,
             device=device,
         )
+
+        # store test_path (no separate validation; same type by construction)
+        self.test_path = test_path
+
+        # store legacy scalars for HPO introspection
+        self.inner_eps = inner_eps
+        self.gamma_min = gamma_min
+        self.test_inner_eps = test_inner_eps
+        self.test_gamma_min = test_gamma_min
 
         # step 3c: store network/training scalars
         self.hidden_dim = hidden_dim
@@ -183,7 +234,7 @@ class CTSM(DRE):
             epsilon = torch.randn_like(x0)
 
             x_tau, target, lambda_t = ctsm_regression_target_direct_1d(
-                path_arg, x0, x1, tau, epsilon, sigma_arg
+                path_arg, x0, x1, tau, epsilon,
             )
 
             # score prediction at sampled point
@@ -276,7 +327,7 @@ class CTSM(DRE):
             # step 6c: call unified inference function
             ldr = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
-                path=self.path,
+                path=self.test_path,
                 curve=self.curve,
                 integrator=self.integrator,
                 n_points=self.integration_steps,

@@ -54,10 +54,10 @@ def build_div_fn(
         if n_samples == 1:
             return partial(hutch_div, noise=noise)
 
-        def avg_div(vecfield, x):
-            out = hutch_div(vecfield, x, noise=noise)
+        def avg_div(vecfield, x, state=None):
+            out = hutch_div(vecfield, x, noise=noise, state=state)
             for _ in range(n_samples - 1):
-                out = out + hutch_div(vecfield, x, noise=noise)
+                out = out + hutch_div(vecfield, x, noise=noise, state=state)
             return out / n_samples
         return avg_div
     raise ValueError(
@@ -68,77 +68,69 @@ def build_div_fn(
 
 
 def exact_div(
-    vecfield: Callable[[Tensor], Tensor],
+    vecfield: Callable[..., Tensor],
     x: Tensor,
+    state: Tensor | None = None,
 ) -> Tensor:
+    """exact divergence via jacobian trace.
+
+    if state is supplied, vecfield(x_row, state_row) -> [D] and state is vmapped
+    alongside x. otherwise vecfield(x_row) -> [D].
     """
-    exact divergence via Jacobian trace computation.
+    if state is None:
+        def div_single(z_single: Tensor) -> Tensor:
+            jac = torch.func.jacrev(vecfield)(z_single)
+            return torch.trace(jac)
+        return torch.vmap(div_single)(x)
 
-    computes divergence (trace of Jacobian) of vecfield at each point via
-    torch.func.jacrev and torch.trace, vmapped over batch dimension.
-
-    Inputs:
-      vecfield: callable [D] -> [D], pure function representing velocity field
-      x: batch of points [B, D] where divergence is computed
-
-    Output:
-      tensor [B,] of exact divergence values, one per sample
-    """
-
-    def div_single(z_single: Tensor) -> Tensor:
-        """jacobian trace for single sample [D] -> scalar."""
-        jac = torch.func.jacrev(vecfield)(z_single)  # [D, D]
+    def div_single(z_single: Tensor, s_single: Tensor) -> Tensor:
+        jac = torch.func.jacrev(lambda zz: vecfield(zz, s_single))(z_single)
         return torch.trace(jac)
-
-    # vmap over batch dimension
-    return torch.vmap(div_single)(x)  # [B]
+    return torch.vmap(div_single, in_dims=(0, 0))(x, state)
 
 
 def hutch_div(
-    vecfield: Callable[[Tensor], Tensor],
+    vecfield: Callable[..., Tensor],
     x: Tensor,
     noise: str = "gaussian",
+    state: Tensor | None = None,
 ) -> Tensor:
+    """stochastic divergence via the hutchinson trace estimator.
+
+    approximates trace(jacobian) via E[eps^T J eps] computed by vjp.
+
+    inputs:
+      vecfield: pure function. when state is None, vecfield(x_row [D]) -> [D].
+        when state is supplied, vecfield(x_row [D], state_row [...]) -> [D] and
+        state is vmapped alongside x so each sample sees its own state.
+      x: [B, D] points where divergence is evaluated.
+      noise: 'gaussian' or 'rademacher' for the hutchinson probe.
+      state: optional [B, ...] tensor vmapped alongside x (e.g. per-sample tau).
+
+    output: [B] divergence estimates.
     """
-    stochastic divergence via Hutchinson trace estimator.
 
-    approximates trace(Jacobian) via E[eps^T J eps] where eps is sampled noise
-    and J is the Jacobian; computed via VJP as <vjp(eps), eps>. vmapped over
-    batch with independent noise per sample.
-
-    Inputs:
-      vecfield: callable [D] -> [D], pure function representing velocity field
-      x: batch of points [B, D] where divergence is computed
-      noise: noise distribution, either "gaussian" (N(0,I)) or "rademacher" ({-1,+1}^D)
-
-    Output:
-      tensor [B,] of stochastic divergence estimates
-    """
-
-    def hutch_single(z_single: Tensor) -> Tensor:
-        """Hutchinson estimator for single sample."""
-        # sample noise with specified distribution
+    def _sample_eps(like: Tensor) -> Tensor:
         if noise == "gaussian":
-            eps = torch.randn_like(z_single)  # [D] ~ N(0, I)
-        elif noise == "rademacher":
-            shape = z_single.shape
-            eps = (
-                torch.randint(0, 2, shape, dtype=z_single.dtype, device=z_single.device)
-                * 2.0
-                - 1.0
-            )  # [D] in {-1, +1}
-        else:
-            raise ValueError(f"noise must be 'gaussian' or 'rademacher', got {noise}")
+            return torch.randn_like(like)
+        if noise == "rademacher":
+            return torch.randint(0, 2, like.shape, dtype=like.dtype, device=like.device) * 2.0 - 1.0
+        raise ValueError(f"noise must be 'gaussian' or 'rademacher', got {noise}")
 
-        # compute VJP and apply to noise
-        _, vjp_func = torch.func.vjp(vecfield, z_single)  # vjp_func: [D] -> [D]
-        grad_z = vjp_func(eps)[0]  # [D] (vjp_func returns tuple)
+    if state is None:
+        def hutch_single(z_single: Tensor) -> Tensor:
+            eps = _sample_eps(z_single)
+            _, vjp_func = torch.func.vjp(vecfield, z_single)
+            grad_z = vjp_func(eps)[0]
+            return (grad_z * eps).sum()
+        return torch.vmap(hutch_single, randomness='different')(x)
 
-        # <vjp(eps), eps> is an unbiased estimator of the trace
+    def hutch_single(z_single: Tensor, s_single: Tensor) -> Tensor:
+        eps = _sample_eps(z_single)
+        _, vjp_func = torch.func.vjp(lambda zz: vecfield(zz, s_single), z_single)
+        grad_z = vjp_func(eps)[0]
         return (grad_z * eps).sum()
-
-    # vmap over batch with independent noise per sample
-    return torch.vmap(hutch_single, randomness='different')(x)  # [B]
+    return torch.vmap(hutch_single, in_dims=(0, 0), randomness='different')(x, state)
 
 
 def div_chunked(

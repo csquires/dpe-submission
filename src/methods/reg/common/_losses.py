@@ -17,12 +17,8 @@ the two losses without init-time choices (``tsm_loss``, ``tri_tsm_loss``,
 import torch
 import torch.autograd as autograd
 import torch.nn.functional as F
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable
 
-if TYPE_CHECKING:
-    from src.waypoints.path_1d import Path1D
-
-from src.waypoints.sb_bridge import sb_target
 from src.waypoints.dataclass_paths import DirectPath1D, TriangularPath1D, TriangularPath2D
 from src.methods.reg.common._paradigm_funcs import (
     vfm_velocity_target_1d, vfm_velocity_target_direct_1d,
@@ -109,90 +105,41 @@ tsm_loss.required_keys = frozenset({"x0", "x1"})
 tsm_loss.requires_tau_grad = True
 
 
-def make_sb_loss(
-    *,
-    sigma: Optional[float] = None,
-    path: Optional["Path1D"] = None,
-    reweight: bool = False,
-) -> Callable:
-    """factory: closed-form Schroedinger-bridge regression loss with constants bound.
+def make_sb_loss(*, path, reweight: bool = False) -> Callable:
+    """factory: closed-form schroedinger-bridge regression loss with path bound.
 
-    exactly one of ``sigma`` (CTSM, no triangular) or ``path`` (triangular CTSM)
-    must be supplied. the path branch reads xstar; required_keys is set
-    accordingly so the trainer can bootstrap the right batch contents.
-
-    bound at factory time:
-        sigma: noise amplitude for the sigma branch.
-        path: Path1D providing sample_and_target for the path branch, or new dataclass path.
-        reweight: outer path_var lambda (composes multiplicatively with iw).
-
-    returns a callable with signature ``(model, batch, tau, iw) -> scalar`` and
-    module-level attributes ``required_keys`` and ``requires_tau_grad`` set.
+    path must be one of the new dataclass paths (DirectPath1D, TriangularPath1D,
+    or TriangularPath2D). returns a callable (model, batch, tau, iw) -> scalar
+    with `required_keys` and `requires_tau_grad` attributes.
     """
-    if (sigma is None) == (path is None):
-        raise ValueError(
-            f"provide exactly one of sigma or path; got sigma={sigma}, path={path}"
-        )
-    if path is None:
-        sigma_val = float(sigma)
-
+    if isinstance(path, TriangularPath1D):
         def loss(model, batch, tau, iw):
-            x0 = batch["x0"]
-            x1 = batch["x1"]
-            epsilon = torch.randn_like(x0)
-            x_tau, target, lam_t = sb_target(x0, x1, sigma_val, tau, epsilon)
-            err = target - lam_t * model(x_tau, tau)
-            outer = resolve_outer_lambda(reweight, tau).unsqueeze(-1)
-            return torch.mean(iw * outer * err ** 2)
-
-        loss.required_keys = frozenset({"x0", "x1"})
-    elif isinstance(path, TriangularPath1D):
-        def loss(model, batch, tau, iw):
-            x0 = batch["x0"]
-            x1 = batch["x1"]
-            xstar = batch["xstar"]
+            x0 = batch["x0"]; x1 = batch["x1"]; xstar = batch["xstar"]
             epsilon = torch.randn_like(x0)
             outer = resolve_outer_lambda(reweight, tau)
             x_t, target, lambda_t = ctsm_regression_target_1d(path, x0, x1, xstar, tau, epsilon)
             pred = model(tau, x_t)
             return (((target - lambda_t * pred) ** 2).squeeze(-1) * outer * iw.squeeze(-1)).mean()
-
         loss.required_keys = frozenset({"x0", "x1", "xstar"})
     elif isinstance(path, DirectPath1D):
         def loss(model, batch, tau, iw):
-            x0 = batch["x0"]
-            x1 = batch["x1"]
+            x0 = batch["x0"]; x1 = batch["x1"]
             epsilon = torch.randn_like(x0)
             outer = resolve_outer_lambda(reweight, tau)
             x_t, target, lambda_t = ctsm_regression_target_direct_1d(path, x0, x1, tau, epsilon)
             pred = model(tau, x_t)
             return (((target - lambda_t * pred) ** 2).squeeze(-1) * outer * iw.squeeze(-1)).mean()
-
         loss.required_keys = frozenset({"x0", "x1"})
     elif isinstance(path, TriangularPath2D):
-        # for this layer, 2D loss wiring lives inside V3 estimators (specs 12, 16).
-        # the path-type isinstance covers 1D tau-shape only.
+        # 2d loss wiring lives inside v3 estimator.
         def loss(model, batch, tau, iw):
-            raise NotImplementedError("TriangularPath2D loss must be wired inside estimator (specs 12, 16)")
-
+            raise NotImplementedError("TriangularPath2D loss is wired inside the V3 estimator")
         loss.required_keys = frozenset({"x0", "x1", "xstar"})
     else:
-        from src.waypoints.path_1d import Path1D
-        if not isinstance(path, Path1D):
-            raise TypeError(f"path must be Path1D; got {type(path).__name__}")
-        bound_path = path
-
-        def loss(model, batch, tau, iw):
-            x0 = batch["x0"]
-            x1 = batch["x1"]
-            xstar = batch["xstar"]
-            epsilon = torch.randn_like(x0)
-            x_tau, target, lam_t = bound_path.sample_and_target(x0, x1, xstar, tau, epsilon)
-            err = target - lam_t * model(x_tau, tau)
-            outer = resolve_outer_lambda(reweight, tau).unsqueeze(-1)
-            return torch.mean(iw * outer * err ** 2)
-
-        loss.required_keys = frozenset({"x0", "x1", "xstar"})
+        raise TypeError(
+            f"path must be one of DirectPath1D, TriangularPath1D, TriangularPath2D; "
+            f"got {type(path).__name__}"
+        )
     loss.requires_tau_grad = False
     return loss
 
@@ -263,39 +210,9 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
 
         loss.required_keys = frozenset({"x0", "x1"})
     else:
-        # legacy ABC path
-        bound_path = path
-
-        if antithetic:
-            def loss(model, batch, tau, iw):
-                x0 = batch["x0"]
-                x1 = batch["x1"]
-                g = bound_path.gamma(tau)
-                dg = bound_path.dgamma_dtau(tau)
-                mu = (1 - tau) * x0 + tau * x1
-                z = torch.randn_like(x0)
-                v_star = (x1 - x0) + dg * z
-                v_star_m = (x1 - x0) - dg * z
-                b_p = model(tau, mu + g * z)
-                b_m = model(tau, mu - g * z)
-                lp = 0.25 * (b_p ** 2).sum(-1) - 0.5 * (v_star * b_p).sum(-1)
-                lm = 0.25 * (b_m ** 2).sum(-1) - 0.5 * (v_star_m * b_m).sum(-1)
-                outer = resolve_outer_lambda(reweight, tau)
-                return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
-        else:
-            def loss(model, batch, tau, iw):
-                x0 = batch["x0"]
-                x1 = batch["x1"]
-                g = bound_path.gamma(tau)
-                dg = bound_path.dgamma_dtau(tau)
-                mu = (1 - tau) * x0 + tau * x1
-                z = torch.randn_like(x0)
-                v_star = (x1 - x0) + dg * z
-                b = model(tau, mu + g * z)
-                outer = resolve_outer_lambda(reweight, tau)
-                return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
-
-        loss.required_keys = frozenset({"x0", "x1"})
+        raise TypeError(
+            f"path must be TriangularPath1D or DirectPath1D; got {type(path).__name__}"
+        )
     loss.requires_tau_grad = False
     return loss
 
@@ -336,19 +253,9 @@ def make_denoiser_loss(*, path, reweight: bool = False) -> Callable:
 
         loss.required_keys = frozenset({"x0", "x1"})
     else:
-        # legacy ABC path
-        bound_path = path
-
-        def loss(model, batch, tau, iw):
-            x0 = batch["x0"]
-            x1 = batch["x1"]
-            z = torch.randn_like(x0)
-            x_t = (1 - tau) * x0 + tau * x1 + bound_path.gamma(tau) * z
-            eta = model(tau, x_t)
-            outer = resolve_outer_lambda(reweight, tau)
-            return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
-
-        loss.required_keys = frozenset({"x0", "x1"})
+        raise TypeError(
+            f"path must be TriangularPath1D or DirectPath1D; got {type(path).__name__}"
+        )
     loss.requires_tau_grad = False
     return loss
 

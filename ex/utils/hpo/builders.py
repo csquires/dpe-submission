@@ -32,10 +32,11 @@ from src.methods.reg.ctsm.tri.v3 import TriangularCTSM2D
 from src.methods.reg.vfm.tri import TriangularVFMV1 as TriangularVFM
 from src.methods.reg.vfm.tri.v3 import TriangularVFM2D
 
-from src.waypoints.piecewise_sb import PiecewiseSBCtsm1D, PiecewiseSBVfm1D
-from src.waypoints.triangular_continuous import BarycentricCtsm1D, BarycentricVfm1D
-from src.waypoints.triangular_continuous_2d import Stacked2DCtsm, Stacked2DVfm
-from src.waypoints.curve_2d import Curve2D
+from src.waypoints.path_builders import (
+    psb_path, ctsm_bary_path, vfm_bary_path,
+    ctsm_stack2d_path, vfm_stack2d_path,
+)
+from src.methods.reg.common._curves import LowArcCurve2D as Curve2D
 from src.waypoints.waypoints1d import DefaultWaypointBuilder1D
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
@@ -153,11 +154,11 @@ def build_MHTDRE(input_dim: int, device: str | torch.device, num_waypoints: int,
 
 def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularCTSM:
     """return TriangularCTSM V1 (piecewise-SB) estimator initialized from flat_hp dict."""
-    path = PiecewiseSBCtsm1D(
+    path = psb_path(
         sigma=flat_hp["sigma"],
         vertex=flat_hp["vertex"],
-        eps=flat_hp["eps"],
         inner_eps=flat_hp.get("inner_eps", 0.0),
+        eps=flat_hp["eps"],
     )
     return TriangularCTSM(
         input_dim=input_dim,
@@ -181,10 +182,10 @@ def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_wayp
 
     vertex is HP-sampled via flat_hp; falls back to 0.5 (legacy default) for backward compat.
     """
-    path = BarycentricCtsm1D(
+    path = ctsm_bary_path(
         sigma=flat_hp["sigma"],
         vertex=flat_hp.get("vertex", 0.5),
-        eps=flat_hp["eps"]
+        eps=flat_hp["eps"],
     )
     return TriangularCTSM(
         input_dim=input_dim,
@@ -205,12 +206,10 @@ def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_wayp
 
 def build_TriangularCTSM_V3(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularCTSM2D:
     """return TriangularCTSM V3 (2D stacked) estimator initialized from flat_hp dict."""
-    path = Stacked2DCtsm(
+    path = ctsm_stack2d_path(
         sigma=flat_hp["sigma"],
-        gamma_schedule=flat_hp["gamma_schedule"],
-        k=flat_hp["k"],
         t2_max=flat_hp["t2_max"],
-        eps=flat_hp["eps"]
+        eps=flat_hp["eps"],
     )
     curve = Curve2D(path_height=flat_hp["path_height"])
     return TriangularCTSM2D(
@@ -233,12 +232,12 @@ def build_TriangularCTSM_V3(input_dim: int, device: str | torch.device, num_wayp
 
 def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularVFM:
     """return TriangularVFM V1 (piecewise-SB) estimator initialized from flat_hp dict."""
-    path = PiecewiseSBVfm1D(
+    path = psb_path(
         sigma=flat_hp["sigma"],
         vertex=flat_hp["vertex"],
         gamma_min=flat_hp["gamma_min"],
-        eps=flat_hp["eps"],
         inner_eps=flat_hp.get("inner_eps", 0.0),
+        eps=flat_hp["eps"],
     )
     return TriangularVFM(
         input_dim=input_dim,
@@ -262,10 +261,10 @@ def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypo
 
     vertex is HP-sampled via flat_hp; falls back to 0.5 (legacy default) for backward compat.
     """
-    path = BarycentricVfm1D(
+    path = vfm_bary_path(
         k=flat_hp["k"],
         vertex=flat_hp.get("vertex", 0.5),
-        eps=flat_hp["eps"]
+        eps=flat_hp["eps"],
     )
     return TriangularVFM(
         input_dim=input_dim,
@@ -286,11 +285,10 @@ def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypo
 
 def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularVFM2D:
     """return TriangularVFM V3 (2D stacked) estimator initialized from flat_hp dict."""
-    path = Stacked2DVfm(
+    path = vfm_stack2d_path(
         k=flat_hp["k"],
-        gamma_schedule=flat_hp["gamma_schedule"],
         t2_max=flat_hp["t2_max"],
-        eps=flat_hp["eps"]
+        eps=flat_hp["eps"],
     )
     curve = Curve2D(path_height=flat_hp["path_height"])
     return TriangularVFM2D(

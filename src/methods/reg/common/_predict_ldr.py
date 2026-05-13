@@ -62,22 +62,12 @@ def predict_ldr_via_curve(
     n_samples = samples.shape[0]
     chunk_size = max(1, 100000 // n_samples)
 
-    def call_time_score_fn_on_chunk(ts_chunk):
-        # ts_chunk: [chunk_len, curve.dim]
-        # returns: [chunk_len, n_samples] or [chunk_len, n_samples, 2]
-        return time_score_fn(path, ts_chunk, samples)
-
-    vmapped_fn = torch.vmap(
-        call_time_score_fn_on_chunk,
-        in_dims=0,
-        out_dims=0,
-        randomness="different",
-    )
-
     scores_chunks = []
     for i in range(0, n_points, chunk_size):
         ts_chunk = ts[i : i + chunk_size]  # [chunk_len, curve.dim]
-        chunk_out = vmapped_fn(ts_chunk)  # [chunk_len, n_samples, {1,2}] or [chunk_len, n_samples]
+        # time_score_fn handles its own batching across chunk_len * n_samples;
+        # outer vmap removed -- the divergence estimator handles hutchinson internally.
+        chunk_out = time_score_fn(path, ts_chunk, samples)
         scores_chunks.append(chunk_out)
 
     scores = torch.cat(scores_chunks, dim=0)  # [n_points, n_samples, {1,2}] or [n_points, n_samples]
