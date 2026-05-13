@@ -23,6 +23,11 @@ if TYPE_CHECKING:
     from src.waypoints.path_1d import Path1D
 
 from src.waypoints.sb_bridge import sb_target
+from src.waypoints.dataclass_paths import DirectPath1D, TriangularPath1D, TriangularPath2D
+from src.methods.reg.common._paradigm_funcs import (
+    vfm_velocity_target_1d, vfm_velocity_target_direct_1d,
+    ctsm_regression_target_1d, ctsm_regression_target_direct_1d,
+)
 from ..common._weighting import resolve_lambdas, resolve_outer_lambda
 
 
@@ -118,7 +123,7 @@ def make_sb_loss(
 
     bound at factory time:
         sigma: noise amplitude for the sigma branch.
-        path: Path1D providing sample_and_target for the path branch.
+        path: Path1D providing sample_and_target for the path branch, or new dataclass path.
         reweight: outer path_var lambda (composes multiplicatively with iw).
 
     returns a callable with signature ``(model, batch, tau, iw) -> scalar`` and
@@ -141,6 +146,36 @@ def make_sb_loss(
             return torch.mean(iw * outer * err ** 2)
 
         loss.required_keys = frozenset({"x0", "x1"})
+    elif isinstance(path, TriangularPath1D):
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            xstar = batch["xstar"]
+            epsilon = torch.randn_like(x0)
+            outer = resolve_outer_lambda(reweight, tau)
+            x_t, target, lambda_t = ctsm_regression_target_1d(path, x0, x1, xstar, tau, epsilon)
+            pred = model(tau, x_t)
+            return (((target - lambda_t * pred) ** 2).squeeze(-1) * outer * iw.squeeze(-1)).mean()
+
+        loss.required_keys = frozenset({"x0", "x1", "xstar"})
+    elif isinstance(path, DirectPath1D):
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            epsilon = torch.randn_like(x0)
+            outer = resolve_outer_lambda(reweight, tau)
+            x_t, target, lambda_t = ctsm_regression_target_direct_1d(path, x0, x1, tau, epsilon)
+            pred = model(tau, x_t)
+            return (((target - lambda_t * pred) ** 2).squeeze(-1) * outer * iw.squeeze(-1)).mean()
+
+        loss.required_keys = frozenset({"x0", "x1"})
+    elif isinstance(path, TriangularPath2D):
+        # for this layer, 2D loss wiring lives inside V3 estimators (specs 12, 16).
+        # the path-type isinstance covers 1D tau-shape only.
+        def loss(model, batch, tau, iw):
+            raise NotImplementedError("TriangularPath2D loss must be wired inside estimator (specs 12, 16)")
+
+        loss.required_keys = frozenset({"x0", "x1", "xstar"})
     else:
         from src.waypoints.path_1d import Path1D
         if not isinstance(path, Path1D):
@@ -171,42 +206,96 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
     antithetic averages over (z, -z) for variance reduction.
 
     bound at factory time:
-        path: object with gamma(tau), dgamma_dtau(tau) returning [B,1].
+        path: object with gamma(tau), dgamma_dtau(tau) returning [B,1], or new dataclass path.
         antithetic: select the antithetic body once.
         reweight: outer path_var lambda.
     """
-    bound_path = path
+    if isinstance(path, TriangularPath1D):
+        if antithetic:
+            def loss(model, batch, tau, iw):
+                x0 = batch["x0"]
+                x1 = batch["x1"]
+                xstar = batch["xstar"]
+                z = torch.randn_like(x0)
+                outer = resolve_outer_lambda(reweight, tau)
+                x_t_plus, v_plus = vfm_velocity_target_1d(path, x0, x1, xstar, tau, z)
+                x_t_minus, v_minus = vfm_velocity_target_1d(path, x0, x1, xstar, tau, -z)
+                b_plus = model(tau, x_t_plus)
+                b_minus = model(tau, x_t_minus)
+                lp = 0.5 * (b_plus ** 2).sum(-1) - (v_plus * b_plus).sum(-1)
+                lm = 0.5 * (b_minus ** 2).sum(-1) - (v_minus * b_minus).sum(-1)
+                return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
+        else:
+            def loss(model, batch, tau, iw):
+                x0 = batch["x0"]
+                x1 = batch["x1"]
+                xstar = batch["xstar"]
+                z = torch.randn_like(x0)
+                outer = resolve_outer_lambda(reweight, tau)
+                x_t, v_star = vfm_velocity_target_1d(path, x0, x1, xstar, tau, z)
+                b = model(tau, x_t)
+                return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
-    if antithetic:
-        def loss(model, batch, tau, iw):
-            x0 = batch["x0"]
-            x1 = batch["x1"]
-            g = bound_path.gamma(tau)
-            dg = bound_path.dgamma_dtau(tau)
-            mu = (1 - tau) * x0 + tau * x1
-            z = torch.randn_like(x0)
-            v_star = (x1 - x0) + dg * z
-            v_star_m = (x1 - x0) - dg * z
-            b_p = model(tau, mu + g * z)
-            b_m = model(tau, mu - g * z)
-            lp = 0.25 * (b_p ** 2).sum(-1) - 0.5 * (v_star * b_p).sum(-1)
-            lm = 0.25 * (b_m ** 2).sum(-1) - 0.5 * (v_star_m * b_m).sum(-1)
-            outer = resolve_outer_lambda(reweight, tau)
-            return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
+        loss.required_keys = frozenset({"x0", "x1", "xstar"})
+    elif isinstance(path, DirectPath1D):
+        if antithetic:
+            def loss(model, batch, tau, iw):
+                x0 = batch["x0"]
+                x1 = batch["x1"]
+                z = torch.randn_like(x0)
+                outer = resolve_outer_lambda(reweight, tau)
+                x_t_plus, v_plus = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
+                x_t_minus, v_minus = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
+                b_plus = model(tau, x_t_plus)
+                b_minus = model(tau, x_t_minus)
+                lp = 0.5 * (b_plus ** 2).sum(-1) - (v_plus * b_plus).sum(-1)
+                lm = 0.5 * (b_minus ** 2).sum(-1) - (v_minus * b_minus).sum(-1)
+                return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
+        else:
+            def loss(model, batch, tau, iw):
+                x0 = batch["x0"]
+                x1 = batch["x1"]
+                z = torch.randn_like(x0)
+                outer = resolve_outer_lambda(reweight, tau)
+                x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
+                b = model(tau, x_t)
+                return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
+
+        loss.required_keys = frozenset({"x0", "x1"})
     else:
-        def loss(model, batch, tau, iw):
-            x0 = batch["x0"]
-            x1 = batch["x1"]
-            g = bound_path.gamma(tau)
-            dg = bound_path.dgamma_dtau(tau)
-            mu = (1 - tau) * x0 + tau * x1
-            z = torch.randn_like(x0)
-            v_star = (x1 - x0) + dg * z
-            b = model(tau, mu + g * z)
-            outer = resolve_outer_lambda(reweight, tau)
-            return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
+        # legacy ABC path
+        bound_path = path
 
-    loss.required_keys = frozenset({"x0", "x1"})
+        if antithetic:
+            def loss(model, batch, tau, iw):
+                x0 = batch["x0"]
+                x1 = batch["x1"]
+                g = bound_path.gamma(tau)
+                dg = bound_path.dgamma_dtau(tau)
+                mu = (1 - tau) * x0 + tau * x1
+                z = torch.randn_like(x0)
+                v_star = (x1 - x0) + dg * z
+                v_star_m = (x1 - x0) - dg * z
+                b_p = model(tau, mu + g * z)
+                b_m = model(tau, mu - g * z)
+                lp = 0.25 * (b_p ** 2).sum(-1) - 0.5 * (v_star * b_p).sum(-1)
+                lm = 0.25 * (b_m ** 2).sum(-1) - 0.5 * (v_star_m * b_m).sum(-1)
+                outer = resolve_outer_lambda(reweight, tau)
+                return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
+        else:
+            def loss(model, batch, tau, iw):
+                x0 = batch["x0"]
+                x1 = batch["x1"]
+                g = bound_path.gamma(tau)
+                dg = bound_path.dgamma_dtau(tau)
+                mu = (1 - tau) * x0 + tau * x1
+                z = torch.randn_like(x0)
+                v_star = (x1 - x0) + dg * z
+                b = model(tau, mu + g * z)
+                outer = resolve_outer_lambda(reweight, tau)
+                return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
+
+        loss.required_keys = frozenset({"x0", "x1"})
     loss.requires_tau_grad = False
     return loss
 
@@ -217,18 +306,49 @@ def make_denoiser_loss(*, path, reweight: bool = False) -> Callable:
     x_t  = (1-tau) x0 + tau x1 + gamma(tau) z, z ~ N(0, I)
     loss = mean(0.5 ||eta(x_t)||^2 - <z, eta(x_t)>)
     """
-    bound_path = path
+    if isinstance(path, TriangularPath1D):
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            xstar = batch["xstar"]
+            z = torch.randn_like(x0)
+            outer = resolve_outer_lambda(reweight, tau)
+            w = path.weights(tau)
+            mu = w.alpha * x0 + w.beta * x1 + w.w_star * xstar
+            gamma_t = path.gamma(tau)
+            x_t = mu + gamma_t * z
+            eta = model(tau, x_t)
+            return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
-    def loss(model, batch, tau, iw):
-        x0 = batch["x0"]
-        x1 = batch["x1"]
-        z = torch.randn_like(x0)
-        x_t = (1 - tau) * x0 + tau * x1 + bound_path.gamma(tau) * z
-        eta = model(tau, x_t)
-        outer = resolve_outer_lambda(reweight, tau)
-        return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
+        loss.required_keys = frozenset({"x0", "x1", "xstar"})
+    elif isinstance(path, DirectPath1D):
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            z = torch.randn_like(x0)
+            outer = resolve_outer_lambda(reweight, tau)
+            w = path.weights(tau)
+            mu = w.alpha * x0 + w.beta * x1
+            gamma_t = path.gamma(tau)
+            x_t = mu + gamma_t * z
+            eta = model(tau, x_t)
+            return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
-    loss.required_keys = frozenset({"x0", "x1"})
+        loss.required_keys = frozenset({"x0", "x1"})
+    else:
+        # legacy ABC path
+        bound_path = path
+
+        def loss(model, batch, tau, iw):
+            x0 = batch["x0"]
+            x1 = batch["x1"]
+            z = torch.randn_like(x0)
+            x_t = (1 - tau) * x0 + tau * x1 + bound_path.gamma(tau) * z
+            eta = model(tau, x_t)
+            outer = resolve_outer_lambda(reweight, tau)
+            return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
+
+        loss.required_keys = frozenset({"x0", "x1"})
     loss.requires_tau_grad = False
     return loss
 
