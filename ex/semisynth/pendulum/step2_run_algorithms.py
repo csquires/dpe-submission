@@ -8,7 +8,7 @@ from src.methods import (
     TriangularCTSMV1 as TriangularCTSM,
     TriangularVFMV1 as TriangularVFM,
 )
-from src.waypoints.path_builders import ctsm_bary_path, vfm_bary_path
+from src.waypoints.path_builders import bary_ctsm, bary_vfm
 from src.methods.reg.common._cfgs import OptimCfg
 from src.models.binary_classification import make_binary_classifier, make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
@@ -212,7 +212,7 @@ def create_estimator(method: str, config: dict, device: str) -> object:
 
     elif method == "CTSM":
         hp = HPO_PARAMS["CTSM"]
-        path = ctsm_bary_path(sigma=hp["sigma"], vertex=0.5, eps=max(hp["eps"], 1e-3))
+        path = bary_ctsm(sigma=hp["sigma"], vertex=0.5, eps=max(hp["eps"], 1e-3))
         return TriangularCTSM(
             input_dim=input_dim,
             path=path,
@@ -225,7 +225,7 @@ def create_estimator(method: str, config: dict, device: str) -> object:
     elif method == "TriangularVFM":
         hp = HPO_PARAMS["VFM"]
         eps = max(hp["eps"], 1e-3)
-        path = vfm_bary_path(k=hp["k"], vertex=0.5, eps=eps)
+        path = bary_vfm(k=hp["k"], vertex=0.5, eps=eps)
         return TriangularVFM(
             input_dim=input_dim,
             path=path,
