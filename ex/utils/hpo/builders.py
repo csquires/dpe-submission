@@ -10,6 +10,11 @@ with uniform signature: build_X(input_dim, device, num_waypoints, **flat_hp)
 
 import torch
 
+from src.methods.reg.common._time_samplers import (
+    make_uniform, make_uniform_scaled, make_product,
+    make_piecewise_sb_sampler, time_sampler_from_legacy_cfg,
+)
+from src.methods.reg.common._cfgs import OptimCfg, EmaCfg
 from src.methods.reg.tsm import TSM
 from src.methods.reg.ctsm import CTSM
 from src.methods.reg.tsm.tri import TriangularTSM
@@ -33,8 +38,8 @@ from src.methods.reg.vfm.tri import TriangularVFMV1 as TriangularVFM
 from src.methods.reg.vfm.tri.v3 import TriangularVFM2D
 
 from src.waypoints.path_builders import (
-    psb_path, ctsm_bary_path, vfm_bary_path,
-    ctsm_stack2d_path, vfm_stack2d_path,
+    psb, bary_ctsm, bary_vfm,
+    rect_ctsm, rect_vfm,
 )
 from src.methods.reg.common._curves import LowArcCurve2D as Curve2D
 from src.waypoints.waypoints1d import DefaultWaypointBuilder1D
@@ -53,13 +58,39 @@ def build_TSM(input_dim: int, device: str | torch.device, num_waypoints: int, **
     return TSM(input_dim=input_dim, device=device, **flat_hp)
 
 
-def build_CTSM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> CTSM:
-    """return CTSM estimator initialized from flat_hp dict.
+def _optim_from_hp(flat_hp: dict) -> OptimCfg:
+    """build OptimCfg from legacy flat hp keys (lr, grad_clip_norm)."""
+    return OptimCfg(
+        lr=flat_hp["lr"],
+        grad_clip_norm=flat_hp.get("grad_clip_norm"),
+    )
 
-    flat_hp may carry the new pilot-fix knobs ema_decay and grad_clip_norm;
-    CTSM accepts them; defaults preserve current behavior.
-    """
-    return CTSM(input_dim=input_dim, device=device, **flat_hp)
+
+def _ema_from_hp(flat_hp: dict) -> EmaCfg:
+    """build EmaCfg from legacy flat hp keys (ema_decay)."""
+    decay = flat_hp.get("ema_decay")
+    return EmaCfg(decay=decay) if decay is not None else EmaCfg()
+
+
+def build_CTSM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> CTSM:
+    """return stock CTSM estimator initialized from flat_hp dict."""
+    eps = flat_hp.get("eps", 1e-3)
+    time = time_sampler_from_legacy_cfg(
+        flat_hp.get("time_dist", "uniform"), eps=eps, apply_iw=True,
+    )
+    return CTSM(
+        input_dim=input_dim,
+        device=device,
+        time=time,
+        sigma=flat_hp["sigma"],
+        n_epochs=flat_hp["n_epochs"],
+        batch_size=flat_hp["batch_size"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
+        integration_steps=flat_hp.get("integration_steps", 1000),
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        activation=flat_hp.get("activation", "elu"),
+    )
 
 
 def build_TriangularTSM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularTSM:
@@ -154,51 +185,51 @@ def build_MHTDRE(input_dim: int, device: str | torch.device, num_waypoints: int,
 
 def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularCTSM:
     """return TriangularCTSM V1 (piecewise-SB) estimator initialized from flat_hp dict."""
-    path = psb_path(
-        sigma=flat_hp["sigma"],
-        vertex=flat_hp["vertex"],
-        inner_eps=flat_hp.get("inner_eps", 0.0),
-        eps=flat_hp["eps"],
-    )
+    inner_eps = flat_hp.get("inner_eps", 0.0)
+    vertex = flat_hp["vertex"]
+    path = psb(sigma=flat_hp["sigma"], vertex=vertex, inner_eps=inner_eps, eps=flat_hp["eps"])
+    # psb default sampler: avoid the forbidden band when inner_eps > 0; else uniform.
+    if inner_eps > 0:
+        time = make_piecewise_sb_sampler(vertex=vertex, inner_eps=inner_eps, eps=path.eps)
+    else:
+        time = time_sampler_from_legacy_cfg(
+            flat_hp.get("time_dist", "uniform"), eps=path.eps, apply_iw=True,
+        )
     return TriangularCTSM(
         input_dim=input_dim,
         path=path,
+        time=time,
         n_epochs=flat_hp["n_epochs"],
-        lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
-        eps=flat_hp["eps"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
         integration_steps=flat_hp.get("integration_steps", 1000),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        ema_decay=flat_hp.get("ema_decay"),
-        grad_clip_norm=flat_hp.get("grad_clip_norm"),
-        time_dist=flat_hp.get("time_dist", "uniform"),
         activation=flat_hp.get("activation", "elu"),
         device=device,
     )
 
 
 def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularCTSM:
-    """return TriangularCTSM V2 (barycentric) estimator initialized from flat_hp dict.
-
-    vertex is HP-sampled via flat_hp; falls back to 0.5 (legacy default) for backward compat.
-    """
-    path = ctsm_bary_path(
+    """return TriangularCTSM V2 (barycentric) estimator initialized from flat_hp dict."""
+    path = bary_ctsm(
         sigma=flat_hp["sigma"],
         vertex=flat_hp.get("vertex", 0.5),
         eps=flat_hp["eps"],
     )
+    time = time_sampler_from_legacy_cfg(
+        flat_hp.get("time_dist", "uniform"), eps=path.eps, apply_iw=True,
+    )
     return TriangularCTSM(
         input_dim=input_dim,
         path=path,
+        time=time,
         n_epochs=flat_hp["n_epochs"],
-        lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
-        eps=flat_hp["eps"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
         integration_steps=flat_hp.get("integration_steps", 1000),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        ema_decay=flat_hp.get("ema_decay"),
-        grad_clip_norm=flat_hp.get("grad_clip_norm"),
-        time_dist=flat_hp.get("time_dist", "uniform"),
         activation=flat_hp.get("activation", "elu"),
         device=device,
     )
@@ -206,25 +237,23 @@ def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_wayp
 
 def build_TriangularCTSM_V3(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularCTSM2D:
     """return TriangularCTSM V3 (2D stacked) estimator initialized from flat_hp dict."""
-    path = ctsm_stack2d_path(
-        sigma=flat_hp["sigma"],
-        t2_max=flat_hp["t2_max"],
-        eps=flat_hp["eps"],
-    )
+    path = rect_ctsm(sigma=flat_hp["sigma"], eps=flat_hp["eps"])
     curve = Curve2D(path_height=flat_hp["path_height"])
+    time = make_product(
+        make_uniform(eps=path.eps),
+        make_uniform_scaled(eps=path.eps, max=flat_hp["t2_max"]),
+    )
     return TriangularCTSM2D(
         input_dim=input_dim,
         path=path,
+        time=time,
         curve=curve,
         n_epochs=flat_hp["n_epochs"],
-        lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
-        eps=flat_hp["eps"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
         integration_steps=flat_hp.get("integration_steps", 1000),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        ema_decay=flat_hp.get("ema_decay"),
-        grad_clip_norm=flat_hp.get("grad_clip_norm"),
-        time_dist=flat_hp.get("time_dist", "uniform"),
         activation=flat_hp.get("activation", "elu"),
         device=device,
     )
@@ -232,80 +261,83 @@ def build_TriangularCTSM_V3(input_dim: int, device: str | torch.device, num_wayp
 
 def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularVFM:
     """return TriangularVFM V1 (piecewise-SB) estimator initialized from flat_hp dict."""
-    path = psb_path(
-        sigma=flat_hp["sigma"],
-        vertex=flat_hp["vertex"],
+    inner_eps = flat_hp.get("inner_eps", 0.0)
+    vertex = flat_hp["vertex"]
+    path = psb(
+        sigma=flat_hp["sigma"], vertex=vertex,
         gamma_min=flat_hp["gamma_min"],
-        inner_eps=flat_hp.get("inner_eps", 0.0),
-        eps=flat_hp["eps"],
+        inner_eps=inner_eps, eps=flat_hp["eps"],
     )
+    if inner_eps > 0:
+        time = make_piecewise_sb_sampler(vertex=vertex, inner_eps=inner_eps, eps=path.eps)
+    else:
+        time = time_sampler_from_legacy_cfg(
+            flat_hp.get("time_dist", "uniform"), eps=path.eps, apply_iw=True,
+        )
     return TriangularVFM(
         input_dim=input_dim,
         path=path,
+        time=time,
         n_epochs=flat_hp["n_epochs"],
-        lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
-        eps=flat_hp["eps"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
         integration_steps=flat_hp["integration_steps"],
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        ema_decay=flat_hp.get("ema_decay"),
-        grad_clip_norm=flat_hp.get("grad_clip_norm"),
         activation=flat_hp.get("activation", "gelu"),
         div_method=flat_hp.get("div_method", "exact"),
-        device=device
+        device=device,
     )
 
 
 def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularVFM:
-    """return TriangularVFM V2 (barycentric) estimator initialized from flat_hp dict.
-
-    vertex is HP-sampled via flat_hp; falls back to 0.5 (legacy default) for backward compat.
-    """
-    path = vfm_bary_path(
+    """return TriangularVFM V2 (barycentric) estimator initialized from flat_hp dict."""
+    path = bary_vfm(
         k=flat_hp["k"],
         vertex=flat_hp.get("vertex", 0.5),
         eps=flat_hp["eps"],
     )
+    time = time_sampler_from_legacy_cfg(
+        flat_hp.get("time_dist", "uniform"), eps=path.eps, apply_iw=True,
+    )
     return TriangularVFM(
         input_dim=input_dim,
         path=path,
+        time=time,
         n_epochs=flat_hp["n_epochs"],
-        lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
-        eps=flat_hp["eps"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
         integration_steps=flat_hp["integration_steps"],
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        ema_decay=flat_hp.get("ema_decay"),
-        grad_clip_norm=flat_hp.get("grad_clip_norm"),
         activation=flat_hp.get("activation", "gelu"),
         div_method=flat_hp.get("div_method", "exact"),
-        device=device
+        device=device,
     )
 
 
 def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> TriangularVFM2D:
     """return TriangularVFM V3 (2D stacked) estimator initialized from flat_hp dict."""
-    path = vfm_stack2d_path(
-        k=flat_hp["k"],
-        t2_max=flat_hp["t2_max"],
-        eps=flat_hp["eps"],
-    )
+    path = rect_vfm(k=flat_hp["k"], eps=flat_hp["eps"])
     curve = Curve2D(path_height=flat_hp["path_height"])
+    time = make_product(
+        make_uniform(eps=path.eps),
+        make_uniform_scaled(eps=path.eps, max=flat_hp["t2_max"]),
+    )
     return TriangularVFM2D(
         input_dim=input_dim,
         path=path,
+        time=time,
         curve=curve,
         n_epochs=flat_hp["n_epochs"],
-        lr=flat_hp["lr"],
         batch_size=flat_hp["batch_size"],
-        eps=flat_hp["eps"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
         integration_steps=flat_hp["integration_steps"],
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
-        ema_decay=flat_hp.get("ema_decay"),
-        grad_clip_norm=flat_hp.get("grad_clip_norm"),
         activation=flat_hp.get("activation", "gelu"),
         div_method=flat_hp.get("div_method", "exact"),
-        device=device
+        device=device,
     )
 
 
