@@ -26,7 +26,7 @@ from ..common._estimator_helpers import _validate_and_store_slots
 from ..common._predict_ldr import predict_ldr_via_curve
 from ..common._time_samplers import make_uniform
 from src.waypoints.dataclass_paths import DirectPath1D
-from src.waypoints.path_builders import ctsm_direct_path
+from src.waypoints.path_builders import direct_ctsm
 from src.methods.reg.common._curves import IdentityCurve1D
 from src.methods.reg.common._integrators import integrator_trapezoid
 from ...common.base import DRE
@@ -72,7 +72,7 @@ class CTSM(DRE):
         Args:
             input_dim: feature dimension.
             path: DirectPath1D with linear weights (no x_star) and noise schedule gamma.
-                if None, defaults to ctsm_direct_path with train clamping.
+                if None, defaults to direct_ctsm with train clamping.
             time: TimeSampler1D callable returning (tau, iw) for training.
                 if None, defaults to make_uniform(eps=path.eps).
             curve: Curve object with .points(tau) and .derivatives(tau); must have dim==1.
@@ -100,14 +100,14 @@ class CTSM(DRE):
 
         # step 3a: path and time defaults
         if path is None:
-            path = ctsm_direct_path(
+            path = direct_ctsm(
                 sigma=sigma,
                 inner_eps=inner_eps,
                 gamma_min=gamma_min,
                 eps=1e-3,
             )
         if test_path is None:
-            test_path = ctsm_direct_path(
+            test_path = direct_ctsm(
                 sigma=sigma,
                 inner_eps=test_inner_eps,
                 gamma_min=test_gamma_min,

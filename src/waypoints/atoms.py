@@ -9,16 +9,22 @@ weight atoms (return NamedTuple bundles from dataclass_paths):
   - bary_weights(tau, *, vertex=0.5) -> TriangularWeights1D
   - psb_legs(tau, *, vertex=0.5) -> LegSplit
   - dir_weights(tau) -> DirectWeights1D
-  - stack2d_weights(t1, t2) -> TriangularWeights2D
+  - rect_weights(t1, t2) -> TriangularWeights2D
 
-schedule atoms (1d): var_sqrt + d_var_sqrt (sigma * sqrt(t(1-t))),
-sigm_prod + d_sigm_prod ((1 - exp(-k*t))*(1 - exp(-k*(1-t)))).
+schedule atoms (1d, canonical shapes -- no sigma):
+  bridge + d_bridge: sqrt(t(1-t)).
+  stiff + d_stiff: (1 - exp(-k*t))(1 - exp(-k*(1-t))) (takes k).
 
-schedule atoms (2d): stack2d_var family (variance sigma**2 * t1(1-t1)(1-t2))
-and stack2d_stiff family (linear-stiff (1 - exp(-k*t1))(1 - exp(-k*(1-t1)))).
+schedule atoms (2d, canonical shapes -- no sigma):
+  bridge_2d family: sqrt(t1(1-t1)(1-t2)).
+  stiff_2d family: (1 - exp(-k*t1))(1 - exp(-k*(1-t1))) (takes k).
 
-float32 stability: sigm_prod and stack2d_stiff families use torch.expm1 to
-avoid catastrophic cancellation in 1 - exp(-k*t) near t=0.
+amplitude scaling (sigma and any analytic constant like sqrt(2) for
+variance-preserving normalization) lives in the noise-schedule factories
+in path_builders.py, not in the atoms.
+
+float32 stability: stiff and stiff_2d use torch.expm1 to avoid
+catastrophic cancellation in 1 - exp(-k*t) near t=0.
 """
 
 import torch
@@ -107,7 +113,7 @@ def dir_weights(tau: Tensor) -> DirectWeights1D:
     return DirectWeights1D(alpha=alpha, beta=beta, d_alpha=d_alpha, d_beta=d_beta)
 
 
-def stack2d_weights(t1: Tensor, t2: Tensor) -> TriangularWeights2D:
+def rect_weights(t1: Tensor, t2: Tensor) -> TriangularWeights2D:
     """stacked-interpolant 2d weights with two partials each.
 
     two-tier interpolation:
@@ -136,62 +142,64 @@ def stack2d_weights(t1: Tensor, t2: Tensor) -> TriangularWeights2D:
     )
 
 
-def var_sqrt(tau: Tensor, *, sigma: float) -> Tensor:
-    """variance-sqrt schedule: sigma * sqrt(tau (1 - tau)).
+def bridge(tau: Tensor) -> Tensor:
+    """canonical 1d bridge shape: sqrt(tau (1 - tau)).
 
-    noise amplitude for gaussian paths with variance vanishing at tau=0,1.
+    pure shape with no amplitude; the noise-schedule factory applies any
+    overall scaling (e.g. sqrt(2) for vp-normalized, sigma for user scale).
     """
-    return sigma * torch.sqrt(tau * (1.0 - tau))
+    return torch.sqrt(tau * (1.0 - tau))
 
 
-def d_var_sqrt(tau: Tensor, *, sigma: float) -> Tensor:
-    """d/dtau [sigma sqrt(tau (1 - tau))] = sigma (1 - 2 tau) / (2 sqrt(tau (1 - tau)))."""
+def d_bridge(tau: Tensor) -> Tensor:
+    """d/dtau [sqrt(tau (1 - tau))] = (1 - 2 tau) / (2 sqrt(tau (1 - tau)))."""
     g = tau * (1.0 - tau)
-    dg_dtau = 1.0 - 2.0 * tau
-    return sigma * 0.5 * dg_dtau / torch.sqrt(g)
+    return 0.5 * (1.0 - 2.0 * tau) / torch.sqrt(g)
 
 
-def sigm_prod(tau: Tensor, *, k: float) -> Tensor:
-    """sigmoid-product schedule: (1 - exp(-k tau))(1 - exp(-k (1 - tau))).
+def stiff(tau: Tensor, *, k: float) -> Tensor:
+    """1d stiff schedule: (1 - exp(-k tau))(1 - exp(-k (1 - tau))).
 
-    smooth stochasticity vanishing at endpoints; stiffness k > 0.
-    uses torch.expm1 for stability: 1 - exp(-x) = -expm1(-x).
+    smooth, endpoint-vanishing; stiffness k > 0 controls how steeply the
+    schedule saturates toward 1 in the interior. uses torch.expm1 for
+    float32 stability near the endpoints.
     """
     sig1 = -torch.expm1(-k * tau)
     sig2 = -torch.expm1(-k * (1.0 - tau))
     return sig1 * sig2
 
 
-def d_sigm_prod(tau: Tensor, *, k: float) -> Tensor:
-    """d/dtau [(1 - exp(-k tau))(1 - exp(-k (1 - tau)))].
+def d_stiff(tau: Tensor, *, k: float) -> Tensor:
+    """d/dtau [(1 - exp(-k tau))(1 - exp(-k (1 - tau)))] = k e1 (1 - e2) - k e2 (1 - e1).
 
-    with s1 = 1 - exp(-k tau), s2 = 1 - exp(-k (1 - tau)), s1' = k exp(-k tau),
-    s2' = -k exp(-k (1 - tau)): derivative is s1' s2 + s1 s2'.
+    where e1 = exp(-k tau), e2 = exp(-k (1 - tau)).
     """
     e1 = torch.exp(-k * tau)
     e2 = torch.exp(-k * (1.0 - tau))
-    return (k * e1) * (1.0 - e2) + (1.0 - e1) * (-k * e2)
+    return k * e1 * (1.0 - e2) - k * e2 * (1.0 - e1)
 
 
-def stack2d_var(t1: Tensor, t2: Tensor, *, sigma: float) -> Tensor:
-    """2d variance schedule: sigma**2 * t1(1-t1)(1-t2).
+def bridge_2d(t1: Tensor, t2: Tensor) -> Tensor:
+    """canonical 2d bridge shape: sqrt(t1 (1 - t1)(1 - t2)).
 
-    note: returns variance (not std); builders take sqrt to get gamma.
+    pure shape; the schedule factory applies overall scaling.
     """
-    return (sigma ** 2) * t1 * (1.0 - t1) * (1.0 - t2)
+    return torch.sqrt(t1 * (1.0 - t1) * (1.0 - t2))
 
 
-def d_stack2d_var_dt1(t1: Tensor, t2: Tensor, *, sigma: float) -> Tensor:
-    """d/dt1 [sigma**2 t1(1-t1)(1-t2)] = sigma**2 (1 - 2 t1)(1 - t2)."""
-    return (sigma ** 2) * (1.0 - 2.0 * t1) * (1.0 - t2)
+def d_bridge_2d_dt1(t1: Tensor, t2: Tensor) -> Tensor:
+    """d/dt1 [sqrt(t1(1-t1)(1-t2))] = (1 - 2 t1)(1 - t2) / (2 sqrt(...))."""
+    v = t1 * (1.0 - t1) * (1.0 - t2)
+    return (1.0 - 2.0 * t1) * (1.0 - t2) / (2.0 * torch.sqrt(v))
 
 
-def d_stack2d_var_dt2(t1: Tensor, t2: Tensor, *, sigma: float) -> Tensor:
-    """d/dt2 [sigma**2 t1(1-t1)(1-t2)] = -sigma**2 t1(1-t1)."""
-    return -(sigma ** 2) * t1 * (1.0 - t1)
+def d_bridge_2d_dt2(t1: Tensor, t2: Tensor) -> Tensor:
+    """d/dt2 [sqrt(t1(1-t1)(1-t2))] = -t1(1-t1) / (2 sqrt(...))."""
+    v = t1 * (1.0 - t1) * (1.0 - t2)
+    return -t1 * (1.0 - t1) / (2.0 * torch.sqrt(v))
 
 
-def stack2d_stiff(t1: Tensor, t2: Tensor, *, k: float) -> Tensor:
+def stiff_2d(t1: Tensor, t2: Tensor, *, k: float) -> Tensor:
     """2d linear-stiff schedule: (1 - exp(-k t1))(1 - exp(-k (1 - t1))).
 
     independent of t2; t2 arg kept for api uniformity.
@@ -201,13 +209,13 @@ def stack2d_stiff(t1: Tensor, t2: Tensor, *, k: float) -> Tensor:
     return sig1 * sig2
 
 
-def d_stack2d_stiff_dt1(t1: Tensor, t2: Tensor, *, k: float) -> Tensor:
+def d_stiff_2d_dt1(t1: Tensor, t2: Tensor, *, k: float) -> Tensor:
     """d/dt1 [(1 - exp(-k t1))(1 - exp(-k (1 - t1)))] = k e1 (1 - e2) - k e2 (1 - e1)."""
     e1 = torch.exp(-k * t1)
     e2 = torch.exp(-k * (1.0 - t1))
     return k * e1 * (1.0 - e2) - k * e2 * (1.0 - e1)
 
 
-def d_stack2d_stiff_dt2(t1: Tensor, t2: Tensor, *, k: float) -> Tensor:
-    """d/dt2 [stack2d_stiff] = 0 (schedule has no t2 dependence)."""
+def d_stiff_2d_dt2(t1: Tensor, t2: Tensor, *, k: float) -> Tensor:
+    """d/dt2 [stiff_2d] = 0 (schedule has no t2 dependence)."""
     return torch.zeros_like(t2)

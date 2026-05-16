@@ -21,7 +21,7 @@ from ..common._curves import IdentityCurve1D, Curve
 from ..common._integrators import integrator_trapezoid, Integrator
 from ..common._predict_ldr import predict_ldr_via_curve
 from src.waypoints.dataclass_paths import DirectPath1D
-from src.waypoints.path_builders import vfm_direct_path
+from src.waypoints.path_builders import direct_vfm
 from ...common.base import DRE
 from src.models.common.mlp import MLP
 from src.models.flow.div_estimators import build_div_fn
@@ -73,13 +73,13 @@ class VFM(DRE):
 
         # resolve all four slots before validation
         if path is None:
-            path = vfm_direct_path(k=k, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
+            path = direct_vfm(k=k, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
 
         if time is None:
             time = make_uniform(eps=path.eps)
 
         if test_path is None:
-            test_path = vfm_direct_path(k=k, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
+            test_path = direct_vfm(k=k, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
 
         if curve is None:
             curve = IdentityCurve1D()

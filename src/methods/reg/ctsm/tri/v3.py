@@ -20,7 +20,7 @@ from ...common._predict_ldr import predict_ldr_via_curve
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
 from src.waypoints.dataclass_paths import TriangularPath2D
 from src.methods.reg.common._curves import Curve
-from src.waypoints.path_builders import ctsm_stack2d_path
+from src.waypoints.path_builders import rect_ctsm
 from src.methods.reg.common._curves import LowArcCurve2D
 from src.methods.reg.common._integrators import Integrator, integrator_trapezoid
 from src.methods.reg.common._time_samplers import (
@@ -104,17 +104,18 @@ class TriangularCTSM2D(ELDR):
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
 
-        # resolve defaults before validation
+        # resolve defaults before validation. caller-provided `time=` owns
+        # the t2-domain bound; otherwise we fall back to a hardcoded default.
         if path is None:
-            path = ctsm_stack2d_path(sigma=1.0, t2_max=0.3, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
+            path = rect_ctsm(sigma=1.0, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
 
         if test_path is None:
-            test_path = ctsm_stack2d_path(sigma=1.0, t2_max=0.3, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
+            test_path = rect_ctsm(sigma=1.0, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
 
         if time is None:
             time = make_product(
                 make_uniform(eps=path.eps),
-                make_uniform_scaled(eps=path.eps, max=path.t2_max)
+                make_uniform_scaled(eps=path.eps, max=0.3),
             )
 
         if curve is None:
@@ -143,15 +144,6 @@ class TriangularCTSM2D(ELDR):
             device=device,
         )
 
-        # coverage gate: ensure inference curve peak t2 is within training range
-        peak_t2 = float(self.curve.peak_t2())
-        t2_max = float(self.path.t2_max)
-        if peak_t2 > t2_max + 1e-9:
-            raise ValueError(
-                f"curve.peak_t2() = {peak_t2} exceeds path.t2_max = {t2_max} + 1e-9; "
-                f"the network would be queried at untrained t_2 values. "
-                f"Increase path.t2_max or reduce curve.path_height."
-            )
 
         # store test path and clamping scalars
         self.test_path = test_path

@@ -20,8 +20,8 @@ from ...common._predict_ldr import predict_ldr_via_curve
 from ...common._curves import Curve, LowArcCurve2D
 from ...common._integrators import Integrator, integrator_trapezoid
 from src.waypoints.dataclass_paths import TriangularPath2D
-from src.waypoints.path_builders import vfm_stack2d_path
-from src.methods.reg.common._time_samplers import TimeSampler2D, make_uniform, make_product
+from src.waypoints.path_builders import rect_vfm
+from src.methods.reg.common._time_samplers import TimeSampler2D, make_uniform, make_uniform_scaled, make_product
 from src.models.flow.div_estimators import build_div_fn
 from src.models.time_score_matching.velocity_network_2d import MLP2D
 
@@ -79,12 +79,12 @@ class TriangularVFM2D(ELDR):
 
         constructor arguments:
           input_dim: dimensionality of data.
-          path: optional triangularpath2d; defaults to vfm_stack2d_path(k=20.0, ...).
+          path: optional triangularpath2d; defaults to rect_vfm(k=20.0, ...).
                 defines the stacked 2d interpolant and its eps and t2_max bounds.
           test_path: optional triangularpath2d for inference; if none, built from
-                     vfm_stack2d_path with test_inner_eps, test_gamma_min.
+                     rect_vfm with test_inner_eps, test_gamma_min.
           time: optional timesampler2d; defaults to make_product of two make_uniform samplers.
-                returns (t1, t2, iw) on each call; scaled to path.t2_max.
+                returns (t1, t2, iw) on each call; scaled to the t2_max kwarg.
           curve: optional curve; defaults to lowarccurve2d(path_height=1.0).
                 maps tau in [eps, 1-eps] to (t1, t2) coordinates; must have dim=2.
           integrator: callable(scores [n_points, n_samples], tau [n_points]) -> [n_samples].
@@ -114,33 +114,24 @@ class TriangularVFM2D(ELDR):
         """
         super().__init__(input_dim)
 
-        # resolve all four slots BEFORE validation
+        # resolve all four slots BEFORE validation. caller-provided `time=`
+        # owns the t2-domain bound; otherwise fall back to a hardcoded default.
         if path is None:
-            path = vfm_stack2d_path(
-                k=20.0, t2_max=0.3,
-                inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3
+            path = rect_vfm(
+                k=20.0,
+                inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3,
             )
         if test_path is None:
-            test_path = vfm_stack2d_path(
-                k=20.0, t2_max=0.3,
-                inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3
+            test_path = rect_vfm(
+                k=20.0,
+                inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3,
             )
         if curve is None:
             curve = LowArcCurve2D(path_height=1.0)
         if time is None:
-            # make_uniform_scaled helper for t2 dimension scaling
-            def make_uniform_scaled(*, eps: float, t2_max: float):
-                """wrap make_uniform to scale tau by t2_max for t2 dimension."""
-                base = make_uniform(eps=eps)
-                def sampler(B, device):
-                    tau, iw = base(B, device)
-                    tau_scaled = tau * t2_max  # scale [eps, 1-eps] to [eps*t2_max, t2_max]
-                    return tau_scaled, iw
-                return sampler
-
             time = make_product(
                 make_uniform(eps=path.eps),
-                make_uniform_scaled(eps=path.eps, t2_max=path.t2_max)
+                make_uniform_scaled(eps=path.eps, max=0.3),
             )
 
         # f2/f3 sampler/path inner_eps consistency check
@@ -167,11 +158,6 @@ class TriangularVFM2D(ELDR):
             device=device,
         )
 
-        # coverage gate: curve peak_t2 must not exceed path.t2_max
-        assert self.curve.peak_t2() <= self.path.t2_max + 1e-9, (
-            f"curve peak_t2 {self.curve.peak_t2()} exceeds path.t2_max "
-            f"{self.path.t2_max} + 1e-9 tolerance"
-        )
 
         # store test_path (no separate validation; same type by construction)
         self.test_path = test_path

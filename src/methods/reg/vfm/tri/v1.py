@@ -15,7 +15,7 @@ from ...common._cfgs import (
 from ...common._trainer import train_two_phase
 from ...common._losses import make_velo_loss, make_denoiser_loss
 from src.waypoints.dataclass_paths import TriangularPath1D
-from src.waypoints.path_builders import vfm_bary_path
+from src.waypoints.path_builders import bary_vfm
 from src.methods.reg.common._time_samplers import TimeSampler1D, make_uniform
 from src.methods.reg.common._curves import Curve, IdentityCurve1D
 from src.methods.reg.common._integrators import Integrator, integrator_trapezoid
@@ -65,12 +65,12 @@ class TriangularVFMV1(ELDR):
 
         # resolve defaults before validation
         if path is None:
-            path = vfm_bary_path(k=k, vertex=vertex, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
+            path = bary_vfm(k=k, vertex=vertex, inner_eps=inner_eps, gamma_min=gamma_min, eps=1e-3)
         if time is None:
             time = make_uniform(eps=path.eps)
 
         # build test path unconditionally
-        test_path = vfm_bary_path(k=k, vertex=vertex, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
+        test_path = bary_vfm(k=k, vertex=vertex, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
 
         # f2/f3 sampler/path inner_eps consistency check
         samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0

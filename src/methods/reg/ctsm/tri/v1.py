@@ -19,7 +19,7 @@ from ...common._trainer import train_loop
 from ...common._losses import make_sb_loss
 from src.waypoints.dataclass_paths import TriangularPath1D
 from src.waypoints.path_builders import (
-    ctsm_bary_path,
+    bary_ctsm,
 )
 from src.models.time_score_matching.time_score_net_1d import TimeScoreNetwork1D
 
@@ -67,7 +67,7 @@ class TriangularCTSMV1(ELDR):
         """
         # step 1: resolve path default
         if path is None:
-            path = ctsm_bary_path(
+            path = bary_ctsm(
                 sigma=sigma, vertex=vertex,
                 inner_eps=inner_eps, gamma_min=gamma_min,
                 eps=1e-3
@@ -75,7 +75,7 @@ class TriangularCTSMV1(ELDR):
 
         # step 1b: resolve test_path default (uses test_* clamping kwargs)
         if test_path is None:
-            test_path = ctsm_bary_path(
+            test_path = bary_ctsm(
                 sigma=sigma, vertex=vertex,
                 inner_eps=test_inner_eps, gamma_min=test_gamma_min,
                 eps=1e-3

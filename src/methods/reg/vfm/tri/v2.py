@@ -29,7 +29,7 @@ from ...common._integrators import Integrator, integrator_trapezoid
 from src.models.flow.div_estimators import build_div_fn
 from src.models.common.mlp import MLP
 from src.waypoints.dataclass_paths import TriangularPath1D
-from src.waypoints.path_builders import psb_path
+from src.waypoints.path_builders import psb
 
 
 def build_velocity_net(
@@ -121,9 +121,9 @@ class TriangularVFMV2(ELDR):
         args:
             input_dim: dimensionality of data.
             path: optional triangularpath1d (train); defaults to
-                  psb_path(..., eps=1e-3).
+                  psb(..., eps=1e-3).
             test_path: optional triangularpath1d (test); defaults to
-                  psb_path with test_* clamps.
+                  psb with test_* clamps.
             time: optional timesampler1d; when inner_eps > 0, defaults to
                   make_piecewise_sb_sampler(...). when inner_eps == 0,
                   defaults to make_uniform(...).
@@ -149,7 +149,7 @@ class TriangularVFMV2(ELDR):
         """
         # step 1: resolve defaults before validation
         if path is None:
-            path = psb_path(
+            path = psb(
                 sigma=sigma,
                 vertex=vertex,
                 gamma_min=gamma_min,
@@ -158,7 +158,7 @@ class TriangularVFMV2(ELDR):
             )
 
         if test_path is None:
-            test_path = psb_path(
+            test_path = psb(
                 sigma=sigma,
                 vertex=vertex,
                 gamma_min=test_gamma_min,

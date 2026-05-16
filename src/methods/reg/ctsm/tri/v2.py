@@ -14,7 +14,7 @@ import warnings
 import torch
 from torch import Tensor
 
-from src.waypoints.path_builders import psb_path
+from src.waypoints.path_builders import psb
 from src.waypoints.dataclass_paths import TriangularPath1D
 
 from ...common._time_samplers import (
@@ -93,7 +93,7 @@ class TriangularCTSMV2(ELDR):
 
         # resolve defaults before validation (contract requirement)
         if path is None:
-            path = psb_path(
+            path = psb(
                 sigma=sigma,
                 vertex=vertex,
                 inner_eps=inner_eps,
@@ -102,7 +102,7 @@ class TriangularCTSMV2(ELDR):
             )
 
         # always build test_path with test defaults
-        test_path = psb_path(
+        test_path = psb(
             sigma=sigma,
             vertex=vertex,
             inner_eps=test_inner_eps,

@@ -307,6 +307,7 @@ def make_uniform_scaled(*, eps: float, max: float) -> TimeSampler1D:
         iw = torch.ones(B, 1, device=device)
         return tau, iw
 
+    sampler.max = max  # exposes domain bound for downstream coverage gates
     return sampler
 
 
@@ -531,6 +532,9 @@ def make_product(
         iw = iw1 * iw2
         return t1, t2, iw
 
+    # propagate t2-axis domain bound from inner sampler (s2 in the rect convention)
+    if hasattr(s2, "max"):
+        sampler.t2_max = s2.max
     return sampler
 
 
