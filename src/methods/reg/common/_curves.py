@@ -117,8 +117,8 @@ class LowArcCurve2D:
     def peak_t2(self) -> float:
         """Return the maximum t_2 value attained on the curve.
 
-        Used by V3 estimator to assert path.t2_max >= curve.peak_t2()
-        at construction time. For h tau (1 - tau), peak is h/4 at tau = 0.5.
+        For h tau (1 - tau), peak is h/4 at tau = 0.5. Callers can use this
+        to check coverage against a sampler's t2_max if they wish.
 
         Returns:
             float, the maximum t_2 value on the curve.
