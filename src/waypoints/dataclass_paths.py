@@ -86,12 +86,12 @@ class TriangularPath1D:
 class TriangularPath2D:
     """frozen path for triangular 2d vfm and ctsm (v3).
 
-    two-argument callables for a rectangular or height-bounded time domain.
-    gamma is positive on [eps, 1-eps] x [eps, t2_max].
+    pure geometry: the path is well-defined on the open square (t1, t2) in
+    (0, 1)^2. integration-domain bounds (e.g. t2_max < 1 to avoid the pure-
+    anchor corner) live on the sampler/curve/estimator, not here.
     """
     weights: Callable[[torch.Tensor, torch.Tensor], TriangularWeights2D]
     gamma: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
     dgamma_dt1: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
     dgamma_dt2: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
     eps: float
-    t2_max: float
