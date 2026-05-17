@@ -3,14 +3,14 @@ gridworld:
   L: 16                             # int, grid side length; |S| = L^2 = 256 (must be >= 2)
   p_slip: 0.1                       # float in [0, 1]; stochasticity
   gamma: 0.995                      # float in (0, 1); discount factor
-  terminals: [[0, 0], [15, 15]]     # list of [row, col]; must match anti_goal and expert_goal
+  terminals: [[15, 15], [11, 11]]   # list of [row, col]; must match anti_goal and expert_goal
   expert_goal: [15, 15]             # [row, col]; must be in terminals
-  anti_goal: [0, 0]                 # [row, col]; must be in terminals (different from expert_goal)
-  tau: 0.1                          # float > 0; softmax temperature
+  anti_goal: [11, 11]               # [row, col]; must be in terminals. near expert_goal (diag dist ~5.7): below the bifurcation threshold so KL1(alpha) is smooth and d_O/d_E overlap is partial (adversarial), not disjoint.
+  tau: 0.2                          # float > 0; softmax temperature. 0.2 keeps occupancy densities strictly positive (no hard LDR zeros).
   reward_kind: gaussian             # str; "sparse" (1 at goal entry) or "gaussian" (dense; r ∝ exp(-d²/σ²))
-  reward_sigma: 1.0                 # float > 0; bandwidth of gaussian reward shaping (only used if reward_kind=gaussian)
+  reward_sigma: 3.0                 # float > 0; bandwidth of gaussian reward shaping (only used if reward_kind=gaussian)
   mu0_kind: distance_quadratic      # str; "uniform" or "distance_quadratic"
-  mu0_centers: [[0, 0], [15, 15]]   # list of [row, col]; centers for distance_quadratic mu0
+  mu0_centers: [[15, 15], [11, 11]] # list of [row, col]; centers for distance_quadratic mu0; tracks the goals
 
 # State-action encoding (selects phi: (s,a) -> R^d)
 encoding:
@@ -25,10 +25,10 @@ encoding:
 
 # KL divergence target sweep
 kl_targets:
-  k1_values: [1.2, 1.6, 2.8, 6.4]   # float list; sorted ascending. all 12 (K1, K2) cells feasible
-  k2_values: [0.5, 1.0, 2.0]         # float list; sorted ascending
+  k1_values: [0.4, 0.8, 1.6, 3.2]   # float list; sorted ascending. geometric ratio 2 on the smooth KL1(alpha) ramp; overlap ~[0.63, 0.48, 0.30, 0.15]
+  beta_values: [0.5]                 # float list in [0,1]; mixture weight(s) for pstar = (1-beta)*pi_O + beta*pi_E. fixed at 0.5: pstar is the equal mixture, ~equidistant from p0 and p1. K2 = KL(d_pstar||d_E) is derived per cell, not prescribed.
   hard_corner_threshold: 1.0e+9      # sentinel; hard-corner branch unused since seeds_default == seeds_hard. note: yaml 1.1 requires the explicit `+` for scientific notation to parse as float.
-  seeds_default: 40                  # int > 0; seeds per cell (12 cells; all feasible)
+  seeds_default: 40                  # int > 0; seeds per cell (4 k1 x 1 beta = 4 cells)
   seeds_hard: 40                     # int > 0; matched to seeds_default (no hard-cell distinction)
 
 # KL grid (precomputed and cached)
@@ -41,7 +41,7 @@ kl_grid:
 sigma_sweep:
   enabled: false                    # bool; if true, run extra sigma variants
   sigmas: [0.05, 0.1, 0.2, 0.5, 1.0]      # float list > 0; sigma values to test
-  cells: [[2, 2], [4, 4]]                 # list of [k1_idx, k2_idx]; indices into k1_values and k2_values
+  cells: [[1, 0], [3, 0]]                 # list of [k1_idx, beta_idx]; indices into k1_values and beta_values
   seeds: 20                         # int > 0; seeds per (cell, sigma) pair
 
 # Sampling

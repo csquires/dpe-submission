@@ -1,7 +1,7 @@
 """
 step3_process_results.py
 
-Read the gathered results_all_cells.h5 file and compute per-(k1,k2) summaries
+Read the gathered results_all_cells.h5 file and compute per-(k1,beta) summaries
 of pointwise LDR MAE and integrated ELDR error for each method.
 
 Methods are taken from the winners YAML (not config['algorithms'], which is stale).
@@ -86,21 +86,21 @@ def main():
     # grid dimensions
     kl_targets = config["kl_targets"]
     k1_values = np.array(kl_targets["k1_values"], dtype=np.float32)
-    k2_values = np.array(kl_targets["k2_values"], dtype=np.float32)
+    beta_values = np.array(kl_targets["beta_values"], dtype=np.float32)
     n_k1 = len(k1_values)
-    n_k2 = len(k2_values)
+    n_beta = len(beta_values)
     n_seeds = kl_targets["seeds_default"]
-    n_cells = n_k1 * n_k2 * n_seeds  # 480
+    n_cells = n_k1 * n_beta * n_seeds
 
     def _decode_cell(flat_idx):
         seed = flat_idx % n_seeds
         rest = flat_idx // n_seeds
-        k2_idx = rest % n_k2
-        k1_idx = rest // n_k2
-        return k1_idx, k2_idx, seed
+        beta_idx = rest % n_beta
+        k1_idx = rest // n_beta
+        return k1_idx, beta_idx, seed
 
-    # results[method][k1_idx][k2_idx] = list of (pointwise_mae, eldr_err)
-    results = {m: [[[] for _ in range(n_k2)] for _ in range(n_k1)] for m in methods}
+    # results[method][k1_idx][beta_idx] = list of (pointwise_mae, eldr_err)
+    results = {m: [[[] for _ in range(n_beta)] for _ in range(n_k1)] for m in methods}
 
     missing_data = []
     skipped_nan = 0
@@ -109,12 +109,12 @@ def main():
     with h5py.File(gather_path, "r") as gf:
         available_keys = set(gf.keys())
         for flat_idx in range(n_cells):
-            k1_idx, k2_idx, seed = _decode_cell(flat_idx)
+            k1_idx, beta_idx, seed = _decode_cell(flat_idx)
 
             # load ground truth
             data_path = os.path.join(
                 data_dir, encoding_subdir,
-                f"kl1_{k1_idx}_kl2_{k2_idx}_seed_{seed}.h5",
+                f"kl1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5",
             )
             if not os.path.exists(data_path):
                 missing_data.append(data_path)
@@ -134,7 +134,7 @@ def main():
                     continue
                 pointwise_mae = float(np.mean(np.abs(est_ldrs - true_ldrs)))
                 eldr_err = float(abs(np.mean(est_ldrs) - integrated_eldr))
-                results[method][k1_idx][k2_idx].append((pointwise_mae, eldr_err))
+                results[method][k1_idx][beta_idx].append((pointwise_mae, eldr_err))
 
     if missing_data:
         logging.warning(f"missing {len(missing_data)} data files (cells skipped)")
@@ -143,40 +143,40 @@ def main():
     if missing_methods_in_gather:
         logging.warning(f"methods not found in gather file: {sorted(missing_methods_in_gather)}")
 
-    # aggregate per (method, k1_idx, k2_idx) over seeds
+    # aggregate per (method, k1_idx, beta_idx) over seeds
     def empty_grid():
-        return np.full((n_k1, n_k2), np.nan, dtype=np.float32)
+        return np.full((n_k1, n_beta), np.nan, dtype=np.float32)
 
     mean_mae  = {m: empty_grid() for m in methods}
     se_mae    = {m: empty_grid() for m in methods}
-    n_mae     = {m: np.zeros((n_k1, n_k2), dtype=np.int32) for m in methods}
+    n_mae     = {m: np.zeros((n_k1, n_beta), dtype=np.int32) for m in methods}
     mean_eldr = {m: empty_grid() for m in methods}
     se_eldr   = {m: empty_grid() for m in methods}
-    n_eldr    = {m: np.zeros((n_k1, n_k2), dtype=np.int32) for m in methods}
+    n_eldr    = {m: np.zeros((n_k1, n_beta), dtype=np.int32) for m in methods}
 
     for m in methods:
         for k1_idx in range(n_k1):
-            for k2_idx in range(n_k2):
-                pairs = results[m][k1_idx][k2_idx]
+            for beta_idx in range(n_beta):
+                pairs = results[m][k1_idx][beta_idx]
                 if not pairs:
                     continue
                 mae_vals  = [p[0] for p in pairs]
                 eldr_vals = [p[1] for p in pairs]
                 mu, se, n = agg_metric(mae_vals)
-                mean_mae[m][k1_idx, k2_idx] = mu
-                se_mae[m][k1_idx, k2_idx]   = se
-                n_mae[m][k1_idx, k2_idx]     = n
+                mean_mae[m][k1_idx, beta_idx] = mu
+                se_mae[m][k1_idx, beta_idx]   = se
+                n_mae[m][k1_idx, beta_idx]     = n
                 mu, se, n = agg_metric(eldr_vals)
-                mean_eldr[m][k1_idx, k2_idx] = mu
-                se_eldr[m][k1_idx, k2_idx]   = se
-                n_eldr[m][k1_idx, k2_idx]     = n
+                mean_eldr[m][k1_idx, beta_idx] = mu
+                se_eldr[m][k1_idx, beta_idx]   = se
+                n_eldr[m][k1_idx, beta_idx]     = n
 
     # collect flattened per-seed arrays (all valid seeds across all cells)
-    seed_mae  = {m: np.array([p[0] for k1 in range(n_k1) for k2 in range(n_k2)
-                               for p in results[m][k1][k2]], dtype=np.float32)
+    seed_mae  = {m: np.array([p[0] for k1 in range(n_k1) for b in range(n_beta)
+                               for p in results[m][k1][b]], dtype=np.float32)
                  for m in methods}
-    seed_eldr = {m: np.array([p[1] for k1 in range(n_k1) for k2 in range(n_k2)
-                               for p in results[m][k1][k2]], dtype=np.float32)
+    seed_eldr = {m: np.array([p[1] for k1 in range(n_k1) for b in range(n_beta)
+                               for p in results[m][k1][b]], dtype=np.float32)
                  for m in methods}
 
     # write summary h5
@@ -185,7 +185,7 @@ def main():
     out_path = os.path.join(out_dir, "summary.h5")
     with h5py.File(out_path, "w") as f:
         f.create_dataset("k1_values", data=k1_values)
-        f.create_dataset("k2_values", data=k2_values)
+        f.create_dataset("beta_values", data=beta_values)
         f.attrs["methods"] = methods
         for m in methods:
             f.create_dataset(f"pointwise_mae_{m}_mean", data=mean_mae[m])
@@ -204,19 +204,19 @@ def main():
     print("=" * 130)
     hdr = "Method".ljust(32)
     for k1_idx in range(n_k1):
-        for k2_idx in range(n_k2):
-            hdr += f"K1={k1_values[k1_idx]:.1f},K2={k2_values[k2_idx]:.1f}".rjust(col_w)
+        for beta_idx in range(n_beta):
+            hdr += f"K1={k1_values[k1_idx]:.1f},b={beta_values[beta_idx]:.2f}".rjust(col_w)
     print(hdr)
     print("-" * 130)
     for m in methods:
         row = m.ljust(32)
         for k1_idx in range(n_k1):
-            for k2_idx in range(n_k2):
-                n = n_mae[m][k1_idx, k2_idx]
+            for beta_idx in range(n_beta):
+                n = n_mae[m][k1_idx, beta_idx]
                 if n == 0:
                     cell = "NaN(0)"
                 else:
-                    cell = f"{mean_mae[m][k1_idx,k2_idx]:.4f}±{se_mae[m][k1_idx,k2_idx]:.4f}({n})"
+                    cell = f"{mean_mae[m][k1_idx,beta_idx]:.4f}±{se_mae[m][k1_idx,beta_idx]:.4f}({n})"
                 row += cell.rjust(col_w)
         print(row)
     print("=" * 130)
@@ -230,23 +230,23 @@ def main():
     for m in methods:
         row = m.ljust(32)
         for k1_idx in range(n_k1):
-            for k2_idx in range(n_k2):
-                n = n_eldr[m][k1_idx, k2_idx]
+            for beta_idx in range(n_beta):
+                n = n_eldr[m][k1_idx, beta_idx]
                 if n == 0:
                     cell = "NaN(0)"
                 else:
-                    cell = f"{mean_eldr[m][k1_idx,k2_idx]:.4f}±{se_eldr[m][k1_idx,k2_idx]:.4f}({n})"
+                    cell = f"{mean_eldr[m][k1_idx,beta_idx]:.4f}±{se_eldr[m][k1_idx,beta_idx]:.4f}({n})"
                 row += cell.rjust(col_w)
         print(row)
     print("=" * 130)
 
     print(f"\nSaved: {out_path}")
-    print(f"Grid: {n_k1}×{n_k2}, {n_seeds} seeds/cell, {n_cells} total cells")
+    print(f"Grid: {n_k1}×{n_beta}, {n_seeds} seeds/cell, {n_cells} total cells")
     feasible = sum(
-        1 for k1 in range(n_k1) for k2 in range(n_k2)
-        if any(n_mae[m][k1, k2] > 0 for m in methods)
+        1 for k1 in range(n_k1) for b in range(n_beta)
+        if any(n_mae[m][k1, b] > 0 for m in methods)
     )
-    print(f"Cells with ≥1 valid result: {feasible}/{n_k1 * n_k2}")
+    print(f"Cells with ≥1 valid result: {feasible}/{n_k1 * n_beta}")
 
 
 if __name__ == "__main__":

@@ -41,9 +41,9 @@ def _input_dim(enc_cfg: dict, n_states: int, n_actions: int) -> int:
 class OccupancyAdapter(ExperimentAdapter):
     """Occupancy gridworld ELDR estimation adapter.
 
-    cell shape: 3-tuple (k1_idx, k2_idx, seed).
-    pool: k1_values x k2_values x range(seeds_default) from config.kl_targets.
-    total cells: 4 * 3 * 40 = 480 (default config).
+    cell shape: 3-tuple (k1_idx, beta_idx, seed).
+    pool: k1_values x beta_values x range(seeds_default) from config.kl_targets.
+    total cells: 4 * 1 * 40 = 160 (default config).
 
     h5 keys: p0_samples, p1_samples, pstar_samples,
              true_ldrs_discrete (onehot) or true_ldrs_smoothed (blob/flow).
@@ -61,7 +61,7 @@ class OccupancyAdapter(ExperimentAdapter):
 
         kt = cfg["kl_targets"]
         self._k1_values = kt["k1_values"]
-        self._k2_values = kt["k2_values"]
+        self._beta_values = kt["beta_values"]
         self._n_seeds = int(kt["seeds_default"])
 
         enc = dict(cfg["encoding"])
@@ -84,15 +84,15 @@ class OccupancyAdapter(ExperimentAdapter):
         return self._data_dir
 
     def cell_pool(self) -> list[tuple[int, int, int]]:
-        """return [(k1, k2, s)] for k1 in n_k1, k2 in n_k2, s in n_seeds."""
+        """return [(k1, b, s)] for k1 in n_k1, b in n_beta, s in n_seeds."""
         n_k1 = len(self._k1_values)
-        n_k2 = len(self._k2_values)
-        return list(itertools.product(range(n_k1), range(n_k2), range(self._n_seeds)))
+        n_beta = len(self._beta_values)
+        return list(itertools.product(range(n_k1), range(n_beta), range(self._n_seeds)))
 
     def load_cell_data(self, cell: tuple[int, int, int], device: str) -> dict[str, torch.Tensor]:
-        """load one (k1_idx, k2_idx, seed) cell from h5 file.
+        """load one (k1_idx, beta_idx, seed) cell from h5 file.
 
-        opens {data_dir}/kl1_K1_kl2_K2_seed_S.h5.
+        opens {data_dir}/kl1_K1_beta_B_seed_S.h5.
         extracts p0_samples, p1_samples, pstar_samples, and
         true_ldrs_discrete or true_ldrs_smoothed (dispatched at init).
         converts to float32 tensors on device.
@@ -100,8 +100,8 @@ class OccupancyAdapter(ExperimentAdapter):
         returns {"pstar": T, "p0": T, "p1": T, "true_ldrs": T}.
         raises FileNotFoundError if h5 missing.
         """
-        k1, k2, seed = cell
-        path = self._data_dir / f"kl1_{k1}_kl2_{k2}_seed_{seed}.h5"
+        k1, beta, seed = cell
+        path = self._data_dir / f"kl1_{k1}_beta_{beta}_seed_{seed}.h5"
         with h5py.File(path, "r") as f:
             p0 = torch.from_numpy(np.array(f["p0_samples"])).float().to(device)       # (N, d)
             p1 = torch.from_numpy(np.array(f["p1_samples"])).float().to(device)       # (N, d)
@@ -130,9 +130,9 @@ class OccupancyAdapter(ExperimentAdapter):
         return True
 
     def stratify_key(self, cell: tuple[int, int, int]):
-        """return (k1_idx, k2_idx) for stratified cell sampling.
+        """return (k1_idx, beta_idx) for stratified cell sampling.
 
-        guarantees all 12 (k1, k2) regimes are covered when sampling
-        from the 480-cell pool (naive random miss-rate ~47%).
+        guarantees all 4 (k1, beta) regimes are covered when sampling
+        from the 160-cell pool.
         """
         return (cell[0], cell[1])

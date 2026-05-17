@@ -351,14 +351,14 @@ def parse_args(args=None):
     parse command-line arguments.
 
     supports two modes:
-      python step2_run_algorithms.py --k1-idx I --k2-idx J --seed K [--methods M1,M2,...] [--force]
+      python step2_run_algorithms.py --k1-idx I --beta-idx J --seed K [--methods M1,M2,...] [--force]
       python step2_run_algorithms.py --smoke
     """
     parser = argparse.ArgumentParser(
         description="Fit density-ratio methods on step1 SMODICE data."
     )
     parser.add_argument("--k1-idx", type=int, help="Index into k1_values")
-    parser.add_argument("--k2-idx", type=int, help="Index into k2_values")
+    parser.add_argument("--beta-idx", type=int, help="Index into beta_values")
     parser.add_argument("--seed", type=int, help="Random seed")
     parser.add_argument(
         "--methods",
@@ -406,18 +406,16 @@ def main():
     torch.manual_seed(config["seed"])
 
     if args.smoke:
-        k1_vals = config["kl_targets"]["k1_values"]
-        k2_vals = config["kl_targets"]["k2_values"]
-        k1_idx = k1_vals.index(1.0) if 1.0 in k1_vals else 0
-        k2_idx = k2_vals.index(1.0) if 1.0 in k2_vals else 0
+        k1_idx = 0
+        beta_idx = 0
         seed = 0
         methods_cli = "SmoothedTabularPluginDRE,TSM"
-        print(f"[smoke test] k1_idx={k1_idx}, k2_idx={k2_idx}, seed=0, methods=SmoothedTabularPluginDRE,TSM")
+        print(f"[smoke test] k1_idx={k1_idx}, beta_idx={beta_idx}, seed=0, methods=SmoothedTabularPluginDRE,TSM")
     else:
-        if args.k1_idx is None or args.k2_idx is None or args.seed is None:
+        if args.k1_idx is None or args.beta_idx is None or args.seed is None:
             parser = argparse.ArgumentParser()
-            parser.error("--k1-idx, --k2-idx, --seed required (or use --smoke)")
-        k1_idx, k2_idx, seed = args.k1_idx, args.k2_idx, args.seed
+            parser.error("--k1-idx, --beta-idx, --seed required (or use --smoke)")
+        k1_idx, beta_idx, seed = args.k1_idx, args.beta_idx, args.seed
         methods_cli = args.methods
 
     encoding_cfg = dict(config["encoding"])
@@ -440,19 +438,19 @@ def main():
     data_subdir = encoding_subdir(config["data_dir"])
     data_filename = os.path.join(
         data_subdir,
-        f"kl1_{k1_idx}_kl2_{k2_idx}_seed_{seed}.h5",
+        f"kl1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5",
     )
 
     results_subdir = encoding_subdir(config["raw_results_dir"])
     results_filename = os.path.join(
         results_subdir,
-        f"kl1_{k1_idx}_kl2_{k2_idx}_seed_{seed}.h5",
+        f"kl1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5",
     )
 
     if not os.path.exists(data_filename):
         raise FileNotFoundError(
             f"step1 HDF5 not found: {data_filename}\n"
-            f"run step1_create_data.py --k1-idx {k1_idx} --k2-idx {k2_idx} --seed {seed}"
+            f"run step1_create_data.py --k1-idx {k1_idx} --beta-idx {beta_idx} --seed {seed}"
         )
 
     os.makedirs(results_subdir, exist_ok=True)

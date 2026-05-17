@@ -1,7 +1,7 @@
 """
 Step 4: Plot Results for SMODICE ELDR Estimation
 
-Line plots of MAE / ELDR error vs K1 for each K2 panel, with translucent
+Line plots of MAE / ELDR error vs K1 for each beta panel, with translucent
 fill_between error bands (±1 SE). Colors match mnist_eldr_estimation step4.
 """
 import argparse
@@ -55,7 +55,7 @@ def parse_args():
 
 
 def load_summary(h5_path, metric):
-    """Return dict: method -> (mean[n_k1, n_k2], se[n_k1, n_k2])."""
+    """Return dict: method -> (mean[n_k1, n_beta], se[n_k1, n_beta])."""
     results = {}
     prefix = f"{metric}_"
     suffix = "_mean"
@@ -71,8 +71,8 @@ def load_summary(h5_path, metric):
     return results
 
 
-def plot_metric(results, k1_values, k2_values, metric, figures_dir):
-    n_k2 = len(k2_values)
+def plot_metric(results, k1_values, beta_values, metric, figures_dir):
+    n_beta = len(beta_values)
     methods = sorted(results.keys())
 
     style_path = "full-width.mplstyle"
@@ -83,34 +83,34 @@ def plot_metric(results, k1_values, k2_values, metric, figures_dir):
         matplotlib.rcParams["font.size"] = FONT_SIZE
 
     fig, axes = plt.subplots(
-        1, n_k2,
-        figsize=(5 * n_k2, 4),
+        1, n_beta,
+        figsize=(5 * n_beta, 4),
         constrained_layout=False,
         sharey=True,
     )
     fig.subplots_adjust(bottom=0.32, wspace=0.08)
 
-    if n_k2 == 1:
+    if n_beta == 1:
         axes = [axes]
 
-    for k2_idx, ax in enumerate(axes):
-        k2_val = k2_values[k2_idx]
+    for beta_idx, ax in enumerate(axes):
+        beta_val = beta_values[beta_idx]
         for method in methods:
             mean, se = results[method]
-            y = mean[:, k2_idx]
-            y_lo = y - se[:, k2_idx]
-            y_hi = y + se[:, k2_idx]
+            y = mean[:, beta_idx]
+            y_lo = y - se[:, beta_idx]
+            y_hi = y + se[:, beta_idx]
             color = METHOD_COLORS.get(method, "#888888")
             ax.plot(k1_values, y, label=method, color=color,
                     linewidth=1.5, marker="o", markersize=4)
             ax.fill_between(k1_values, y_lo, y_hi, color=color, alpha=ERROR_BAND_ALPHA)
 
         ax.set_xlabel("K1", fontsize=FONT_SIZE)
-        ax.set_title(f"K2 = {k2_val:.1f}", fontsize=FONT_SIZE)
+        ax.set_title(f"beta = {beta_val:.2f}", fontsize=FONT_SIZE)
         ax.set_xticks(k1_values)
         ax.set_xticklabels([f"{k:.1f}" for k in k1_values])
         ax.grid(True, alpha=0.3)
-        if k2_idx == 0:
+        if beta_idx == 0:
             ylabel = "Pointwise LDR MAE" if metric == "pointwise_mae" else "ELDR Error"
             ax.set_ylabel(ylabel, fontsize=FONT_SIZE)
 
@@ -263,7 +263,7 @@ def main():
         config = yaml.safe_load(f)
 
     k1_values = config["kl_targets"]["k1_values"]
-    k2_values = config["kl_targets"]["k2_values"]
+    beta_values = config["kl_targets"]["beta_values"]
     encoding = config["encoding"]["type"]
     sigma = config["encoding"]["sigma"]
     processed_dir = config["processed_results_dir"]
@@ -280,7 +280,7 @@ def main():
             print(f"No results for {metric}; skipping.")
             continue
         print(f"Plotting line plot for {metric} ({len(results)} methods)...")
-        plot_metric(results, k1_values, k2_values, metric, figures_dir)
+        plot_metric(results, k1_values, beta_values, metric, figures_dir)
         print(f"Plotting box plot for {metric}...")
         plot_boxplot(h5_path, metric, figures_dir)
 

@@ -6,15 +6,15 @@ discrete + smoothed LDRs.
 
 modes:
   default:     read cells under data_dir/{encoding_type}/{sigma_dir}/
-               kl1_{i}_kl2_{j}_seed_{s}.h5,
+               kl1_{i}_beta_{j}_seed_{s}.h5,
                produce datagen_diagnostic.png + datagen_variance.png.
   --show-grid: read grid_cache/grid_{hash}.h5 and produce
                grid_diagnostic.png. works with no per-cell HDF5 yet.
 
 panels:
-  - prescribed-vs-realized scatter for K1 and K2
+  - prescribed-vs-realized scatter for K1; beta-vs-realized-K2 for the 2nd axis
   - (alpha*, beta*) coverage in 2-d
-  - LDR histograms grid (per (k1_idx, k2_idx); seeds overlaid; smoothed)
+  - LDR histograms grid (per (k1_idx, beta_idx); seeds overlaid; smoothed)
   - PCA of samples (skipped for onehot encodings)
   - discrete vs smoothed LDR scatter (skipped for onehot encodings)
   - hardness boxplot grid + summary table
@@ -49,13 +49,15 @@ from ex.utils.diagnostic_kl_grid import (
 from ex.utils.prescribed_kls import hash_mdp_config
 
 
+# the second cell axis is beta (a fixed mixture weight), not a prescribed K2.
+# k2_pre therefore points at the beta attr; k2_real stays the derived KL2.
 KEY_MAP = {
     "k1_pre": "prescribed_K1",
-    "k2_pre": "prescribed_K2",
+    "k2_pre": "beta",
     "k1_real": "realized_K1",
     "k2_real": "realized_K2",
     "alpha": "alpha_star",
-    "beta": "beta_star",
+    "beta": "beta",
     "integrated_eldr": "integrated_eldr",
 }
 
@@ -125,27 +127,20 @@ def resolve_data_subdir(config: Dict[str, Any],
 
 def enumerate_cell_paths(config: Dict[str, Any], data_subdir: Path
                          ) -> Dict[Tuple[int, int], List[Tuple[int, str]]]:
-    """walk data_subdir for kl1_{i}_kl2_{j}_seed_{s}.h5; group by (k1_idx, k2_idx)."""
+    """walk data_subdir for kl1_{i}_beta_{j}_seed_{s}.h5; group by (k1_idx, beta_idx)."""
     k1_values = [float(v) for v in config["kl_targets"]["k1_values"]]
-    k2_values = [float(v) for v in config["kl_targets"]["k2_values"]]
-    # cast threshold defensively: yaml parses "1.0e9" as str under YAML 1.1.
-    hard_threshold = float(config["kl_targets"]["hard_corner_threshold"])
+    beta_values = [float(v) for v in config["kl_targets"]["beta_values"]]
     seeds_default = int(config["kl_targets"]["seeds_default"])
-    seeds_hard = int(config["kl_targets"]["seeds_hard"])
 
     out: Dict[Tuple[int, int], List[Tuple[int, str]]] = {}
-    for k1_idx, k2_idx in product(range(len(k1_values)), range(len(k2_values))):
-        K1 = k1_values[k1_idx]
-        K2 = k2_values[k2_idx]
-        n_seeds = (seeds_hard if (K1 >= hard_threshold and K2 >= hard_threshold)
-                   else seeds_default)
+    for k1_idx, beta_idx in product(range(len(k1_values)), range(len(beta_values))):
         seeds = []
-        for seed in range(n_seeds):
-            path = data_subdir / f"kl1_{k1_idx}_kl2_{k2_idx}_seed_{seed}.h5"
+        for seed in range(seeds_default):
+            path = data_subdir / f"kl1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
             if path.exists():
                 seeds.append((seed, str(path)))
         if seeds:
-            out[(k1_idx, k2_idx)] = seeds
+            out[(k1_idx, beta_idx)] = seeds
     return out
 
 
@@ -184,7 +179,7 @@ def plot_lightweight_figure(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
                             encoding_type: str) -> None:
     """assemble lightweight figure to figures_dir/datagen_diagnostic_{enc}.png."""
     k1_values = config["kl_targets"]["k1_values"]
-    k2_values = config["kl_targets"]["k2_values"]
+    beta_values = config["kl_targets"]["beta_values"]
     n1 = len(k1_values)
     is_onehot = encoding_type.startswith("onehot")
 
@@ -198,9 +193,9 @@ def plot_lightweight_figure(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
                                              wspace=0.4)
     plot_prescribed_vs_realized(fig.add_subplot(sub0[0, 0]),
                                 fig.add_subplot(sub0[0, 1]),
-                                cells, k1_values, k2_values)
+                                cells, k1_values, beta_values)
     plot_alpha_beta_coverage(fig.add_subplot(sub0[0, 2]),
-                             cells, k1_values, k2_values)
+                             cells, k1_values, beta_values)
     if not is_onehot:
         plot_discrete_vs_smoothed(fig.add_subplot(sub0[0, 3]), cells)
     else:
@@ -208,7 +203,7 @@ def plot_lightweight_figure(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
         ax.set_visible(False)
 
     # row 1: ldr histograms (smoothed)
-    plot_ldr_histograms_grid(fig, gs[1], cells, k1_values, k2_values,
+    plot_ldr_histograms_grid(fig, gs[1], cells, k1_values, beta_values,
                              extract_smoothed_ldrs,
                              title_prefix="log d_O / d_E at pstar (smoothed)")
 
@@ -240,7 +235,7 @@ def main():
         fig_dir = Path(config["figures_dir"])
         plot_grid_figure(grid,
                          k1_targets=config["kl_targets"]["k1_values"],
-                         k2_targets=config["kl_targets"]["k2_values"],
+                         k2_targets=config["kl_targets"]["beta_values"],
                          fig_path=str(fig_dir / "grid_diagnostic.png"),
                          has_se=False)
         return
@@ -259,7 +254,7 @@ def main():
     hardness = compute_hardness(
         cells,
         config["kl_targets"]["k1_values"],
-        config["kl_targets"]["k2_values"],
+        config["kl_targets"]["beta_values"],
         extra_metrics={
             "inv_kl_O_E": lambda r: r["attrs"].get("inv_kl_O_E", np.nan),
             "ldr_std": lambda r: float(np.std(r["true_ldrs_smoothed"]))
@@ -272,10 +267,10 @@ def main():
     )
     print_hardness_table(hardness,
                          config["kl_targets"]["k1_values"],
-                         config["kl_targets"]["k2_values"])
+                         config["kl_targets"]["beta_values"])
     plot_hardness_boxplots(hardness,
                            config["kl_targets"]["k1_values"],
-                           config["kl_targets"]["k2_values"],
+                           config["kl_targets"]["beta_values"],
                            str(Path(config["figures_dir"])
                                / f"datagen_variance_{encoding_type}.png"))
 

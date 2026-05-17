@@ -2,17 +2,17 @@
 
 cell axis: flat integer index over the cartesian product
     (k1_idx in [0..len(k1_values)-1])
-    x (k2_idx in [0..len(k2_values)-1])
+    x (beta_idx in [0..len(beta_values)-1])
     x (seed in [0..seeds-1])
-encoded as `flat_idx = ((k1_idx * len(k2_values)) + k2_idx) * seeds + seed`.
+encoded as `flat_idx = ((k1_idx * len(beta_values)) + beta_idx) * seeds + seed`.
 
 bucket axis: f"k1_idx_{k1_idx}" — the variant_sweep markdown stratifies smodice
 findings by k1; per_bucket overrides in winners.yaml can target individual k1
 strata if needed.
 
-per-cell input: <data_dir>/<encoding_subdir>/kl1_<k1>_kl2_<k2>_seed_<s>.h5
+per-cell input: <data_dir>/<encoding_subdir>/kl1_<k1>_beta_<b>_seed_<s>.h5
 per-cell output (fragment): <DPE_DATA_ROOT>/<exp>/step2_results/<method>/cell_<flat_idx>.h5
-    contains 'est_ldrs' of shape (num_samples,) and attrs (encoding, k1_idx, k2_idx, seed).
+    contains 'est_ldrs' of shape (num_samples,) and attrs (encoding, k1_idx, beta_idx, seed).
 
 quirks:
 - encoding-aware path logic: encoding_type 'gaussian_blob'/'flow_pushforward' uses
@@ -21,7 +21,7 @@ quirks:
 - only methods listed in SUPPORTED_ENCODINGS for the active encoding are runnable.
 - triangular methods take 3-arg fit (p0, p1, pstar); SmoothedTabularPluginDRE takes
   latent kwargs; everything else takes 2-arg fit.
-- the original step2 wrote one h5 per (k1, k2, seed) cell containing all method
+- the original step2 wrote one h5 per (k1, beta, seed) cell containing all method
   est_ldrs as separate datasets. this adapter writes one h5 per (method, cell)
   fragment instead. step3 may need a small update OR a custom gather hook to
   re-aggregate fragments into the original per-cell h5 layout.
@@ -102,22 +102,22 @@ def _encoding_subdir(base: str, encoding_cfg: dict) -> str:
 
 
 def _decode_cell(flat_idx: int, config: dict) -> tuple[int, int, int]:
-    """return (k1_idx, k2_idx, seed) from flat cell index."""
-    n_k2 = len(config["kl_targets"]["k2_values"])
+    """return (k1_idx, beta_idx, seed) from flat cell index."""
+    n_beta = len(config["kl_targets"]["beta_values"])
     seeds = config["kl_targets"].get("seeds_default", 1)
     seed = flat_idx % seeds
     rest = flat_idx // seeds
-    k2_idx = rest % n_k2
-    k1_idx = rest // n_k2
-    return k1_idx, k2_idx, seed
+    beta_idx = rest % n_beta
+    k1_idx = rest // n_beta
+    return k1_idx, beta_idx, seed
 
 
 def list_cells(config: dict) -> list[int]:
-    """all (k1_idx, k2_idx, seed) tuples encoded as flat ints."""
+    """all (k1_idx, beta_idx, seed) tuples encoded as flat ints."""
     n_k1 = len(config["kl_targets"]["k1_values"])
-    n_k2 = len(config["kl_targets"]["k2_values"])
+    n_beta = len(config["kl_targets"]["beta_values"])
     seeds = config["kl_targets"].get("seeds_default", 1)
-    return list(range(n_k1 * n_k2 * seeds))
+    return list(range(n_k1 * n_beta * seeds))
 
 
 def bucket_for_cell(cell_idx: int, config: dict) -> str:
@@ -204,9 +204,9 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
         estimator = builder(**builder_kwargs)
 
     # load per-cell h5
-    k1_idx, k2_idx, seed = _decode_cell(cell_idx, config)
+    k1_idx, beta_idx, seed = _decode_cell(cell_idx, config)
     data_subdir = _encoding_subdir(config["data_dir"], encoding_cfg)
-    data_path = os.path.join(data_subdir, f"kl1_{k1_idx}_kl2_{k2_idx}_seed_{seed}.h5")
+    data_path = os.path.join(data_subdir, f"kl1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5")
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"step1 data not found: {data_path}")
     with h5py.File(data_path, "r") as f:
@@ -276,10 +276,10 @@ def gather_dataset_name(method: str, config: dict) -> str:
 def gather_output_path(config: dict) -> str:
     """write a single combined results.h5 under raw_results_dir/<encoding>/<sigma>/.
 
-    NOTE: the original smodice step2 wrote one h5 per (k1, k2, seed) cell with
+    NOTE: the original smodice step2 wrote one h5 per (k1, beta, seed) cell with
     all methods inside. this gather emits ONE results.h5 with arrays of shape
     (n_cells, num_samples) per method instead. step3 may need a small update
-    to read the per-cell slice for each (k1, k2, seed) tuple — or write a
+    to read the per-cell slice for each (k1, beta, seed) tuple — or write a
     custom gather override that reproduces the original layout. for the
     handoff, the simpler shape is committed; teammate can adapt step3 if
     needed.

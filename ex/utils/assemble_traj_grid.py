@@ -20,7 +20,7 @@ from src.utils.io import _load_config, _write_hdf5_atomic
 from src.utils.pendulum import F, sample_mu0, log_mu0
 from src.utils.pendulum_q import load_or_build_q
 
-from ex.pendulum_eldr_estimation.step1_create_data import _resolve_reward
+from ex.semisynth.pendulum.step1_create_data import _resolve_reward
 from ex.utils.build_traj_alpha import build_grid_cfg
 from ex.utils.prescribed_kls import hash_pendulum_cfg, assert_monotone, monotone_project
 
@@ -28,7 +28,7 @@ from ex.utils.prescribed_kls import hash_pendulum_cfg, assert_monotone, monotone
 def parse_args(args=None):
     p = argparse.ArgumentParser()
     p.add_argument("--config",
-                   default="ex/pendulum_eldr_estimation/config.yaml")
+                   default="ex/semisynth/pendulum/config.yaml")
     p.add_argument("--rebuild", action="store_true",
                    help="rewrite traj_grid_{hash}.h5 even if present")
     return p.parse_args(args)

@@ -198,6 +198,38 @@ def prescribe(
     }
 
 
+def prescribe_k1(KL1: np.ndarray, alphas: np.ndarray, K1: float) -> Dict[str, Any]:
+    """invert a single prescribed K1 target to alpha* (step 6a of prescribe()).
+
+    used when the mixture weight beta is fixed by config rather than inverted
+    from a prescribed K2 (occupancy Option-A: beta is a swept knob, not a KL
+    target). only the monotone K1 -> alpha inversion is needed.
+
+    args:
+        KL1: [G_alpha], monotone increasing.
+        alphas: [G_alpha], strictly increasing.
+        K1: target KL value.
+
+    returns:
+        dict with keys: alpha_star, realized_K1, feasible, reason.
+    """
+    assert_monotone(KL1, axis=0, kind="increasing")
+    if K1 < KL1[0] or K1 > KL1[-1]:
+        return {
+            "alpha_star": None,
+            "realized_K1": None,
+            "feasible": False,
+            "reason": f"K1={K1} outside [{KL1[0]:.6f}, {KL1[-1]:.6f}]",
+        }
+    alpha_star = float(np.interp(K1, KL1, alphas))
+    return {
+        "alpha_star": alpha_star,
+        "realized_K1": float(np.interp(alpha_star, alphas, KL1)),
+        "feasible": True,
+        "reason": None,
+    }
+
+
 def feasible_region(KL1: np.ndarray, KL2: np.ndarray) -> Dict[str, Any]:
     """
     compute achievable (K1, K2) bounds given the KL grid.

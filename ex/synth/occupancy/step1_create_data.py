@@ -10,7 +10,7 @@ from typing import Optional, Dict, Tuple, Any
 
 from src.utils.gridworld import build_gridworld, reward_to_goal, value_iteration, softmax_policy
 from src.utils.occupancy import bellman_occupancy, kl_occupancy, mixture_policy
-from ex.utils.prescribed_kls import load_or_build_grid, prescribe
+from ex.utils.prescribed_kls import load_or_build_grid, prescribe_k1
 from src.sampling.tabular import (
     sample_occupancy, encode_sa,
     pointwise_discrete_ldr, pointwise_smoothed_ldr,
@@ -94,19 +94,19 @@ def _write_hdf5_atomic(
 def per_cell(
     config: Dict[str, Any],
     k1_idx: int,
-    k2_idx: int,
+    beta_idx: int,
     seed: int,
     force: bool = False,
 ) -> bool:
     """
-    generate data for a single (k1_idx, k2_idx, seed) cell.
+    generate data for a single (k1_idx, beta_idx, seed) cell.
 
     workflow:
         1. set seed
         2. build MDP from config["gridworld"]
         3. construct rewards r_E, r_anti
         4. load/build KL grid
-        5. prescribe (alpha*, beta*) from (K1, K2)
+        5. prescribe alpha* from K1; take beta directly from config
         6. compute occupancies d_O, d_E, d_pi^beta
         7. sample (s, a) pairs and encode
         8. compute true LDRs (discrete and smoothed)
@@ -116,7 +116,7 @@ def per_cell(
     args:
         config: loaded yaml config dict
         k1_idx: index into config["kl_targets"]["k1_values"]
-        k2_idx: index into config["kl_targets"]["k2_values"]
+        beta_idx: index into config["kl_targets"]["beta_values"]
         seed: seed offset; actual numpy/torch seed = config["seed"] + seed
         force: if False, skip if output HDF5 exists
 
@@ -158,30 +158,20 @@ def per_cell(
     r_E = grid["r_E"]
     r_anti = grid["r_anti"]
 
-    # ===== step 5: prescribe (alpha*, beta*) =====
+    # ===== step 5: prescribe alpha* from K1; beta is fixed by config =====
     K1 = config["kl_targets"]["k1_values"][k1_idx]
-    K2 = config["kl_targets"]["k2_values"][k2_idx]
+    beta_star = float(config["kl_targets"]["beta_values"][beta_idx])
 
-    res = prescribe(
-        grid["KL1"],
-        grid["KL2"],
-        grid["alphas"],
-        grid["betas"],
-        K1,
-        K2,
-    )
+    res = prescribe_k1(grid["KL1"], grid["alphas"], K1)
 
     if not res["feasible"]:
-        print(f"skipping (k1_idx={k1_idx}, k2_idx={k2_idx}): K1={K1}, K2={K2} infeasible: {res['reason']}")
+        print(f"skipping (k1_idx={k1_idx}, beta_idx={beta_idx}): K1={K1} infeasible: {res['reason']}")
         return False
 
     alpha_star = res["alpha_star"]
-    beta_star = res["beta_star"]
-    # res['realized_K1/2'] is np.interp(alpha*, grid) which equals K1/K2 by tautology;
-    # the true KL of the actual rollout occupancy is recomputed below from d_O, d_pi, d_E
-    # since linear interp inside steep grid bins (e.g. cliff regions) diverges from the
-    # underlying convex/concave KL curve by several percent at K1=2.8 in the gaussian_blob
-    # config.
+    # beta_star is taken directly from config (fixed mixture weight, not inverted
+    # from a prescribed K2). res['realized_K1'] equals K1 by tautology of np.interp;
+    # the true occupancy KLs are recomputed below from d_O, d_pi, d_E.
 
     # ===== step 6: compute occupancies at (alpha*, beta*) =====
 
@@ -276,7 +266,7 @@ def per_cell(
     )
     output_path = os.path.join(
         output_dir,
-        f"kl1_{k1_idx}_kl2_{k2_idx}_seed_{seed}.h5"
+        f"kl1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
     )
 
     # check skip condition
@@ -310,9 +300,8 @@ def per_cell(
     # prepare attributes
     attrs = {
         "alpha_star": float(alpha_star),
-        "beta_star": float(beta_star),
+        "beta": float(beta_star),
         "prescribed_K1": float(K1),
-        "prescribed_K2": float(K2),
         "realized_K1": float(realized_K1),
         "realized_K2": float(realized_K2),
         "inv_kl_O_E": float(inv_kl_O_E),
@@ -334,7 +323,7 @@ def per_cell(
 def main():
     """
     dispatch entry point: parse CLI arguments, load config, then either:
-    - run single cell (--k1-idx I --k2-idx J --seed K)
+    - run single cell (--k1-idx I --beta-idx J --seed K)
     - run all cells x all seeds (default)
     - run smoke test (--smoke)
     """
@@ -343,7 +332,7 @@ def main():
         description="generate data for tabular SMODICE ELDR estimation"
     )
     parser.add_argument("--k1-idx", type=int, default=None, help="K1 grid index (SLURM dispatch)")
-    parser.add_argument("--k2-idx", type=int, default=None, help="K2 grid index (SLURM dispatch)")
+    parser.add_argument("--beta-idx", type=int, default=None, help="beta grid index (SLURM dispatch)")
     parser.add_argument("--seed", type=int, default=None, help="seed offset (SLURM dispatch)")
     parser.add_argument("--force", action="store_true", help="force recomputation (ignore existing files)")
     parser.add_argument("--smoke", action="store_true", help="smoke test: 1 cell x 1 seed")
@@ -355,44 +344,28 @@ def main():
 
     # dispatch: single cell, all cells, or smoke test
     if args.smoke:
-        # smoke test: cell at (K1=K2=1.0, seed=0)
-        k1_targets = config["kl_targets"]["k1_values"]
-        k2_targets = config["kl_targets"]["k2_values"]
-
-        # find index of K1 = 1.0 and K2 = 1.0
-        k1_idx = k1_targets.index(1.0)
-        k2_idx = k2_targets.index(1.0)
-
-        print(f"smoke test: (k1_idx={k1_idx}, k2_idx={k2_idx}, seed=0)")
-        per_cell(config, k1_idx, k2_idx, seed=0, force=True)
+        # smoke test: first cell (k1_idx=0, beta_idx=0, seed=0)
+        print("smoke test: (k1_idx=0, beta_idx=0, seed=0)")
+        per_cell(config, 0, 0, seed=0, force=True)
         print("smoke test complete")
 
-    elif args.k1_idx is not None and args.k2_idx is not None and args.seed is not None:
+    elif args.k1_idx is not None and args.beta_idx is not None and args.seed is not None:
         # single cell (SLURM dispatch)
-        per_cell(config, args.k1_idx, args.k2_idx, args.seed, force=args.force)
+        per_cell(config, args.k1_idx, args.beta_idx, args.seed, force=args.force)
 
     else:
         # all cells x all seeds, sequential
         k1_targets = config["kl_targets"]["k1_values"]
-        k2_targets = config["kl_targets"]["k2_values"]
-        hard_threshold = config["kl_targets"]["hard_corner_threshold"]
+        beta_targets = config["kl_targets"]["beta_values"]
         seeds_default = config["kl_targets"]["seeds_default"]
-        seeds_hard = config["kl_targets"]["seeds_hard"]
 
-        total_cells = len(k1_targets) * len(k2_targets)
+        total_cells = len(k1_targets) * len(beta_targets)
         processed = 0
         skipped = 0
 
-        for k1_idx, k2_idx in product(range(len(k1_targets)), range(len(k2_targets))):
-            K1 = k1_targets[k1_idx]
-            K2 = k2_targets[k2_idx]
-
-            # determine seed count for this cell
-            is_hard = (K1 >= hard_threshold and K2 >= hard_threshold)
-            n_seeds = seeds_hard if is_hard else seeds_default
-
-            for seed in range(n_seeds):
-                result = per_cell(config, k1_idx, k2_idx, seed, force=args.force)
+        for k1_idx, beta_idx in product(range(len(k1_targets)), range(len(beta_targets))):
+            for seed in range(seeds_default):
+                result = per_cell(config, k1_idx, beta_idx, seed, force=args.force)
                 if result:
                     processed += 1
                 else:
