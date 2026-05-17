@@ -22,16 +22,23 @@ METADATA = {
 
 
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
-    """translate VFMOrthros base_search_space to trial.suggest_* calls.
+    """sample hyperparameters from the VFMOrthros search space.
 
-    29 tuned params (6 switch, 6 conditional, 17 unconditional incl.
-    n_shared_layers) plus n_epochs emitted as constant N_EPOCHS.
+    emits n_epochs as the fixed constant N_EPOCHS, plus 27 tuned params:
+    5 switch (sched, inner_eps, div_method, precond, time_dist), 6 conditional
+    (k, gamma_min, div_noise, n_hutch_samples, reweight, apply_iw -- each
+    suggested only when its switch condition holds), and 16 unconditional
+    (incl. the VFMOrthros-specific n_shared_layers). the test-path params
+    (test_sched, test_sigma, test_inner_eps, test_gamma_min, test_k) are
+    derived equal to their train counterparts; test_eps is the only
+    independent test-path knob.
 
     args:
         trial: optuna trial object
 
     returns:
-        flat dict with all 30 hyperparameters (29 tuned + 1 constant)
+        flat dict of hyperparameters; conditionally-omitted params are absent
+        and the builder supplies their defaults via .get().
     """
     hp = {}
 
@@ -45,43 +52,51 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # switch params (suggest before any branch)
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    test_sched = trial.suggest_categorical("test_sched", ["stiff", "bridge"])
-    hp["test_sched"] = test_sched
     inner_eps = trial.suggest_categorical("inner_eps", [0.0, 0.05, 0.1])
     hp["inner_eps"] = inner_eps
-    test_inner_eps = trial.suggest_categorical("test_inner_eps", [0.0, 0.05, 0.1])
-    hp["test_inner_eps"] = test_inner_eps
     div_method = trial.suggest_categorical("div_method", ["hutchinson", "exact"])
     hp["div_method"] = div_method
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 
     # conditional params (6 inertness edges)
-    if sched == "stiff" or test_sched == "stiff":
+    if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40])
     if inner_eps == 0.0:
         hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
-    if test_inner_eps == 0.0:
-        hp["test_gamma_min"] = trial.suggest_float("test_gamma_min", 1e-2, 2e-1, log=True)
     if div_method == "hutchinson":
         hp["div_noise"] = trial.suggest_categorical("div_noise", ["rademacher", "gaussian"])
         hp["n_hutch_samples"] = trial.suggest_categorical("n_hutch_samples", [1, 4, 16])
     if not precond:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
-    # unconditional always-active params (17 total)
+    # unconditional always-active params (15 total)
     hp["n_shared_layers"] = trial.suggest_categorical("n_shared_layers", [1, 2])
     hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["activation"] = trial.suggest_categorical("activation", ["gelu", "elu", "silu"])
     hp["sigma"] = trial.suggest_float("sigma", 0.3, 3.0, log=True)
     hp["test_eps"] = trial.suggest_float("test_eps", 2e-2, 1e-1, log=True)
-    hp["test_sigma"] = trial.suggest_float("test_sigma", 0.3, 3.0, log=True)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [128, 256, 512])
     hp["n_hidden_layers"] = trial.suggest_categorical("n_hidden_layers", [2, 3, 4])
     hp["layernorm"] = trial.suggest_categorical("layernorm", ["off", "pre", "post"])
     hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3])
     hp["cosine_min_factor"] = trial.suggest_categorical("cosine_min_factor", [0.0, 0.01, 0.1])
+    hp["time_dist"] = trial.suggest_categorical("time_dist", ["uniform", "beta_2_2", "beta_5_5"])
+
+    # derive test params from train params
+    hp["test_sched"] = hp["sched"]
+    hp["test_sigma"] = hp["sigma"]
+    hp["test_inner_eps"] = hp["inner_eps"]
+    if "gamma_min" in hp:
+        hp["test_gamma_min"] = hp["gamma_min"]
+    if "k" in hp:
+        hp["test_k"] = hp["k"]
+
+    # conditional apply_iw only when time_dist != uniform
+    time_dist = hp["time_dist"]
+    if time_dist != "uniform":
+        hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])
 
     return hp
