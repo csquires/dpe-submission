@@ -166,7 +166,7 @@ def plot_phase_space_grid(fig, gs_slice,
                           T: int) -> None:
     """grid of phase-space scatters at t=0 (left) and t=T (right) for pstar samples.
 
-    one row per (k1_idx, k2_idx) cell; first seed only (overlay would be unreadable).
+    one row per (k1_idx, beta_idx) cell; first seed only (overlay would be unreadable).
     """
     items = sorted(cells.keys())
     n_rows = len(items)

@@ -346,7 +346,7 @@ def main():
         description=(
             "generate trajectory-ELDR data for pendulum. "
             "first run: --smoke with empty kl_targets builds the trajectory-KL grid "
-            "(~10-30 min on one CPU core) and prints the feasible (K1, K2) region; "
+            "(~10-30 min on one CPU core); inspect the feasible K1 range from the grid; "
             "no data cells are written. populate kl_targets in config.yaml, then rerun."
         )
     )
