@@ -43,8 +43,8 @@ class ModelSelectionAdapter(ExperimentAdapter):
         self._device_cfg = cfg.get("device", "cpu")
 
         n_kl = len(cfg.get("kl_distances", []))
-        n_inst = cfg.get("num_instances_per_kl", 1)
-        self._pool: list[tuple[int]] = [(r,) for r in range(n_kl * n_inst)]
+        self._n_instances = cfg.get("num_instances_per_kl", 1)
+        self._pool: list[tuple[int]] = [(r,) for r in range(n_kl * self._n_instances)]
 
     def name(self) -> str:
         return "model_selection"
@@ -108,6 +108,15 @@ class ModelSelectionAdapter(ExperimentAdapter):
 
     def metric_key(self) -> str:
         return "per_row_ldr_mean_ae"
+
+    def stratify_key(self, cell: tuple[int]):
+        """return kl_idx for per-kl-regime stratification.
+
+        rows are laid out as kl_idx * num_instances_per_kl + instance_idx,
+        so kl_idx = row // num_instances_per_kl. mirrors the
+        dre_sample_complexity adapter.
+        """
+        return cell[0] // self._n_instances
 
     def eval_cell(
         self,

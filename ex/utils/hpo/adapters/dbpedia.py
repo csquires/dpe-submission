@@ -61,3 +61,7 @@ class DbpediaAdapter(ExperimentAdapter):
 
     def metric_key(self) -> str:
         return "per_pair_mae"
+
+    def stratify_key(self, cell: tuple[int, int]):
+        """return alpha_idx (cell[0]) for per-alpha stratification."""
+        return cell[0]

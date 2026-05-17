@@ -38,7 +38,11 @@ class EIGAdapter(ExperimentAdapter):
         self._data_dim = cfg["data_dim"]
         self._nsamples = cfg["nsamples"]
         self._latent_dim = self._data_dim + 1
-        self._num_designs = cfg["num_priors"] * cfg["num_designs_per_setting"]
+        # design layout (step1_create_data.py): prior x eig-percentage x
+        # within-setting. num_designs must include the eig-percentage factor.
+        self._n_pct = len(cfg["design_eig_percentages"])
+        self._n_per = cfg["num_designs_per_setting"]
+        self._num_designs = cfg["num_priors"] * self._n_pct * self._n_per
 
     def name(self) -> str:
         return "eig"
@@ -81,6 +85,19 @@ class EIGAdapter(ExperimentAdapter):
 
     def metric_key(self) -> str:
         return "per_design_ldr_mae"
+
+    def stratify_key(self, cell: tuple[int]):
+        """return the design-eig-percentage index for stratification.
+
+        design layout (step1_create_data.py) is
+          design_idx = prior_idx * (n_pct * n_per)
+                     + pct_idx  * n_per
+                     + within_idx,
+        so pct_idx = (design_idx // n_per) % n_pct. eig difficulty is
+        governed by design_eig_percentage; stratifying on it guarantees
+        every informativeness regime is sampled.
+        """
+        return (cell[0] // self._n_per) % self._n_pct
 
     def eval_cell(
         self,

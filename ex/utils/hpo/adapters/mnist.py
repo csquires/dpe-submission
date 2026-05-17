@@ -93,3 +93,11 @@ class MnistAdapter(ExperimentAdapter):
     def metric_key(self) -> str:
         """return "per_pair_mae"."""
         return "per_pair_mae"
+
+    def stratify_key(self, cell: tuple[int, int]):
+        """return alpha_idx (cell[0]) for per-alpha stratification.
+
+        guarantees every alpha regime is sampled in each training/holdout
+        draw, mirroring the elbo adapter.
+        """
+        return cell[0]
