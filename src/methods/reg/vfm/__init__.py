@@ -198,11 +198,29 @@ class VFM(DRE):
         ).to(self.device)
 
 
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+    def fit(
+        self,
+        samples_p0: torch.Tensor,
+        samples_p1: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
+    ) -> None:
         """train b then eta sequentially via train_two_phase.
 
         the loss_b closure binds antithetic, reweight, path geometry, and
         the time sampler so the inner loop sees only one specialized body.
+
+        Args:
+            samples_p0, samples_p1: [N, D] samples from p0 and p1.
+            step_cb: optional callback invoked every step_cb_interval steps with
+                (step_index: int, score: float). when None, no instrumentation.
+            eval_data: optional dict with keys "pstar" and "true_ldrs" (paired by index).
+                used to build eval_fn closure only if step_cb is not None.
+                when None, eval_fn is not constructed.
+            step_cb_interval: interval (in minibatch updates) for step_cb invocation
+                (default 50).
         """
         self.init_model()
         samples_p0 = samples_p0.float().to(self.device)
@@ -296,6 +314,21 @@ class VFM(DRE):
         loss_eta.required_keys = frozenset({"x0", "x1"})
         loss_eta.requires_tau_grad = False
 
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """compute MAE between predict_ldr(pstar_eval) and true_ldrs_eval.
+
+                _model arg is ignored; closure captures self.
+                """
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
         train_two_phase(
             model_b=net_b_callable,
             model_eta=net_eta_callable,
@@ -319,6 +352,9 @@ class VFM(DRE):
             grad_clip_norm_b=self.optim.grad_clip_norm,
             grad_clip_norm_eta=self.optim.grad_clip_norm,
             eps=self.path.eps,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
         self.net_b.eval()
@@ -572,11 +608,29 @@ class VFMOrthros(DRE):
             layernorm=self.layernorm,
         ).to(self.device)
 
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+    def fit(
+        self,
+        samples_p0: torch.Tensor,
+        samples_p1: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
+    ) -> None:
         """train orthros net via single-phase train_loop.
 
         posterior-mean MSE loss. loss closure binds antithetic, reweight, path
         geometry, and time sampler so the inner loop sees one specialized body.
+
+        Args:
+            samples_p0, samples_p1: [N, D] samples from p0 and p1.
+            step_cb: optional callback invoked every step_cb_interval steps with
+                (step_index: int, score: float). when None, no instrumentation.
+            eval_data: optional dict with keys "pstar" and "true_ldrs" (paired by index).
+                used to build eval_fn closure only if step_cb is not None.
+                when None, eval_fn is not constructed.
+            step_cb_interval: interval (in minibatch updates) for step_cb invocation
+                (default 50).
         """
         self.init_model()
         samples_p0 = samples_p0.float().to(self.device)
@@ -649,6 +703,21 @@ class VFMOrthros(DRE):
         loss_orthros.required_keys = frozenset({"x0", "x1"})
         loss_orthros.requires_tau_grad = False
 
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """compute MAE between predict_ldr(pstar_eval) and true_ldrs_eval.
+
+                _model arg is ignored; closure captures self.
+                """
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
         train_loop(
             model=net_callable,
             model_module=self.net,
@@ -664,6 +733,9 @@ class VFMOrthros(DRE):
             ema=ema_net,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.path.eps,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
         self.net.eval()
