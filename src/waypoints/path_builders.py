@@ -318,8 +318,6 @@ def _check_1d(*, vertex: float, inner_eps: float, gamma_min: float, eps: float) 
         raise ValueError(f"inner_eps must be in [0, 0.5), got {inner_eps}")
     if gamma_min < 0:
         raise ValueError(f"gamma_min must be >= 0, got {gamma_min}")
-    if eps < 1e-3:
-        raise ValueError(f"eps must be >= 1e-3, got {eps}")
     if eps >= min(vertex, 1.0 - vertex):
         raise ValueError(f"eps must be < min(vertex, 1-vertex), got {eps}")
     if inner_eps + eps >= 1.0:
@@ -337,8 +335,6 @@ def direct_1d(*, sched: Sched1D, inner_eps: float = 0.0, gamma_min: float = 0.0,
         raise ValueError(f"inner_eps must be in [0, 0.5), got {inner_eps}")
     if gamma_min < 0:
         raise ValueError(f"gamma_min must be >= 0, got {gamma_min}")
-    if eps < 1e-3:
-        raise ValueError(f"eps must be >= 1e-3, got {eps}")
     gamma_fn, dgamma_fn = _wrap_1d(sched.gamma, sched.dgamma, inner_eps=inner_eps, gamma_min=gamma_min)
     return DirectPath1D(weights=dir_weights, gamma=gamma_fn, dgamma_dtau=dgamma_fn, eps=eps)
 
@@ -441,8 +437,6 @@ def rect_2d(*, sched: Sched2D, inner_eps: float = 0.0, gamma_min: float = 0.0, e
         raise ValueError(f"inner_eps must be in [0, 0.5), got {inner_eps}")
     if gamma_min < 0:
         raise ValueError(f"gamma_min must be >= 0, got {gamma_min}")
-    if eps < 1e-3:
-        raise ValueError(f"eps must be >= 1e-3, got {eps}")
     gamma_fn, dg1_fn, dg2_fn = _wrap_2d(
         sched.gamma, sched.dgamma_dt1, sched.dgamma_dt2,
         inner_eps=inner_eps, gamma_min=gamma_min,

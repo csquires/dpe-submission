@@ -108,7 +108,6 @@ class TriangularVFM2D(ELDR):
           reweight: bool; apply path-variance reweighting to per-sample losses.
 
         raises:
-          valueerror: if path.eps < 1e-3 (boundary regularity requirement).
           typeerror: if path is not triangularpath2d, time is not callable,
                     curve.dim != 2, or integrator is not callable.
         """

@@ -47,12 +47,6 @@ class _TriangularVFMBase(ELDR):
         layernorm: str,
         reweight: bool,
     ) -> None:
-        if time.eps < 1e-3:
-            raise ValueError(
-                f"timecfg.eps must be >= 1e-3 for boundary regularity of b*eta/gamma; "
-                f"got eps={time.eps}"
-            )
-
         super().__init__(input_dim)
         self.path = path
         self.hidden_dim = hidden_dim
