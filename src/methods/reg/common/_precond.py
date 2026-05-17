@@ -394,12 +394,38 @@ def wrap_fm(net: Callable, coeff_fn_v: Callable, coeff_fn_s: Callable, *,
             return (v_out, s_out)
 
         def forward_from_onehot(self, tau: Tensor, x: Tensor, y_oh) -> tuple[Tensor, Tensor]:
-            """call net with onehot encoding instead of tau.
+            """preconditioned call with an already-one-hot class encoding.
 
-            only defined if onehot=True.
+            routes the inner net call through net.forward_from_onehot (which
+            accepts a float one-hot), not net.__call__ (which expects a long
+            class index and would re-one-hot). only defined if onehot=True.
             """
             if not onehot:
                 raise RuntimeError("forward_from_onehot only available when onehot=True")
-            return self(tau, x, y_oh)
+            coeffs_v = coeff_fn_v(tau)
+            coeffs_s = coeff_fn_s(tau)
+
+            x_in = coeffs_v.c_in * x  # [B, D]
+            v_raw, s_raw = net.forward_from_onehot(coeffs_v.c_noise, x_in, y_oh)
+
+            v_out = coeffs_v.c_skip * x + coeffs_v.c_out * v_raw  # [B, D]
+            s_out = coeffs_s.c_skip * x + coeffs_s.c_out * s_raw  # [B, D]
+
+            return (v_out, s_out)
+
+        def eval(self) -> "FMWrapper":
+            """delegate eval-mode to the wrapped net; the wrapper is parameter-free.
+
+            ratio_ode / ratio_ode_s2 / ratio_ode_triangular call model.eval()
+            on whatever they are handed; the precond wrapper forwards it so the
+            FMDRE-family precond inference path works as a drop-in.
+            """
+            net.eval()
+            return self
+
+        def train(self, mode: bool = True) -> "FMWrapper":
+            """delegate train-mode to the wrapped net (mirrors eval())."""
+            net.train(mode)
+            return self
 
     return FMWrapper()

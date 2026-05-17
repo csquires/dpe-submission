@@ -170,23 +170,22 @@ def make_ema(model, cfg: EmaCfg) -> EMA | None:
         return EMA(model, cfg.decay)
 
 
-def make_time_sampler(cfg: TimeCfg) -> Callable[[int, float, torch.device], tuple[Tensor, Tensor]]:
+def make_time_sampler(cfg: TimeCfg) -> Callable[[int, torch.device], tuple[Tensor, Tensor]]:
     """return a callable that delegates to cfg.effective_sampler.sample(B, device).
 
-    signature is kept as (batch_size, eps, device) for backward compat with the
-    trainer's existing call shape; the eps argument is ignored (the sampler owns
-    its own eps and uses it internally).
+    signature is (batch_size, device), matching the trainer's call shape in
+    train_loop / train_two_phase. the sampler owns its own eps internally.
 
     when cfg.apply_iw is False, effective_sampler wraps the configured sampler
     with NoIWSampler to force iw=1.
 
     returns:
-        callable with signature (batch_size: int, eps: float, device: torch.device)
+        callable with signature (batch_size: int, device: torch.device)
         -> tuple[Tensor, Tensor] yielding (tau [B,1], iw [B,1]).
     """
     sampler_obj = cfg.effective_sampler
 
-    def sampler(batch_size: int, eps: float, device: torch.device) -> tuple[Tensor, Tensor]:
+    def sampler(batch_size: int, device: torch.device) -> tuple[Tensor, Tensor]:
         return sampler_obj.sample(batch_size, device)
 
     return sampler

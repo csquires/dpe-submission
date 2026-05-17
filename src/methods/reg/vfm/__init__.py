@@ -381,7 +381,9 @@ class VFM(DRE):
 def make_vfm(input_dim: int, device: str = "cuda", **kwargs) -> VFM:
     """factory for VFM with sensible defaults; overrides passed via kwargs.
 
-    `lr` is rerouted through OptimCfg; every other kwarg must be a valid VFM
+    when no explicit `optim` is given, `lr` is rerouted through OptimCfg;
+    when `optim` is given it is forwarded as-is and `lr` is dropped (the optim
+    object already carries it). every other kwarg must be a valid VFM
     constructor parameter -- unknown keys raise, never silently dropped.
     """
     defaults = {
@@ -393,9 +395,12 @@ def make_vfm(input_dim: int, device: str = "cuda", **kwargs) -> VFM:
         "integration_steps": 3000,
         "antithetic": True,
     }
+    optim = kwargs.pop("optim", None)
     lr = kwargs.pop("lr", 1.3e-3)
+    if optim is None:
+        optim = OptimCfg(lr=lr)
     defaults.update(kwargs)
-    return VFM(input_dim, device=device, optim=OptimCfg(lr=lr), **defaults)
+    return VFM(input_dim, device=device, optim=optim, **defaults)
 
 
 class VFMOrthros(DRE):

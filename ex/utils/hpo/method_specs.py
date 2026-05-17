@@ -46,6 +46,21 @@ METHOD_SPECS = {
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "eps": ("log_uniform", 1e-6, 1e-4),
+            "integration_steps": ("uniform_int", 300, 2600),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "activation": ("choice", ["elu", "gelu", "silu"]),
+            "reweight": ("choice", [False, True]),
+            # importance sampling time distribution knob
+            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            # ema / grad-clip pilot knobs
+            "ema_decay": ("choice", [None, 0.999, 0.9999]),
+            "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
         },
         "tabular_only": False,
     },
@@ -59,7 +74,9 @@ METHOD_SPECS = {
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "sigma": ("log_uniform", 0.3, 3.0),
-            "eps": ("log_uniform", 3e-4, 3e-3),
+            # eps lower bound raised to 1e-3: it now feeds the general direct_1d
+            # path builder, whose construction enforces eps >= 1e-3.
+            "eps": ("log_uniform", 1e-3, 3e-3),
             "integration_steps": ("uniform_int", 300, 2600),
             # pilot fix knobs (defaults None preserve current behavior)
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
@@ -68,6 +85,24 @@ METHOD_SPECS = {
             "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
             # activation knob for score network
             "activation": ("choice", ["elu", "gelu", "silu"]),
+            # noise schedule: type + amplitude, train + test path
+            "sched": ("choice", ["stiff", "bridge"]),
+            "k": ("choice", [10, 20, 40]),
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "reweight": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
         },
         "tabular_only": False,
     },
@@ -88,6 +123,29 @@ METHOD_SPECS = {
             "n_hutch_samples": ("choice", [1, 4, 16]),
             # activation knob for MLP networks
             "activation": ("choice", ["gelu", "elu", "silu"]),
+            # noise schedule: type + amplitude, train + test path
+            "sched": ("choice", ["stiff", "bridge"]),
+            "sigma": ("log_uniform", 0.3, 3.0),
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "layernorm": ("choice", ["off", "pre", "post"]),
+            "reweight": ("choice", [False, True]),
+            "antithetic": ("choice", [False, True]),
+            "div_noise": ("choice", ["rademacher", "gaussian"]),
+            "div_method": ("choice", ["hutchinson", "exact"]),
+            # EDM preconditioning toggle
+            "precond": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
         },
         "tabular_only": False,
     },
@@ -113,8 +171,31 @@ METHOD_SPECS = {
             "n_hutch_samples": ("choice", [1, 4, 16]),
             # activation knob for MLP networks
             "activation": ("choice", ["gelu", "elu", "silu"]),
-            # VFMOrthros-specific: number of shared backbone layers (1..3 valid with default n_hidden_layers=3)
-            "n_shared_layers": ("choice", [1, 2, 3]),
+            # VFMOrthros-specific: number of shared backbone layers. capped at 2
+            # so n_shared_layers <= n_hidden_layers holds for the smallest
+            # n_hidden_layers choice (OrthrosNet enforces this at build time).
+            "n_shared_layers": ("choice", [1, 2]),
+            # noise schedule: type + amplitude, train + test path
+            "sched": ("choice", ["stiff", "bridge"]),
+            "sigma": ("log_uniform", 0.3, 3.0),
+            "inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "layernorm": ("choice", ["off", "pre", "post"]),
+            "reweight": ("choice", [False, True]),
+            "antithetic": ("choice", [False, True]),
+            "div_noise": ("choice", ["rademacher", "gaussian"]),
+            "div_method": ("choice", ["hutchinson", "exact"]),
+            # EDM preconditioning toggle
+            "precond": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
         },
         "tabular_only": False,
     },
@@ -170,7 +251,21 @@ METHOD_SPECS = {
             "eps": ("log_uniform", 1e-3, 5e-2),
             "integration_steps": ("uniform_int", 1000, 3000),
             "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
             "score_weight": ("log_uniform", 0.1, 10.0),
+            "reweight": ("choice", [False, True]),
+            # EDM preconditioning toggle
+            "precond": ("choice", [False, True]),
+            # importance sampling time distribution knob
+            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            # ema / grad-clip pilot knobs
+            "ema_decay": ("choice", [None, 0.999, 0.9999]),
+            "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
+            # not an HPO knob: FMDRE-family div_method is deliberately pinned "exact"
         },
         "tabular_only": False,
     },
@@ -186,8 +281,22 @@ METHOD_SPECS = {
             "eps": ("log_uniform", 1e-3, 5e-2),
             "integration_steps": ("uniform_int", 1000, 3000),
             "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
             "score_weight": ("log_uniform", 0.1, 10.0),
             "p_uncond": ("uniform", 0.1, 0.9),
+            "reweight": ("choice", [False, True]),
+            # EDM preconditioning toggle
+            "precond": ("choice", [False, True]),
+            # importance sampling time distribution knob
+            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "ema_decay": ("choice", [None, 0.999, 0.9999]),
+            "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
+            # not an HPO knob: FMDRE-family div_method is deliberately pinned "exact"
+            # not an HPO knob: sentinel_cond is FMDRE_S2's internal CFG sentinel
         },
         "tabular_only": False,
     },
@@ -219,7 +328,22 @@ METHOD_SPECS = {
             "eps": ("log_uniform", 1e-3, 5e-2),
             "integration_steps": ("uniform_int", 1000, 3000),
             "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
             "score_weight": ("log_uniform", 0.1, 10.0),
+            "triangular_p_uncond": ("uniform", 0.0, 0.5),
+            "layernorm": ("choice", ["off", "pre", "post"]),
+            "reweight": ("choice", [False, True]),
+            # EDM preconditioning toggle
+            "precond": ("choice", [False, True]),
+            # importance sampling time distribution knob
+            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "ema_decay": ("choice", [None, 0.999, 0.9999]),
+            "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
+            # not an HPO knob: FMDRE-family div_method is deliberately pinned "exact"
         },
         "tabular_only": False,
     },
@@ -242,6 +366,19 @@ METHOD_SPECS = {
             # smallest practical lower bound. allows hpo to discover that
             # weak/no anchor wins on score-matching-style triangular paths.
             "peak_max": ("uniform", 0.05, 1.0),
+            # tier-1 estimator scalars
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "activation": ("choice", ["elu", "gelu", "silu"]),
+            "reweight": ("choice", [False, True]),
+            # importance sampling time distribution knob
+            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            # ema / grad-clip pilot knobs
+            "ema_decay": ("choice", [None, 0.999, 0.9999]),
+            "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
         },
         "tabular_only": False,
     },
@@ -300,6 +437,23 @@ METHOD_SPECS = {
             "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
             # activation knob for score network
             "activation": ("choice", ["elu", "gelu", "silu"]),
+            # noise schedule: type, train + test path
+            "sched": ("choice", ["stiff", "bridge"]),
+            "k": ("choice", [10, 20, 40]),
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.02, 0.05]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "reweight": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
         },
         "tabular_only": False,
     },
@@ -321,6 +475,24 @@ METHOD_SPECS = {
             "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
             # activation knob for score network
             "activation": ("choice", ["elu", "gelu", "silu"]),
+            # noise schedule: type, train + test path
+            "sched": ("choice", ["stiff", "bridge"]),
+            "k": ("choice", [10, 20, 40]),
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "reweight": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            "apply_iw": ("choice", [True, False]),
         },
         "tabular_only": False,
     },
@@ -334,7 +506,9 @@ METHOD_SPECS = {
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "sigma": ("log_uniform", 0.3, 3.0),
-            "gamma_schedule": ("choice", ["sqrt", "linear-stiff"]),
+            # noise schedule: type ("stiff"/"bridge") replaces the old
+            # gamma_schedule string; the 2d path builder reads sched/sigma/k.
+            "sched": ("choice", ["stiff", "bridge"]),
             "k": ("choice", [12, 24, 48]),
             "t2_max": ("uniform", 0.6, 0.9),
             "eps": ("log_uniform", 1e-3, 3e-3),
@@ -342,10 +516,23 @@ METHOD_SPECS = {
             "integration_steps": ("uniform_int", 300, 2600),
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
-            # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
             # activation knob for score network
             "activation": ("choice", ["elu", "gelu", "silu"]),
+            # test path
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "reweight": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
         },
         "tabular_only": False,
     },
@@ -373,6 +560,31 @@ METHOD_SPECS = {
             # values can help on harder problems. wider grid than CTSM V1
             # because A/B sweep showed sweet-spot dataset-dependent.
             "inner_eps": ("choice", [0.0, 0.05, 0.1, 0.2]),
+            # noise schedule: type, train + test path
+            "sched": ("choice", ["stiff", "bridge"]),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 1e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1, 0.2]),
+            # importance sampling time distribution knob (builder-consumed)
+            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "apply_iw": ("choice", [True, False]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "layernorm": ("choice", ["off", "pre", "post"]),
+            "reweight": ("choice", [False, True]),
+            "antithetic": ("choice", [False, True]),
+            "div_noise": ("choice", ["rademacher", "gaussian"]),
+            "div_method": ("choice", ["hutchinson", "exact"]),
+            # EDM preconditioning toggle
+            "precond": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            # not an HPO knob: k is vestigial for V1 -- the psb path passed to
+            # the estimator ignores the barycentric k constructor scalar.
         },
         "tabular_only": False,
     },
@@ -393,6 +605,33 @@ METHOD_SPECS = {
             "n_hutch_samples": ("choice", [1, 4, 16]),
             # activation knob for MLP networks
             "activation": ("choice", ["gelu", "elu", "silu"]),
+            # noise schedule: type + amplitude, train + test path
+            "sched": ("choice", ["stiff", "bridge"]),
+            "sigma": ("log_uniform", 0.3, 3.0),
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            "vertex": ("uniform", 0.2, 0.8),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            # importance sampling time distribution knob (builder-consumed)
+            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "apply_iw": ("choice", [True, False]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "layernorm": ("choice", ["off", "pre", "post"]),
+            "reweight": ("choice", [False, True]),
+            "antithetic": ("choice", [False, True]),
+            "div_noise": ("choice", ["rademacher", "gaussian"]),
+            "div_method": ("choice", ["hutchinson", "exact"]),
+            # EDM preconditioning toggle
+            "precond": ("choice", [False, True]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
         },
         "tabular_only": False,
     },
@@ -406,7 +645,9 @@ METHOD_SPECS = {
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "k": ("choice", [10, 20, 40]),
-            "gamma_schedule": ("choice", ["linear-stiff"]),
+            # noise schedule: type ("stiff"/"bridge") replaces gamma_schedule.
+            "sched": ("choice", ["stiff", "bridge"]),
+            "sigma": ("log_uniform", 0.3, 3.0),
             "t2_max": ("uniform", 0.6, 0.9),
             "eps": ("log_uniform", 1e-3, 5e-3),
             "path_height": ("uniform", 1.0, 2.0),
@@ -416,6 +657,26 @@ METHOD_SPECS = {
             "activation": ("choice", ["gelu", "elu", "silu"]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
             "n_hutch_samples": ("choice", [1, 4, 16]),
+            # test path
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            "test_eps": ("log_uniform", 1e-3, 1e-1),
+            "test_sched": ("choice", ["stiff", "bridge"]),
+            "test_sigma": ("log_uniform", 0.3, 3.0),
+            "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
+            # tier-1 estimator scalars
+            "hidden_dim": ("choice", [128, 256, 512]),
+            "n_hidden_layers": ("choice", [2, 3, 4]),
+            "layernorm": ("choice", ["off", "pre", "post"]),
+            "reweight": ("choice", [False, True]),
+            "antithetic": ("choice", [False, True]),
+            "div_noise": ("choice", ["rademacher", "gaussian"]),
+            "div_method": ("choice", ["hutchinson", "exact"]),
+            # tier-3 cfg fields
+            "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
+            "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
+            # not an HPO knob: TriangularVFM2D has no precond support
         },
         "tabular_only": False,
     },

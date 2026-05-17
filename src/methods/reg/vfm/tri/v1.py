@@ -35,6 +35,7 @@ class TriangularVFMV1(ELDR):
         input_dim: int,
         *,
         path: Optional[TriangularPath1D] = None,
+        test_path: Optional[TriangularPath1D] = None,
         time: Optional[TimeSampler1D] = None,
         curve: Curve = IdentityCurve1D(),
         integrator: Integrator = integrator_trapezoid,
@@ -71,8 +72,13 @@ class TriangularVFMV1(ELDR):
         if time is None:
             time = make_uniform(eps=path.eps)
 
-        # build test path unconditionally
-        test_path = bary_vfm(k=k, vertex=vertex, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
+        # build test path; caller may pass an explicit test_path (independent
+        # test-path config), else fall back to the test_* clamp scalars.
+        if test_path is None:
+            test_path = bary_vfm(
+                k=k, vertex=vertex,
+                inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3,
+            )
 
         # f2/f3 sampler/path inner_eps consistency check
         samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
