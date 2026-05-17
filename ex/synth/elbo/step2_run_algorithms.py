@@ -16,7 +16,7 @@ from src.models.multiclass_classification import make_multiclass_classifier
 from src.methods import BDRE, MDRE, TDRE
 from src.methods.reg.tsm import TSM
 from src.methods.cls.mdre.tri import TriangularMDRE
-from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.vfm import VFMOrthros, make_vfm
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 
@@ -69,7 +69,10 @@ triangular_mdre = TriangularMDRE(
 )
 
 # instantiate spatial velo denoiser (VFM)
-spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM+1, device=DEVICE)
+spatial = make_vfm(input_dim=DATA_DIM+1, device=DEVICE)
+
+# instantiate vfm orthros
+vfm_orthros = VFMOrthros(input_dim=DATA_DIM+1, device=DEVICE)
 
 # DRE-based algorithms (use fit/predict pattern)
 algorithms = [
@@ -79,6 +82,7 @@ algorithms = [
     ("TSM", tsm),
     ("TriangularMDRE", triangular_mdre),
     ("VFM", spatial),
+    ("VFMOrthros", vfm_orthros),
 ]
 
 

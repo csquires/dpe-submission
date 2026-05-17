@@ -14,6 +14,7 @@ from ex.utils.hpo.builders import (
     build_TSM,
     build_CTSM,
     build_VFM,
+    build_VFMOrthros,
     build_BDRE,
     build_MDRE,
     build_MHTDRE,
@@ -87,6 +88,31 @@ METHOD_SPECS = {
             "n_hutch_samples": ("choice", [1, 4, 16]),
             # activation knob for MLP networks
             "activation": ("choice", ["gelu", "elu", "silu"]),
+        },
+        "tabular_only": False,
+    },
+    # baseline: velocity flow matching with orthogonal shared backbone
+    "VFMOrthros": {
+        "builder": build_VFMOrthros,
+        "requires_pstar": False,
+        "num_waypoints": None,
+        "base_search_space": {
+            "n_epochs": ("log_uniform_int", 750, 1500),
+            "lr": ("log_uniform", 5e-4, 3e-3),
+            "batch_size": ("choice", [64, 128, 256]),
+            "k": ("choice", [10, 20, 40]),
+            "eps": ("log_uniform", 1e-3, 5e-3),
+            # noise floor: orthros reconstructs the denoiser via /gamma, so a
+            # positive gamma_min is required for numerically stable inference
+            "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            "integration_steps": ("uniform_int", 300, 2600),
+            "ema_decay": ("choice", [None, 0.999, 0.9999]),
+            "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
+            "n_hutch_samples": ("choice", [1, 4, 16]),
+            # activation knob for MLP networks
+            "activation": ("choice", ["gelu", "elu", "silu"]),
+            # VFMOrthros-specific: number of shared backbone layers (1..3 valid with default n_hidden_layers=3)
+            "n_shared_layers": ("choice", [1, 2, 3]),
         },
         "tabular_only": False,
     },

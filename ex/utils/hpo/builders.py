@@ -18,7 +18,7 @@ from src.methods.reg.common._cfgs import OptimCfg, EmaCfg
 from src.methods.reg.tsm import TSM
 from src.methods.reg.ctsm import CTSM
 from src.methods.reg.tsm.tri import TriangularTSM
-from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.vfm import make_vfm
 from src.methods.reg.fmdre import FMDRE
 from src.methods.reg.fmdre.s2 import FMDRE_S2
 from src.methods.reg.fmdre.tri import TriangularFMDRE
@@ -36,9 +36,10 @@ from src.methods.reg.ctsm.tri import TriangularCTSMV1 as TriangularCTSM
 from src.methods.reg.ctsm.tri.v3 import TriangularCTSM2D
 from src.methods.reg.vfm.tri import TriangularVFMV1 as TriangularVFM
 from src.methods.reg.vfm.tri.v3 import TriangularVFM2D
+from src.methods.reg.vfm import VFMOrthros
 
 from src.waypoints.path_builders import (
-    psb, bary_ctsm, bary_vfm,
+    direct_vfm, psb, bary_ctsm, bary_vfm,
     rect_ctsm, rect_vfm,
 )
 from src.methods.reg.common._curves import LowArcCurve2D as Curve2D
@@ -100,7 +101,7 @@ def build_TriangularTSM(input_dim: int, device: str | torch.device, num_waypoint
 
 def build_VFM(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp):
     """return VFM estimator initialized from flat_hp dict."""
-    return make_spatial_velo_denoiser(input_dim=input_dim, device=device, **flat_hp)
+    return make_vfm(input_dim=input_dim, device=device, **flat_hp)
 
 
 def build_FMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> FMDRE:
@@ -341,6 +342,32 @@ def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypo
     )
 
 
+def build_VFMOrthros(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> VFMOrthros:
+    """return VFMOrthros estimator initialized from flat_hp dict."""
+    # gamma_min: noise floor for stable orthros inference (see VFMOrthros docstring)
+    gamma_min = flat_hp.get("gamma_min", 0.1)
+    path = direct_vfm(k=flat_hp["k"], gamma_min=gamma_min, eps=flat_hp["eps"])
+    time = time_sampler_from_legacy_cfg(
+        flat_hp.get("time_dist", "uniform"), eps=path.eps, apply_iw=True,
+    )
+    return VFMOrthros(
+        input_dim=input_dim,
+        path=path,
+        time=time,
+        test_gamma_min=gamma_min,
+        n_epochs=flat_hp["n_epochs"],
+        batch_size=flat_hp["batch_size"],
+        optim=_optim_from_hp(flat_hp),
+        ema=_ema_from_hp(flat_hp),
+        integration_steps=flat_hp["integration_steps"],
+        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        n_shared_layers=flat_hp.get("n_shared_layers", 2),
+        activation=flat_hp.get("activation", "gelu"),
+        n_hutch_samples=flat_hp.get("n_hutch_samples", 1),
+        device=device,
+    )
+
+
 def build_BDRE(input_dim: int, device: str | torch.device, num_waypoints: int, **flat_hp) -> BDRE:
     """return BDRE estimator with binary classifier.
 
@@ -441,6 +468,7 @@ BUILDERS_REGISTRY = {
     "TSM": build_TSM,
     "CTSM": build_CTSM,
     "VFM": build_VFM,
+    "VFMOrthros": build_VFMOrthros,
     "BDRE": build_BDRE,
     "MDRE": build_MDRE,
     "MultiHeadTDRE": build_MHTDRE,

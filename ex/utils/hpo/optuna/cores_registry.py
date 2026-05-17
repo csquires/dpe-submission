@@ -17,6 +17,7 @@ CORES_REGISTRY: dict[str, int] = {
     # Slow continuous
     "CTSM": 4,
     "VFM": 4,
+    "VFMOrthros": 4,
     "FMDRE": 4,
     "FMDRE_S2": 4,
     "TriangularTSM": 4,

@@ -52,6 +52,7 @@ SUPPORTED_ENCODINGS = {
     "TSM":                       {"gaussian_blob", "flow_pushforward"},
     "CTSM":                      {"gaussian_blob", "flow_pushforward"},
     "VFM":                       {"gaussian_blob", "flow_pushforward"},
+    "VFMOrthros":                {"gaussian_blob", "flow_pushforward"},
     "FMDRE":                     {"gaussian_blob", "flow_pushforward"},
     "FMDRE_S2":                  {"gaussian_blob", "flow_pushforward"},
     "TriangularCTSM_V1":         {"gaussian_blob", "flow_pushforward"},
@@ -238,7 +239,7 @@ _FAST = {"BDRE", "MDRE_15", "MultiHeadTDRE", "MultiHeadTriangularTDRE",
          "TriangularMDRE", "TabularPluginDRE", "SmoothedTabularPluginDRE"}
 _MEDIUM = {"CTSM", "TSM", "TriangularCTSM_V1", "TriangularCTSM_V2",
            "TriangularCTSM_V3", "TriangularTSM"}
-_SLOW = {"VFM", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
+_SLOW = {"VFM", "VFMOrthros", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
          "TriangularVFM_V3", "TriangularFMDRE"}
 
 

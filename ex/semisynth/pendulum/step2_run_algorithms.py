@@ -7,8 +7,9 @@ from src.methods import (
     BDRE, MDRE, TSM, CTSM, TriangularMDRE, MultiHeadTriangularTDRE,
     TriangularCTSMV1 as TriangularCTSM,
     TriangularVFMV1 as TriangularVFM,
+    VFMOrthros,
 )
-from src.waypoints.path_builders import bary_ctsm, bary_vfm
+from src.waypoints.path_builders import bary_ctsm, bary_vfm, direct_vfm
 from src.methods.reg.common._cfgs import OptimCfg
 from src.models.binary_classification import make_binary_classifier, make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
@@ -37,10 +38,20 @@ HPO_PARAMS = {
         "eps": 1.01e-3,
         "integration_steps": 1373,
     },
+    "VFMOrthros": {
+        "n_epochs": 1057,
+        "lr": 7.74e-4,
+        "batch_size": 256,
+        "k": 40,
+        "eps": 1.01e-3,
+        "gamma_min": 0.1,
+        "integration_steps": 1373,
+        "n_shared_layers": 2,
+    },
 }
 
 TRIANGULAR_METHODS = {"TriangularMDRE", "MultiHeadTriangularTDRE", "TriangularCTSM", "TriangularVFM"}
-ALL_METHODS = {"BDRE", "MDRE", "TriangularMDRE", "MultiHeadTriangularTDRE", "TSM", "CTSM", "TriangularCTSM", "TriangularVFM"}
+ALL_METHODS = {"BDRE", "MDRE", "TriangularMDRE", "MultiHeadTriangularTDRE", "TSM", "CTSM", "TriangularCTSM", "TriangularVFM", "VFMOrthros"}
 
 
 def parse_args(args=None):
@@ -155,12 +166,12 @@ def create_estimator(method: str, config: dict, device: str) -> object:
     instantiate DRE estimator for given method.
 
     dispatches on method name; uses num_waypoints from config for triangular variants.
-    applies HPO_PARAMS hyperparameters for TSM, CTSM, VFM.
+    applies HPO_PARAMS hyperparameters for TSM, CTSM, VFM, VFMOrthros.
     other methods (BDRE, MDRE, triangular non-flow) use defaults from their constructors.
 
     args:
         method: str, one of {"BDRE", "MDRE", "TriangularMDRE", "MultiHeadTriangularTDRE",
-                             "TSM", "CTSM", "TriangularCTSM", "TriangularVFM"}
+                             "TSM", "CTSM", "TriangularCTSM", "TriangularVFM", "VFMOrthros"}
         config: dict, full config dict from yaml (used to read num_waypoints)
         device: torch device
 
@@ -233,6 +244,22 @@ def create_estimator(method: str, config: dict, device: str) -> object:
             optim=OptimCfg(lr=hp["lr"]),
             batch_size=hp["batch_size"],
             integration_steps=hp["integration_steps"],
+            device=device,
+        )
+
+    elif method == "VFMOrthros":
+        hp = HPO_PARAMS["VFMOrthros"]
+        eps = max(hp["eps"], 1e-3)
+        path = direct_vfm(k=hp["k"], gamma_min=hp["gamma_min"], eps=eps)
+        return VFMOrthros(
+            input_dim=input_dim,
+            path=path,
+            test_gamma_min=hp["gamma_min"],
+            n_epochs=hp["n_epochs"],
+            optim=OptimCfg(lr=hp["lr"]),
+            batch_size=hp["batch_size"],
+            integration_steps=hp["integration_steps"],
+            n_shared_layers=hp["n_shared_layers"],
             device=device,
         )
 

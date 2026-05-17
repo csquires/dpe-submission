@@ -15,7 +15,7 @@ from src.models.binary_classification import make_binary_classifier, make_pairwi
 from src.models.multiclass_classification import make_multiclass_classifier
 from src.methods import BDRE, MDRE, TDRE, TSM, TriangularTSM
 from src.methods.cls.mdre.tri import TriangularMDRE
-from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.vfm import VFMOrthros, make_vfm
 from ex.utils.eig_ldr import joint_and_shuffled
 
 
@@ -101,7 +101,10 @@ triangular_tsm = TriangularTSM(
 )
 
 # instantiate spatial velo denoiser (VFM)
-spatial_denoiser = make_spatial_velo_denoiser(input_dim=DATA_DIM + 1, device=DEVICE)
+spatial_denoiser = make_vfm(input_dim=DATA_DIM + 1, device=DEVICE)
+
+# instantiate spatial velo denoiser orthros (VFMOrthros)
+vfm_orthros = VFMOrthros(input_dim=DATA_DIM + 1, device=DEVICE)
 
 algorithms = [
     ("BDRE", bdre),
@@ -110,6 +113,7 @@ algorithms = [
     ("TriangularMDRE", triangular_mdre),
     ("TSM", tsm),
     ("VFM", spatial_denoiser),
+    ("VFMOrthros", vfm_orthros),
 ]
 
 def compute_true_eig(Sigma_pi: torch.Tensor, xi: torch.Tensor, sigma2: float = 1.0) -> torch.Tensor:

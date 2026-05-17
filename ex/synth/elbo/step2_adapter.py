@@ -139,7 +139,7 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
 # rough per-cell seconds at data_dim=3, nsamples=50000
 _FAST = {"BDRE", "MDRE_15", "TDRE_5", "MultiHeadTDRE", "MultiHeadTriangularTDRE", "TriangularMDRE"}
 _MEDIUM = {"CTSM", "TSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3", "TriangularTSM"}
-_SLOW = {"VFM", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
+_SLOW = {"VFM", "VFMOrthros", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
          "TriangularVFM_V3", "TriangularFMDRE"}
 
 

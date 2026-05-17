@@ -38,7 +38,7 @@ from src.methods.cls.tdre import TDRE
 from src.methods.cls.mdre import MDRE
 from src.methods.reg.tsm import TSM
 from src.methods.cls.mdre.tri import TriangularMDRE
-from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.vfm import make_vfm
 from src.waypoints.triangular_waypoints import TriangularWaypointBuilder1D
 
 config = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
@@ -85,7 +85,7 @@ for num_waypoints_mdre in MDRE_WAYPOINTS:
     mdre_variants.append((f"MDRE_{num_waypoints_mdre}", MDRE(mdre_classifier, device=DEVICE)))
 
 # Instantiate Spatial (VFM)
-spatial = make_spatial_velo_denoiser(input_dim=DATA_DIM, device=DEVICE)
+spatial = make_vfm(input_dim=DATA_DIM, device=DEVICE)
 
 # Instantiate TSM
 tsm = TSM(DATA_DIM, device=DEVICE)

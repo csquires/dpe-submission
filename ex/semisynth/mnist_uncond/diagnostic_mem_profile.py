@@ -13,7 +13,7 @@ import yaml
 from src.methods import TSM
 from src.methods.cls.mdre.tri import TriangularMDRE
 from src.methods.cls.tdre.mh_tri import MultiHeadTriangularTDRE
-from src.methods.reg.vfm.spatial_adapters import make_spatial_velo_denoiser
+from src.methods.reg.vfm import make_vfm
 from src.models.binary_classification import make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
 
@@ -99,7 +99,7 @@ def main():
     profile_method("MultiHeadTriangularTDRE", est, p0, p1, pstar, triangular=True)
 
     # --- VFM ---
-    est = make_spatial_velo_denoiser(input_dim=input_dim, device=device)
+    est = make_vfm(input_dim=input_dim, device=device)
     profile_method("VFM", est, p0, p1, pstar, triangular=False)
 
     # --- TSM ---

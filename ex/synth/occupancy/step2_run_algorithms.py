@@ -10,7 +10,8 @@ from src.methods import (
     TriangularVFMV1 as TriangularVFM,
     TabularPluginDRE, SmoothedTabularPluginDRE,
 )
-from src.waypoints.path_builders import bary_ctsm, bary_vfm
+from src.methods.reg.vfm import VFMOrthros
+from src.waypoints.path_builders import bary_ctsm, bary_vfm, direct_vfm
 from src.methods.reg.common._cfgs import OptimCfg
 from src.models.binary_classification import make_binary_classifier, make_multi_head_binary_classifier
 from src.models.multiclass_classification import make_multiclass_classifier
@@ -28,6 +29,7 @@ SUPPORTED_ENCODINGS = {
     "CTSM":                      {"gaussian_blob", "flow_pushforward"},
     "TriangularCTSM":            {"gaussian_blob", "flow_pushforward"},
     "TriangularVFM":             {"gaussian_blob", "flow_pushforward"},
+    "VFMOrthros":                {"gaussian_blob", "flow_pushforward"},
 }
 
 NEEDS_LATENT = {"SmoothedTabularPluginDRE"}
@@ -55,6 +57,16 @@ HPO_PARAMS = {
         "k": 40,
         "eps": 1.01e-3,
         "integration_steps": 1373,
+    },
+    "VFMOrthros": {
+        "n_epochs": 1057,
+        "lr": 7.74e-4,
+        "batch_size": 256,
+        "k": 40,
+        "eps": 1.01e-3,
+        "gamma_min": 0.1,
+        "integration_steps": 1373,
+        "n_shared_layers": 2,
     },
 }
 
@@ -231,6 +243,22 @@ def create_estimator(method, config, encoding_cfg, n_states, n_actions, device):
             optim=OptimCfg(lr=hp["lr"]),
             batch_size=hp["batch_size"],
             integration_steps=hp["integration_steps"],
+            device=device,
+        )
+
+    elif method == "VFMOrthros":
+        hp = HPO_PARAMS["VFMOrthros"]
+        eps = max(hp["eps"], 1e-3)
+        path = direct_vfm(k=hp["k"], gamma_min=hp["gamma_min"], eps=eps)
+        return VFMOrthros(
+            input_dim=input_dim,
+            path=path,
+            test_gamma_min=hp["gamma_min"],
+            n_epochs=hp["n_epochs"],
+            optim=OptimCfg(lr=hp["lr"]),
+            batch_size=hp["batch_size"],
+            integration_steps=hp["integration_steps"],
+            n_shared_layers=hp["n_shared_layers"],
             device=device,
         )
 

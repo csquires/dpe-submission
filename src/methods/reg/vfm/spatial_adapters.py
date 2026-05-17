@@ -1,77 +1,19 @@
-"""
-Factory functions for spatial DRE methods with sensible defaults.
+"""DEPRECATED: `make_spatial_velo_denoiser` has been renamed to `make_vfm`.
 
-These adapters allow integrating spatial methods into experiments without
-modifying the original implementation files.
-"""
+Import the factory from the package root instead:
 
-import warnings as _deprecation_warnings
-_deprecation_warnings.warn(
-    "src.methods.reg.vfm.spatial_adapters is deprecated and will be removed "
-    "in a future cycle. Migration: use src.methods.reg.vfm.VFM directly; "
-    "the make_spatial_velo_denoiser factory is deprecated.",
+    from src.methods.reg.vfm import make_vfm
+
+This shim re-exports the old name for one deprecation cycle.
+"""
+import warnings
+
+warnings.warn(
+    "src.methods.reg.vfm.spatial_adapters is deprecated; "
+    "`make_spatial_velo_denoiser` is renamed to `make_vfm`. "
+    "Use `from src.methods.reg.vfm import make_vfm`.",
     DeprecationWarning,
     stacklevel=2,
 )
 
-from .spatial_velo_denoiser2 import SpatialVeloDenoiser
-
-
-def make_spatial_velo_denoiser(input_dim: int, device: str = "cuda", **kwargs) -> SpatialVeloDenoiser:
-    """
-    Factory for SpatialVeloDenoiser with sensible defaults.
-
-    The SpatialVeloDenoiser uses stochastic interpolants with a denoiser-based
-    approach to estimate density ratios. It trains velocity (b) and denoiser (eta)
-    networks sequentially, then integrates the time score.
-
-    Args:
-        input_dim: Dimensionality of input samples
-        device: Device to use ('cuda', 'cpu', etc.)
-        **kwargs: Override any default hyperparameters
-
-    Returns:
-        Configured SpatialVeloDenoiser instance
-
-    Default hyperparameters (from denoiser2 __main__ grid search):
-        Grid ranges tested:
-            eps: [2.1e-3, 2.2e-3, 2.3e-3]
-            lr: [1.3e-3, 1.4e-3, 1.5e-3]
-            k: [20]
-            epochs: [1000]
-            steps: [5000]
-            type: ['2']
-            antithetic: [True]
-
-        Selected values (midpoints where applicable):
-            k: 20 - Interpolant parameter controlling gamma curvature
-            eps: 2.2e-3 - Boundary epsilon for time sampling
-            n_epochs: 1000 - Training epochs per network (b and eta)
-            hidden_dim: 256 - Hidden layer dimension for MLP networks
-            n_hidden_layers: 3 - Number of hidden layers in MLP networks
-            batch_size: 512 - Training batch size
-            lr: 1.3e-3 - Learning rate for Adam optimizer
-            n_t: 50 - Number of time points for batch sampling
-            integration_steps: 3000 - Grid points for time integration
-            integration_type: '2' - Trapezoidal integration
-            antithetic: True - Use antithetic sampling for variance reduction
-            log_every: 101 - Log frequency (effectively disables logging)
-            verbose: False - Suppress training output
-    """
-    defaults = {
-        'k': 20,
-        'eps': 2.2e-3,
-        'n_epochs': 1000,
-        'hidden_dim': 256,
-        'n_hidden_layers': 3,
-        'batch_size': 512,
-        'lr': 1.3e-3,
-        'n_t': 50,
-        'integration_steps': 3000,
-        'integration_type': '2',
-        'antithetic': True,
-        'log_every': 101,
-        'verbose': False,
-    }
-    defaults.update(kwargs)
-    return SpatialVeloDenoiser(input_dim, device=device, **defaults)
+from . import make_vfm as make_spatial_velo_denoiser  # noqa: F401, E402

@@ -21,7 +21,7 @@ _FAST = {"BDRE", "MDRE_15", "TDRE_5", "MultiHeadTDRE", "MultiHeadTriangularTDRE"
          "TriangularMDRE"}
 _MEDIUM = {"CTSM", "TSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3",
            "TriangularTSM"}
-_SLOW = {"VFM", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
+_SLOW = {"VFM", "VFMOrthros", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
          "TriangularVFM_V3", "TriangularFMDRE"}
 
 _REQUIRED_KEYS = ("data_dir", "raw_results_dir", "alphas", "num_pairs_per_alpha",

@@ -156,7 +156,7 @@ _FAST_METHODS = {"BDRE", "MDRE_15", "TDRE_5", "MultiHeadTDRE", "MultiHeadTriangu
                  "TriangularMDRE"}
 _MEDIUM_METHODS = {"CTSM", "TSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3",
                    "TriangularTSM"}
-_SLOW_METHODS = {"VFM", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
+_SLOW_METHODS = {"VFM", "VFMOrthros", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "TriangularVFM_V2",
                  "TriangularVFM_V3", "TriangularFMDRE"}
 
 

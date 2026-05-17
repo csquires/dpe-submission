@@ -23,8 +23,9 @@ class SpeedClass(Enum):
 
 
 SPEED_CLASS_MAP: dict[str, SpeedClass] = {
-    # SLOW (cpu-ineligible): 7 canonical + 1 alias = 8 entries
+    # SLOW (cpu-ineligible): 8 canonical + 1 alias = 9 entries
     "VFM":                       SpeedClass.SLOW,
+    "VFMOrthros":                SpeedClass.SLOW,
     "FMDRE":                     SpeedClass.SLOW,
     "FMDRE_S2":                  SpeedClass.SLOW,
     "TriangularFMDRE":           SpeedClass.SLOW,
@@ -100,6 +101,7 @@ WALLTIME_CAPS_PREEMPT = {
     "TSM":                       "0:05:00",  # observed 4-cell 15s
     "CTSM":                      "0:05:00",
     "VFM":                       "0:30:00",  # refined24 user knock-down 2026-05-06 (was 1:45)
+    "VFMOrthros":                "0:30:00",
     "BDRE":                      "0:05:00",
     "MDRE":                      "0:05:00",
     "MDRE_15":                   "0:05:00",
@@ -157,6 +159,7 @@ WALLTIME_CAPS_CPU = {
     # on cpu side when the queue head (slow methods, sorted front) is what
     # remains.
     "VFM":                       "0:30:00",
+    "VFMOrthros":                "0:30:00",
     "TriangularVFM_V1":          "0:30:00",
     "TriangularVFM_V2":          "0:30:00",
     "TriangularVFM_V3":          "0:30:00",
