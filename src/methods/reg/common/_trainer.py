@@ -239,6 +239,8 @@ def train_two_phase(
     eps: float = 1e-3,
     loss_kwargs_b: dict | None = None,
     loss_kwargs_eta: dict | None = None,
+    model_module_b: nn.Module | None = None,
+    model_module_eta: nn.Module | None = None,
 ) -> None:
     """train velocity then denoiser sequentially via two `train_loop` calls.
 
@@ -252,23 +254,33 @@ def train_two_phase(
     phase 1: model_eta.eval(); train_loop(model_b, loss_b, optim_b, ...).
     phase 2: model_b.eval();   train_loop(model_eta, loss_eta, optim_eta, ...).
     final  : both .eval().
+
+    model_module_b / model_module_eta: backing nn.Module when model_b / model_eta
+    is a non-Module callable (e.g. a preconditioning wrapper). used for device
+    resolution, the optim-ownership assertion, train()/eval() toggling, and is
+    forwarded to train_loop as `model_module`. defaults to model_b / model_eta.
     """
-    device_b = next(model_b.parameters()).device
-    device_eta = next(model_eta.parameters()).device
+    # backing nn.Module for each phase; defaults to the model itself when the
+    # model is already an nn.Module (no preconditioning wrapper).
+    mod_b = model_module_b if model_module_b is not None else model_b
+    mod_eta = model_module_eta if model_module_eta is not None else model_eta
+
+    device_b = next(mod_b.parameters()).device
+    device_eta = next(mod_eta.parameters()).device
     if device_b != device_eta:
         raise ValueError(
             f"model_b on {device_b} but model_eta on {device_eta}; must match"
         )
 
-    b_ids = {id(p) for p in model_b.parameters()}
-    eta_ids = {id(p) for p in model_eta.parameters()}
+    b_ids = {id(p) for p in mod_b.parameters()}
+    eta_ids = {id(p) for p in mod_eta.parameters()}
     ob_ids = {id(p) for g in optim_b.param_groups for p in g["params"]}
     oe_ids = {id(p) for g in optim_eta.param_groups for p in g["params"]}
     assert ob_ids == b_ids, "optim_b must own exactly model_b.parameters()"
     assert oe_ids == eta_ids, "optim_eta must own exactly model_eta.parameters()"
 
-    model_eta.eval()
-    model_b.train()
+    mod_eta.eval()
+    mod_b.train()
     train_loop(
         model=model_b,
         samples_p0=samples_p0,
@@ -284,10 +296,11 @@ def train_two_phase(
         grad_clip_norm=grad_clip_norm_b,
         eps=eps,
         loss_kwargs=loss_kwargs_b,
+        model_module=mod_b,
     )
 
-    model_b.eval()
-    model_eta.train()
+    mod_b.eval()
+    mod_eta.train()
     train_loop(
         model=model_eta,
         samples_p0=samples_p0,
@@ -303,7 +316,8 @@ def train_two_phase(
         grad_clip_norm=grad_clip_norm_eta,
         eps=eps,
         loss_kwargs=loss_kwargs_eta,
+        model_module=mod_eta,
     )
 
-    model_b.eval()
-    model_eta.eval()
+    mod_b.eval()
+    mod_eta.eval()

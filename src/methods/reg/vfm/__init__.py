@@ -72,6 +72,7 @@ class VFM(DRE):
         activation: str = "silu",
         layernorm: str = "off",
         reweight: bool = False,
+        precond: bool = False,
         n_t: Optional[int] = None,
     ) -> None:
         super().__init__(input_dim)
@@ -168,6 +169,8 @@ class VFM(DRE):
         self.antithetic = antithetic
         self.integration_steps = integration_steps
         self.reweight = reweight
+        self.precond = precond
+        self._moments = None  # placeholder; filled by fit() if precond=True
 
         # network placeholders (frozen attribute names for checkpoint compat)
         self.net_b = None
@@ -205,6 +208,13 @@ class VFM(DRE):
         samples_p0 = samples_p0.float().to(self.device)
         samples_p1 = samples_p1.float().to(self.device)
 
+        # estimate endpoint moments once (used by both losses and predict_ldr)
+        if self.precond:
+            from ..common._precond import endpoint_moments
+            self._moments = endpoint_moments(
+                {"x0": samples_p0, "x1": samples_p1},
+            )
+
         optim_b = make_optim(self.net_b.parameters(), self.optim)
         optim_eta = make_optim(self.net_eta.parameters(), self.optim)
         sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
@@ -216,6 +226,36 @@ class VFM(DRE):
         path = self.path
         reweight = self.reweight
         antithetic = self.antithetic
+
+        # resolve loss-weight function: lambda (precond) or reweight (standard)
+        if self.precond:
+            from ..common._precond import make_coeffs, make_lambda
+            coeff_b = make_coeffs(path, self._moments, "velocity")
+            coeff_eta = make_coeffs(path, self._moments, "noise")
+            lambda_b = make_lambda(coeff_b)
+            lambda_eta = make_lambda(coeff_eta)
+            if reweight:
+                warnings.warn(
+                    "precond=True ignores reweight=True; EDM lambda replaces reweight. "
+                    "Remove reweight or set precond=False.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        # resolve nets: wrap if precond, else use raw nets
+        if self.precond:
+            from ..common._precond import wrap
+            net_b_callable = wrap(self.net_b, coeff_b)
+            net_eta_callable = wrap(self.net_eta, coeff_eta)
+        else:
+            net_b_callable = self.net_b
+            net_eta_callable = self.net_eta
+
+        # bind weight function: lambda (precond) or reweight (standard)
+        def get_weight_b(tau):
+            return lambda_b(tau) if self.precond else resolve_outer_lambda(reweight, tau)
+        def get_weight_eta(tau):
+            return lambda_eta(tau) if self.precond else resolve_outer_lambda(reweight, tau)
 
         if antithetic:
             def loss_b_antithetic(model, batch, tau, iw):
@@ -229,7 +269,7 @@ class VFM(DRE):
                 x_t_m, v_star_m = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
                 b_m = model(x_t_m, tau)
                 l_m = 0.5 * (b_m ** 2).sum(-1) - (v_star_m * b_m).sum(-1)
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = get_weight_b(tau)
                 return (0.5 * (l_p + l_m) * outer * iw.squeeze(-1)).mean()
             loss_b = loss_b_antithetic
         else:
@@ -237,7 +277,7 @@ class VFM(DRE):
                 x0, x1 = batch["x0"], batch["x1"]
                 z = torch.randn_like(x0)
                 x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = get_weight_b(tau)
                 b = model(x_t, tau)
                 return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
             loss_b = loss_b_naive
@@ -250,15 +290,17 @@ class VFM(DRE):
             z = torch.randn_like(x0)
             x_t, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
             eta = model(x_t, tau)
-            outer = resolve_outer_lambda(reweight, tau)
+            outer = get_weight_eta(tau)
             return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss_eta.required_keys = frozenset({"x0", "x1"})
         loss_eta.requires_tau_grad = False
 
         train_two_phase(
-            model_b=self.net_b,
-            model_eta=self.net_eta,
+            model_b=net_b_callable,
+            model_eta=net_eta_callable,
+            model_module_b=self.net_b,
+            model_module_eta=self.net_eta,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=None,
@@ -300,13 +342,24 @@ class VFM(DRE):
             out = []
             for i in range(ts.shape[0]):
                 tau_i = ts[i:i+1].expand(n, 1)
-                out.append(vfm_time_score_1d(self.net_b, self.net_eta, path, xs, tau_i, self._div_fn))
+                out.append(vfm_time_score_1d(net_b_eval, net_eta_eval, path, xs, tau_i, self._div_fn))
             return torch.stack(out, dim=0)
 
         if self.ema_b is not None:
             self.ema_b.apply_to(self.net_b)
         if self.ema_eta is not None:
             self.ema_eta.apply_to(self.net_eta)
+
+        # rebuild wrappers around EMA-applied nets (wrapper is parameter-free)
+        if self.precond:
+            from ..common._precond import make_coeffs, wrap
+            coeff_b = make_coeffs(self.path, self._moments, "velocity")
+            coeff_eta = make_coeffs(self.path, self._moments, "noise")
+            net_b_eval = wrap(self.net_b, coeff_b)
+            net_eta_eval = wrap(self.net_eta, coeff_eta)
+        else:
+            net_b_eval = self.net_b
+            net_eta_eval = self.net_eta
 
         try:
             ldr = predict_ldr_via_curve(
@@ -328,8 +381,8 @@ class VFM(DRE):
 def make_vfm(input_dim: int, device: str = "cuda", **kwargs) -> VFM:
     """factory for VFM with sensible defaults; overrides passed via kwargs.
 
-    `lr` is rerouted through OptimCfg; legacy keys not on the VFM surface
-    (eps, n_t, integration_type, log_every, verbose) are dropped.
+    `lr` is rerouted through OptimCfg; every other kwarg must be a valid VFM
+    constructor parameter -- unknown keys raise, never silently dropped.
     """
     defaults = {
         "k": 20,
@@ -341,8 +394,6 @@ def make_vfm(input_dim: int, device: str = "cuda", **kwargs) -> VFM:
         "antithetic": True,
     }
     lr = kwargs.pop("lr", 1.3e-3)
-    for legacy in ("eps", "n_t", "integration_type", "log_every", "verbose"):
-        kwargs.pop(legacy, None)
     defaults.update(kwargs)
     return VFM(input_dim, device=device, optim=OptimCfg(lr=lr), **defaults)
 
@@ -369,10 +420,12 @@ class VFMOrthros(DRE):
     vfm_orthros_time_score_1d.
 
     the one residual cost of the 2-head form is the derived x1 endpoint's 1/beta
-    factor at the tau->0 corner. `test_eps` (default 0.05) clips the inference
-    integration domain to [test_eps, 1-test_eps] to exclude it -- empirically
-    this recovers VFM-parity MAE. a 3-head variant predicting {x0, x1, eta}
-    would remove the corner outright.
+    factor at the tau->0 corner. clip it by passing a `test_path` whose eps
+    excludes that corner (inference integrates over [eps, 1-eps]); ~0.05 recovers
+    VFM-parity MAE empirically, and `test_eps` in the HPO search space tunes it.
+    the bare default test_path (eps=1e-3, symmetric with VFM) is *not* clipped;
+    callers configure test_path. a 3-head variant predicting {x0, x1, eta} would
+    remove the corner outright.
     """
     def __init__(
         self,
@@ -387,7 +440,6 @@ class VFMOrthros(DRE):
         gamma_min: float = 0.1,
         test_inner_eps: float = 0.0,
         test_gamma_min: float = 0.1,
-        test_eps: float = 0.05,
         test_path: Optional["DirectPath1D"] = None,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
@@ -406,6 +458,7 @@ class VFMOrthros(DRE):
         activation: str = "silu",
         layernorm: str = "off",
         reweight: bool = False,
+        precond: bool = False,
     ) -> None:
         super().__init__(input_dim)
 
@@ -417,7 +470,9 @@ class VFMOrthros(DRE):
             time = make_uniform(eps=path.eps)
 
         if test_path is None:
-            test_path = direct_vfm(k=k, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=test_eps)
+            # bare default is symmetric with VFM (eps=1e-3); the corner-clip is
+            # applied by configuring test_path explicitly.
+            test_path = direct_vfm(k=k, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
 
         if curve is None:
             curve = IdentityCurve1D()
@@ -493,6 +548,8 @@ class VFMOrthros(DRE):
         self.antithetic = antithetic
         self.integration_steps = integration_steps
         self.reweight = reweight
+        self.precond = precond
+        self._moments = None  # placeholder; filled by fit() if precond=True
 
         # network placeholders (single network + ema runtime object)
         self.net = None
@@ -520,6 +577,13 @@ class VFMOrthros(DRE):
         samples_p0 = samples_p0.float().to(self.device)
         samples_p1 = samples_p1.float().to(self.device)
 
+        # estimate endpoint moments once (used by loss and predict_ldr)
+        if self.precond:
+            from ..common._precond import endpoint_moments
+            self._moments = endpoint_moments(
+                {"x0": samples_p0, "x1": samples_p1},
+            )
+
         optim = make_optim(self.net.parameters(), self.optim)
         sched = make_sched(optim, self.n_epochs, self.optim.lr, self.sched)
         ema_net = make_ema(self.net, self.ema)
@@ -528,6 +592,23 @@ class VFMOrthros(DRE):
         path = self.path
         reweight = self.reweight
         antithetic = self.antithetic
+
+        # resolve loss-weight function and wrappers
+        if self.precond:
+            from ..common._precond import make_coeffs, make_lambda, wrap_2head
+            coeff_x0 = make_coeffs(path, self._moments, "x0")
+            coeff_eta = make_coeffs(path, self._moments, "noise")
+            lambda_fn = make_lambda(coeff_eta)  # both heads share the denoiser lambda
+            net_callable = wrap_2head(self.net, coeff_x0, coeff_eta)
+            if reweight:
+                warnings.warn(
+                    "precond=True ignores reweight=True; EDM lambda replaces reweight. "
+                    "Remove reweight or set precond=False.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        else:
+            net_callable = self.net
 
         if antithetic:
             def loss_orthros_antithetic(model, batch, tau, iw):
@@ -544,7 +625,7 @@ class VFMOrthros(DRE):
                 x0_hat_m, eta_hat_m = model(x_t_m, tau)
                 l_m = ((x0_hat_m - x0)**2 + (eta_hat_m + z)**2).sum(-1)
 
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = lambda_fn(tau) if self.precond else resolve_outer_lambda(reweight, tau)
                 return (0.5 * (l_p + l_m) * outer * iw.squeeze(-1)).mean()
             loss_orthros = loss_orthros_antithetic
         else:
@@ -556,7 +637,7 @@ class VFMOrthros(DRE):
                 # head 1 regresses the denoiser E[z|x_t]
                 x0_hat, eta_hat = model(x_t, tau)
                 mse = ((x0_hat - x0)**2 + (eta_hat - z)**2).sum(-1)
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = lambda_fn(tau) if self.precond else resolve_outer_lambda(reweight, tau)
                 return (mse * outer * iw.squeeze(-1)).mean()
             loss_orthros = loss_orthros_naive
 
@@ -564,7 +645,8 @@ class VFMOrthros(DRE):
         loss_orthros.requires_tau_grad = False
 
         train_loop(
-            model=self.net,
+            model=net_callable,
+            model_module=self.net,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=None,
@@ -601,12 +683,21 @@ class VFMOrthros(DRE):
             for i in range(ts.shape[0]):
                 tau_i = ts[i:i+1].expand(n, 1)
                 out.append(
-                    vfm_orthros_time_score_1d(self.net, path, xs, tau_i, self._div_fn)
+                    vfm_orthros_time_score_1d(net_eval, path, xs, tau_i, self._div_fn)
                 )
             return torch.stack(out, dim=0)
 
         if self.ema_net is not None:
             self.ema_net.apply_to(self.net)
+
+        # rebuild wrapper around EMA-applied net (wrapper is parameter-free)
+        if self.precond:
+            from ..common._precond import make_coeffs, wrap_2head
+            coeff_x0 = make_coeffs(self.path, self._moments, "x0")
+            coeff_eta = make_coeffs(self.path, self._moments, "noise")
+            net_eval = wrap_2head(self.net, coeff_x0, coeff_eta)
+        else:
+            net_eval = self.net
 
         try:
             ldr = predict_ldr_via_curve(

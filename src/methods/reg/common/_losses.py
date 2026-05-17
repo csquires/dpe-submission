@@ -144,7 +144,7 @@ def make_sb_loss(*, path, reweight: bool = False) -> Callable:
     return loss
 
 
-def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) -> Callable:
+def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False, outer_weight: Callable | None = None) -> Callable:
     """factory: VFM velocity (b-phase) loss on a stochastic interpolant.
 
     x_t   = (1-tau) x0 + tau x1 + gamma(tau) z, z ~ N(0, I)
@@ -157,6 +157,12 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
         antithetic: select the antithetic body once.
         reweight: outer path_var lambda.
     """
+    # bind weight_fn at factory time: either the outer_weight closure or default resolve-based
+    if outer_weight is not None:
+        weight_fn = outer_weight
+    else:
+        weight_fn = lambda t: resolve_outer_lambda(reweight, t)
+
     if isinstance(path, TriangularPath1D):
         if antithetic:
             def loss(model, batch, tau, iw):
@@ -164,7 +170,7 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 x1 = batch["x1"]
                 xstar = batch["xstar"]
                 z = torch.randn_like(x0)
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = weight_fn(tau)
                 x_t_plus, v_plus = vfm_velocity_target_1d(path, x0, x1, xstar, tau, z)
                 x_t_minus, v_minus = vfm_velocity_target_1d(path, x0, x1, xstar, tau, -z)
                 b_plus = model(x_t_plus, tau)
@@ -178,7 +184,7 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 x1 = batch["x1"]
                 xstar = batch["xstar"]
                 z = torch.randn_like(x0)
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = weight_fn(tau)
                 x_t, v_star = vfm_velocity_target_1d(path, x0, x1, xstar, tau, z)
                 b = model(x_t, tau)
                 return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
@@ -190,7 +196,7 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 x0 = batch["x0"]
                 x1 = batch["x1"]
                 z = torch.randn_like(x0)
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = weight_fn(tau)
                 x_t_plus, v_plus = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
                 x_t_minus, v_minus = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
                 b_plus = model(x_t_plus, tau)
@@ -203,7 +209,7 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 x0 = batch["x0"]
                 x1 = batch["x1"]
                 z = torch.randn_like(x0)
-                outer = resolve_outer_lambda(reweight, tau)
+                outer = weight_fn(tau)
                 x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
                 b = model(x_t, tau)
                 return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
@@ -217,19 +223,25 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
     return loss
 
 
-def make_denoiser_loss(*, path, reweight: bool = False) -> Callable:
+def make_denoiser_loss(*, path, reweight: bool = False, outer_weight: Callable | None = None) -> Callable:
     """factory: VFM denoiser (eta-phase) loss with path, reweight bound.
 
     x_t  = (1-tau) x0 + tau x1 + gamma(tau) z, z ~ N(0, I)
     loss = mean(0.5 ||eta(x_t)||^2 - <z, eta(x_t)>)
     """
+    # bind weight_fn at factory time: either the outer_weight closure or default resolve-based
+    if outer_weight is not None:
+        weight_fn = outer_weight
+    else:
+        weight_fn = lambda t: resolve_outer_lambda(reweight, t)
+
     if isinstance(path, TriangularPath1D):
         def loss(model, batch, tau, iw):
             x0 = batch["x0"]
             x1 = batch["x1"]
             xstar = batch["xstar"]
             z = torch.randn_like(x0)
-            outer = resolve_outer_lambda(reweight, tau)
+            outer = weight_fn(tau)
             w = path.weights(tau)
             mu = w.alpha * x0 + w.beta * x1 + w.w_star * xstar
             gamma_t = path.gamma(tau)
@@ -243,7 +255,7 @@ def make_denoiser_loss(*, path, reweight: bool = False) -> Callable:
             x0 = batch["x0"]
             x1 = batch["x1"]
             z = torch.randn_like(x0)
-            outer = resolve_outer_lambda(reweight, tau)
+            outer = weight_fn(tau)
             w = path.weights(tau)
             mu = w.alpha * x0 + w.beta * x1
             gamma_t = path.gamma(tau)
@@ -266,6 +278,7 @@ def make_fm_loss(
     p_uncond: float = 0.0,
     sentinel_cond: float = -1.0,
     reweight: bool = False,
+    outer_weight: Callable | None = None,
 ) -> Callable:
     """factory: conditional flow-matching loss with optional CFG dropout (2 classes).
 
@@ -288,6 +301,12 @@ def make_fm_loss(
         def apply_uncond(c):
             return c
 
+    # bind weight_fn at factory time: either the outer_weight closure or default resolve-based
+    if outer_weight is not None:
+        weight_fn = outer_weight
+    else:
+        weight_fn = lambda t: resolve_outer_lambda(reweight, t)
+
     def loss(model, batch, tau, iw):
         x0 = batch["x0"]
         x1 = batch["x1"]
@@ -307,7 +326,7 @@ def make_fm_loss(
         v_star = x_data - z
         s_star = -z / (1 - tau2)
         v, s = model(tau2, x_t, c)
-        outer = resolve_outer_lambda(reweight, tau2)
+        outer = weight_fn(tau2)
         v_err = ((v - v_star) ** 2).mean(dim=-1)
         s_err = ((s - s_star) ** 2).mean(dim=-1)
         return (v_err * outer * iw_tiled).mean() + score_weight * (s_err * outer * iw_tiled).mean()
@@ -322,6 +341,7 @@ def make_tri_fm_loss(
     score_weight: float = 1.0,
     triangular_p_uncond: float = 0.0,
     reweight: bool = False,
+    outer_weight: Callable | None = None,
 ) -> Callable:
     """factory: 3-class flow-matching loss with masked score term.
 
@@ -343,6 +363,12 @@ def make_tri_fm_loss(
     else:
         def apply_uncond(y_oh):
             return y_oh
+
+    # bind weight_fn at factory time: either the outer_weight closure or default resolve-based
+    if outer_weight is not None:
+        weight_fn = outer_weight
+    else:
+        weight_fn = lambda t: resolve_outer_lambda(reweight, t)
 
     def loss(model, batch, tau, iw):
         x0 = batch["x0"]
@@ -367,7 +393,7 @@ def make_tri_fm_loss(
         v_star = x_data - z
         s_star = -z / (1 - tau3)
         v, s = model.forward_from_onehot(tau3, x_t, y_oh)
-        outer = resolve_outer_lambda(reweight, tau3)
+        outer = weight_fn(tau3)
         v_err = ((v - v_star) ** 2).mean(dim=-1)
         loss_v = (v_err * outer * iw_tiled).mean()
         s_mask = (y_idx != 2).to(x_data.dtype).unsqueeze(-1)

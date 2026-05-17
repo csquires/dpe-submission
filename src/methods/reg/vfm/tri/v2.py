@@ -115,6 +115,7 @@ class TriangularVFMV2(ELDR):
         layernorm: str = "off",
         reweight: bool = False,
         test_path: Optional[TriangularPath1D] = None,
+        precond: bool = False,
     ) -> None:
         """initialize triangular vfm v2 with dual paths (train/test).
 
@@ -146,6 +147,7 @@ class TriangularVFMV2(ELDR):
             activation: mlp activation choice.
             layernorm: layernorm placement ("off", "pre", "post").
             reweight: whether to apply path-variance reweighting to losses.
+            precond: enable Karras (EDM) preconditioning on velocity and noise targets.
         """
         # step 1: resolve defaults before validation
         if path is None:
@@ -228,6 +230,10 @@ class TriangularVFMV2(ELDR):
         self.layernorm = layernorm
         self.reweight = reweight
 
+        # step 7b: precond flag and moment storage
+        self.precond = precond
+        self._moments = None
+
         # step 7: build divergence estimator function
         self._div_fn = build_div_fn(
             method=div_method,
@@ -288,12 +294,58 @@ class TriangularVFMV2(ELDR):
         self.ema_b = ema_b
         self.ema_eta = ema_eta
 
-        loss_b = make_velo_loss(path=self.path, antithetic=self.antithetic, reweight=self.reweight)
-        loss_eta = make_denoiser_loss(path=self.path, reweight=self.reweight)
+        # precond: compute endpoint moments once
+        if self.precond:
+            from ...common._precond import endpoint_moments
+            self._moments = endpoint_moments({
+                "x0": samples_p0,
+                "x1": samples_p1,
+                "xstar": samples_pstar,
+            })
+
+        # build loss factories with optional precond lambda
+        if self.precond:
+            from ...common._precond import make_coeffs, make_lambda
+            coeff_b = make_coeffs(self.path, self._moments, "velocity")
+            coeff_eta = make_coeffs(self.path, self._moments, "noise")
+            lambda_b = make_lambda(coeff_b)
+            lambda_eta = make_lambda(coeff_eta)
+            if self.reweight:
+                warnings.warn(
+                    "precond=True overrides reweight=True; "
+                    "EDM lambda subsumes path-variance weighting (R8).",
+                    UserWarning, stacklevel=2,
+                )
+        else:
+            lambda_b = None
+            lambda_eta = None
+
+        loss_b = make_velo_loss(
+            path=self.path,
+            antithetic=self.antithetic,
+            reweight=self.reweight,
+            outer_weight=lambda_b,
+        )
+        loss_eta = make_denoiser_loss(
+            path=self.path,
+            reweight=self.reweight,
+            outer_weight=lambda_eta,
+        )
+
+        # resolve wrapper once: precond wraps raw net for trainer
+        if self.precond:
+            from ...common._precond import wrap
+            wrapped_net_b = wrap(self.net_b, coeff_b)
+            wrapped_net_eta = wrap(self.net_eta, coeff_eta)
+        else:
+            wrapped_net_b = self.net_b
+            wrapped_net_eta = self.net_eta
 
         train_two_phase(
-            model_b=self.net_b,
-            model_eta=self.net_eta,
+            model_b=wrapped_net_b,
+            model_eta=wrapped_net_eta,
+            model_module_b=self.net_b,
+            model_module_eta=self.net_eta,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=samples_pstar,
@@ -332,11 +384,22 @@ class TriangularVFMV2(ELDR):
 
         def time_score_fn(path, ts, xs):
             """loop per curve point; vfm_time_score_1d expects tau:[B,1] matching xs:[B,D]."""
+            # rebuild precond wrapper at inference (from stored moments + train path)
+            if self.precond:
+                from ...common._precond import make_coeffs, wrap
+                coeff_b = make_coeffs(self.path, self._moments, "velocity")
+                coeff_eta = make_coeffs(self.path, self._moments, "noise")
+                net_b_fn = wrap(self.net_b, coeff_b)
+                net_eta_fn = wrap(self.net_eta, coeff_eta)
+            else:
+                net_b_fn = self.net_b
+                net_eta_fn = self.net_eta
+
             n = xs.shape[0]
             out = []
             for i in range(ts.shape[0]):
                 tau_i = ts[i:i+1].expand(n, 1)
-                out.append(vfm_time_score_1d(self.net_b, self.net_eta, path, xs, tau_i, self._div_fn))
+                out.append(vfm_time_score_1d(net_b_fn, net_eta_fn, path, xs, tau_i, self._div_fn))
             return torch.stack(out, dim=0)
 
         return predict_ldr_via_curve(

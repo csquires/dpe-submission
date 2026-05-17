@@ -4,6 +4,7 @@ reference: arXiv:2602.24201 (triangular setting).
 """
 
 from typing import Callable, Optional
+import warnings
 import torch
 from torch import Tensor
 
@@ -11,6 +12,7 @@ from ...common.base import ELDR
 from src.models.flow.multiclass_vel_score_mlp import MultiClassVelScoreMLP
 from ..common._trainer import train_loop
 from ..common._losses import make_tri_fm_loss
+from ..common._precond import endpoint_moments, make_coeffs, make_lambda, wrap_fm
 from src.models.flow.ratio_ode import ratio_ode_triangular
 from ..common._cfgs import (
     OptimCfg,
@@ -47,6 +49,7 @@ class TriangularFMDRE(ELDR):
         triangular_p_uncond: float = 0.0,
         layernorm: str = "off",
         reweight: bool = False,
+        precond: bool = False,
     ) -> None:
         """construct estimator with cfg-based optimizer, scheduler, EMA, time-sampler.
 
@@ -66,6 +69,7 @@ class TriangularFMDRE(ELDR):
             integration_steps: ODE solver steps at predict time (default 10000).
             triangular_p_uncond: probability of dropping class condition (default 0.0).
             layernorm: layer norm mode in {"off", "pre", "post"} (default "off").
+            precond: enable Karras preconditioning (default False).
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -92,6 +96,8 @@ class TriangularFMDRE(ELDR):
             raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
         self.layernorm = layernorm
         self.reweight = reweight
+        self.precond = precond
+        self._moments = None
 
         # device
         if device is None:
@@ -140,14 +146,36 @@ class TriangularFMDRE(ELDR):
         samples_p1 = samples_p1.float().to(self.device)
         samples_pstar = samples_pstar.float().to(self.device)
 
+        # compute preconditioning moments from tripled endpoint samples if enabled
+        if self.precond:
+            x_data_tripled = torch.cat([samples_p0, samples_p1, samples_pstar], dim=0)
+            self._moments = endpoint_moments({"x_data": x_data_tripled})
+
         optim_obj = make_optim(self.model.parameters(), self.optim)
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
+
+        # build preconditioning coefficients if enabled; warn if reweight and precond both set
+        outer_weight_fn = None
+        coeff_v = None
+        coeff_s = None
+        if self.precond:
+            coeff_v = make_coeffs("fm", self._moments, "velocity")
+            coeff_s = make_coeffs("fm", self._moments, "score")
+            outer_weight_fn = make_lambda(coeff_v)
+            if self.reweight:
+                warnings.warn(
+                    "precond=True and reweight=True: reweight is ignored; "
+                    "EDM lambda replaces path_var weighting.",
+                    UserWarning,
+                )
+
         loss_fn = make_tri_fm_loss(
             score_weight=self.score_weight,
             triangular_p_uncond=self.triangular_p_uncond,
-            reweight=self.reweight,
+            reweight=self.reweight if not self.precond else False,
+            outer_weight=outer_weight_fn,
         )
 
         # build eval_fn if both callbacks and eval data are provided
@@ -167,8 +195,15 @@ class TriangularFMDRE(ELDR):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
+        # resolve the wrapped model once (if precond); pass raw net as model_module for EMA/optim
+        model_for_training = self.model
+        if self.precond:
+            model_for_training = wrap_fm(
+                self.model, coeff_v, coeff_s, onehot=True
+            )
+
         train_loop(
-            model=self.model,
+            model=model_for_training,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=samples_pstar,
@@ -189,7 +224,12 @@ class TriangularFMDRE(ELDR):
         self.model.eval()
 
     def predict_ldr(self, xs: Tensor) -> Tensor:
-        """run the triangular ratio ODE on xs and return log(p0/p1) on CPU, detached."""
+        """run the triangular ratio ODE on xs and return log(p0/p1) on CPU, detached.
+
+        if precond=True, rebuilds the preconditioned wrapper from stored moments
+        and threads it into ratio_ode_triangular for end-to-end differentiation.
+        EMA is applied to the raw net first; the wrapper is constructed after.
+        """
         if self.model is None:
             raise RuntimeError(
                 "TriangularFMDRE model is not trained. Call fit() before predict_ldr()."
@@ -199,8 +239,18 @@ class TriangularFMDRE(ELDR):
 
         samples = xs.float().to(self.device)
 
+        # thread the preconditioned model into the ODE solver if enabled
+        model_for_inference = self.model
+        if self.precond:
+            model_for_inference = wrap_fm(
+                self.model,
+                make_coeffs("fm", self._moments, "velocity"),
+                make_coeffs("fm", self._moments, "score"),
+                onehot=True,
+            )
+
         ldr = ratio_ode_triangular(
-            self.model,
+            model_for_inference,
             samples,
             steps=self.integration_steps,
             eps=self.time.eps,

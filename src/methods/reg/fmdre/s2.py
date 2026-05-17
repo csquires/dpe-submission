@@ -4,6 +4,7 @@ reference: arXiv:2602.24201 (S2 setting).
 """
 
 from typing import Optional
+import warnings
 import torch
 
 from ...common.base import DRE
@@ -19,6 +20,7 @@ from ..common._cfgs import (
     make_ema,
     make_time_sampler,
 )
+from ..common._precond import endpoint_moments, make_coeffs, make_lambda, wrap_fm
 from src.models.flow.cond_vel_score_mlp import CondVelScoreMLP
 from src.models.flow.ratio_ode import ratio_ode_s2
 
@@ -46,6 +48,7 @@ class FMDRE_S2(DRE):
         p_uncond: float = 0.1,
         sentinel_cond: float = -1.0,
         reweight: bool = False,
+        precond: bool = False,
     ) -> None:
         """construct an FMDRE_S2 estimator with cfg-based hyperparameters.
 
@@ -66,6 +69,7 @@ class FMDRE_S2(DRE):
             p_uncond: cfg dropout probability in [0, 1] (default 0.1).
             sentinel_cond: sentinel value for unconditional signal (default -1.0).
             reweight: whether to reweight loss (default False).
+            precond: whether to apply Karras (EDM) preconditioning (default False).
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -82,6 +86,8 @@ class FMDRE_S2(DRE):
         self.p_uncond = p_uncond
         self.sentinel_cond = sentinel_cond
         self.reweight = reweight
+        self.precond = precond
+        self._moments = None
 
         if not (0.0 <= p_uncond <= 1.0):
             raise ValueError(f"p_uncond must be in [0.0, 1.0], got {p_uncond}")
@@ -104,8 +110,9 @@ class FMDRE_S2(DRE):
           1. init_model() builds CondVelScoreMLP.
           2. cast samples to float.
           3. instantiate optim, scheduler, ema, time_sampler from cfgs.
-          4. delegate to train_loop with fm_loss and cfg guidance (p_uncond > 0).
-          5. set model.eval().
+          4. optionally compute endpoint moments and preconditioning coefficients.
+          5. delegate to train_loop with fm_loss and cfg guidance (p_uncond > 0).
+          6. set model.eval().
         """
         self.init_model()
         samples_p0 = samples_p0.float()
@@ -115,15 +122,40 @@ class FMDRE_S2(DRE):
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
+
+        # optionally compute endpoint moments and preconditioning coefficients
+        if self.precond:
+            x_data_all = torch.cat([samples_p0, samples_p1], dim=0)
+            self._moments = endpoint_moments({"x_data": x_data_all})
+            coeff_v = make_coeffs("fm", self._moments, "velocity")
+            coeff_s = make_coeffs("fm", self._moments, "score")
+            if self.reweight:
+                warnings.warn(
+                    "precond=True overrides reweight=True (both normalize loss via "
+                    "time-dependent weights; lambda=c_out^-2 replaces 1-tau^2). "
+                    "set reweight=False to suppress this warning.",
+                    UserWarning,
+                )
+        else:
+            coeff_v = None
+            coeff_s = None
+
         loss_fn = make_fm_loss(
             score_weight=self.score_weight,
             p_uncond=self.p_uncond,
             sentinel_cond=self.sentinel_cond,
             reweight=self.reweight,
+            outer_weight=make_lambda(coeff_v) if self.precond else None,
         )
 
+        # resolve the model once: wrap if precond, else raw
+        if self.precond:
+            model_to_train = wrap_fm(self.model, coeff_v, coeff_s)
+        else:
+            model_to_train = self.model
+
         train_loop(
-            model=self.model,
+            model=model_to_train,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=None,
@@ -136,6 +168,7 @@ class FMDRE_S2(DRE):
             ema=ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
+            model_module=self.model,
         )
         self.model.eval()
 
@@ -146,10 +179,23 @@ class FMDRE_S2(DRE):
 
         self.model.eval()
 
+        # rebuild the preconditioned wrapper if trained with precond=True
+        if self.precond:
+            if self._moments is None:
+                raise RuntimeError(
+                    "precond=True but self._moments is None; "
+                    "model was not trained with precond=True."
+                )
+            coeff_v_infer = make_coeffs("fm", self._moments, "velocity")
+            coeff_s_infer = make_coeffs("fm", self._moments, "score")
+            model_to_infer = wrap_fm(self.model, coeff_v_infer, coeff_s_infer)
+        else:
+            model_to_infer = self.model
+
         samples = xs.float().to(self.device)
 
         ldr = ratio_ode_s2(
-            self.model,
+            model_to_infer,
             samples,
             steps=self.integration_steps,
             eps=self.time.eps,

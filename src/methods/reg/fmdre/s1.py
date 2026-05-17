@@ -2,9 +2,11 @@
 
 from typing import Optional
 import torch
+import warnings
 
 from ...common.base import DRE
 from ..common._losses import make_fm_loss
+from ..common._precond import endpoint_moments, make_coeffs, make_lambda, wrap_fm
 from ..common._trainer import train_loop
 from ..common._cfgs import (
     OptimCfg,
@@ -41,6 +43,7 @@ class FMDRE(DRE):
         div_method: str = "hutch_rademacher",
         integration_steps: int = 10000,
         reweight: bool = False,
+        precond: bool = False,
     ) -> None:
         """construct an FMDRE estimator with cfg-based hyperparameters.
 
@@ -58,6 +61,9 @@ class FMDRE(DRE):
             score_weight: loss weight for score loss (default 1.0).
             div_method: divergence estimator for ode integration (default "hutch_rademacher").
             integration_steps: ode integration steps (default 10000).
+            precond: optional Karras preconditioning on both heads (velocity, score).
+                If True, wraps the network with learned-parameter-free coefficients
+                (default False, byte-identical to current behaviour).
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -72,6 +78,8 @@ class FMDRE(DRE):
         self.div_method = div_method
         self.reweight = reweight
         self.integration_steps = integration_steps
+        self.precond = precond
+        self._moments = None
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -98,19 +106,38 @@ class FMDRE(DRE):
         samples_p0 = samples_p0.float()
         samples_p1 = samples_p1.float()
 
+        if self.precond:
+            samples_p0_device = samples_p0.to(self.device)
+            samples_p1_device = samples_p1.to(self.device)
+            x_data = torch.cat([samples_p0_device, samples_p1_device], dim=0)
+            self._moments = endpoint_moments({"x_data": x_data})
+            coeff_v = make_coeffs("fm", self._moments, "velocity")
+            coeff_s = make_coeffs("fm", self._moments, "score")
+            if self.reweight:
+                warnings.warn(
+                    "precond=True and reweight=True: reweight is ignored; EDM lambda "
+                    "subsumes variance normalization.",
+                    UserWarning,
+                )
+
         optim_obj = make_optim(self.model.parameters(), self.optim)
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
+        outer_weight = make_lambda(coeff_v) if self.precond else None
         loss_fn = make_fm_loss(
             score_weight=self.score_weight,
             p_uncond=0.0,
             sentinel_cond=-1.0,
             reweight=self.reweight,
+            outer_weight=outer_weight,
         )
 
+        model_to_train = wrap_fm(self.model, coeff_v, coeff_s) if self.precond else self.model
+        model_module = self.model  # raw net is always the parameter-carrying module
+
         train_loop(
-            model=self.model,
+            model=model_to_train,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=None,
@@ -123,6 +150,7 @@ class FMDRE(DRE):
             ema=ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
+            model_module=model_module,
         )
         self.model.eval()
 
@@ -133,10 +161,17 @@ class FMDRE(DRE):
 
         self.model.eval()
 
+        if self.precond:
+            coeff_v = make_coeffs("fm", self._moments, "velocity")
+            coeff_s = make_coeffs("fm", self._moments, "score")
+            model_to_infer = wrap_fm(self.model, coeff_v, coeff_s)
+        else:
+            model_to_infer = self.model
+
         samples = xs.float().to(self.device)
 
         ldr = ratio_ode(
-            self.model,
+            model_to_infer,
             samples,
             steps=self.integration_steps,
             eps=self.time.eps,

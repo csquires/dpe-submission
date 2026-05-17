@@ -21,6 +21,7 @@ from src.methods.reg.common._curves import Curve, IdentityCurve1D
 from src.methods.reg.common._integrators import Integrator, integrator_trapezoid
 from src.methods.reg.common._paradigm_funcs import vfm_time_score_1d
 from src.methods.reg.common._predict_ldr import predict_ldr_via_curve
+from src.methods.reg.common._precond import endpoint_moments, make_coeffs, make_lambda, wrap
 from src.methods.reg.common._estimator_helpers import _validate_and_store_slots
 from src.models.common.mlp import MLP
 from src.models.flow.div_estimators import build_div_fn
@@ -59,6 +60,7 @@ class TriangularVFMV1(ELDR):
         gamma_min: float = 0.0,
         test_inner_eps: float = 0.0,
         test_gamma_min: float = 0.0,
+        precond: bool = False,
     ) -> None:
         """barycentric VFM on triangular path; defaults use k and vertex if path is None."""
         super().__init__(input_dim)
@@ -145,6 +147,10 @@ class TriangularVFMV1(ELDR):
         # build divergence function
         self._div_fn = build_div_fn(self.div_method, noise=self.div_noise, n_samples=self.n_hutch_samples)
 
+        # store preconditioning flag and placeholder for endpoint moments
+        self.precond = precond
+        self._moments = None
+
         # initialize network attributes (frozen names for checkpoint compat)
         self.net_b = None
         self.net_eta = None
@@ -191,6 +197,14 @@ class TriangularVFMV1(ELDR):
         samples_p1 = samples_p1.float().to(self.device)
         samples_pstar = samples_pstar.float().to(self.device)
 
+        # estimate endpoint moments if preconditioning is enabled
+        if self.precond:
+            self._moments = endpoint_moments({
+                "x0": samples_p0,
+                "x1": samples_p1,
+                "xstar": samples_pstar,
+            })
+
         # initialize networks and build optimizer/scheduler/EMA
         self.init_model()
 
@@ -203,14 +217,50 @@ class TriangularVFMV1(ELDR):
         self.ema_b = ema_b
         self.ema_eta = ema_eta
 
-        # wire loss factories with paradigm defaults
-        loss_b = make_velo_loss(path=self.path, antithetic=self.antithetic, reweight=self.reweight)
-        loss_eta = make_denoiser_loss(path=self.path, reweight=self.reweight)
+        # wire loss factories with paradigm defaults and optional outer-weight
+        if self.precond:
+            if self.reweight:
+                warnings.warn(
+                    "precond=True will ignore reweight setting; "
+                    "EDM lambda replaces path-variance weighting.",
+                    UserWarning, stacklevel=2,
+                )
+            coeff_b = make_coeffs(self.path, self._moments, "velocity")
+            coeff_eta = make_coeffs(self.path, self._moments, "noise")
+            loss_b = make_velo_loss(
+                path=self.path,
+                antithetic=self.antithetic,
+                reweight=self.reweight,
+                outer_weight=make_lambda(coeff_b),
+            )
+            loss_eta = make_denoiser_loss(
+                path=self.path,
+                reweight=self.reweight,
+                outer_weight=make_lambda(coeff_eta),
+            )
+        else:
+            coeff_b = None
+            coeff_eta = None
+            loss_b = make_velo_loss(path=self.path, antithetic=self.antithetic, reweight=self.reweight)
+            loss_eta = make_denoiser_loss(path=self.path, reweight=self.reweight)
 
-        # call shared training orchestrator
+        # wrap networks once at fit time if preconditioning; pass wrapped model
+        # and raw module to train_two_phase (trainer applies EMA to module only).
+        if self.precond:
+            model_b_to_train = wrap(self.net_b, coeff_b)
+            model_eta_to_train = wrap(self.net_eta, coeff_eta)
+        else:
+            model_b_to_train = self.net_b
+            model_eta_to_train = self.net_eta
+
+        # call shared training orchestrator. wrapped callables are model_b/model_eta;
+        # raw nets are model_module_b/model_module_eta (params, device, EMA, train/eval).
+        # train_two_phase gains model_module_b/eta per spec_trainer.md.
         train_two_phase(
-            model_b=self.net_b,
-            model_eta=self.net_eta,
+            model_b=model_b_to_train,
+            model_eta=model_eta_to_train,
+            model_module_b=self.net_b,
+            model_module_eta=self.net_eta,
             samples_p0=samples_p0,
             samples_p1=samples_p1,
             samples_pstar=samples_pstar,
@@ -245,6 +295,18 @@ class TriangularVFMV1(ELDR):
         self.net_eta.eval()
         samples = xs.float().to(self.device)
 
+        # rebuild preconditioned wrappers from stored moments and train path.
+        # EMA was already applied to net_b and net_eta above; wrapper is rebuilt
+        # after EMA so it sees the averaged weights.
+        if self.precond:
+            coeff_b = make_coeffs(self.path, self._moments, "velocity")
+            coeff_eta = make_coeffs(self.path, self._moments, "noise")
+            net_b_use = wrap(self.net_b, coeff_b)
+            net_eta_use = wrap(self.net_eta, coeff_eta)
+        else:
+            net_b_use = self.net_b
+            net_eta_use = self.net_eta
+
         # bind time-score function as closure over networks and divergence fn
         def time_score_fn(path, ts, x):
             """evaluate time-score at batch of time points.
@@ -260,7 +322,7 @@ class TriangularVFMV1(ELDR):
             out = []
             for i in range(ts.shape[0]):
                 tau_i = ts[i:i+1].expand(n, 1)
-                out.append(vfm_time_score_1d(self.net_b, self.net_eta, path, x, tau_i, self._div_fn))
+                out.append(vfm_time_score_1d(net_b_use, net_eta_use, path, x, tau_i, self._div_fn))
             return torch.stack(out, dim=0)
 
         # apply EMA, call shared inference, restore networks
