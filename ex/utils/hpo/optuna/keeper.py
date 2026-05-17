@@ -135,10 +135,16 @@ def main() -> int:
     under-target study, top up its named preempt jobs toward jobs_per_method,
     bounded by headroom and max_dispatch_per_cycle.
     """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] [keeper] %(levelname)s: %(message)s",
+    # configure the keeper logger explicitly (single handler, no propagation)
+    # so import-time logging setup elsewhere cannot double or drop our lines.
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("[%(asctime)s] [keeper] %(levelname)s: %(message)s")
     )
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
     args = _parse_args()
 
     if "DPE_DATA_ROOT" not in os.environ:
