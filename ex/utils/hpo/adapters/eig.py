@@ -34,7 +34,7 @@ class EIGAdapter(ExperimentAdapter):
         with open(_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
         self._data_dir = cfg["data_dir"]
-        self._device = cfg.get("device", "cpu")
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self._data_dim = cfg["data_dim"]
         self._nsamples = cfg["nsamples"]
         self._latent_dim = self._data_dim + 1
