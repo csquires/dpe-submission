@@ -253,7 +253,10 @@ def build_VFM(input_dim: int, device: str | torch.device, num_waypoints: int, **
         gamma_min=flat_hp.get("test_gamma_min", 0.0),
         eps=flat_hp.get("test_eps", eps),
     )
-    time = make_uniform(eps=path.eps)
+    time = time_sampler_from_legacy_cfg(
+        flat_hp.get("time_dist", "uniform"), eps=path.eps,
+        apply_iw=flat_hp.get("apply_iw", True),
+    )
     return make_vfm(
         input_dim=input_dim,
         device=device,
@@ -387,6 +390,7 @@ def build_MHTTDRE(input_dim: int, device: str | torch.device, num_waypoints: int
         learning_rate=flat_hp["learning_rate"],
         num_epochs=flat_hp["num_epochs"],
         batch_size=flat_hp.get("batch_size"),
+        weight_decay=flat_hp.get("weight_decay", 0.0),
     )
     builder = TriangularWaypointBuilder1D(
         midpoint_oversample=midpoint_oversample,
@@ -418,6 +422,7 @@ def build_MHTDRE(input_dim: int, device: str | torch.device, num_waypoints: int,
         learning_rate=flat_hp["learning_rate"],
         num_epochs=flat_hp["num_epochs"],
         batch_size=flat_hp.get("batch_size"),
+        weight_decay=flat_hp.get("weight_decay", 0.0),
     )
     return MultiHeadTDRE(
         classifier=classifier,
@@ -739,7 +744,10 @@ def build_VFMOrthros(input_dim: int, device: str | torch.device, num_waypoints: 
         gamma_min=flat_hp.get("test_gamma_min", gamma_min),
         eps=flat_hp.get("test_eps", 0.05),
     )
-    time = make_uniform(eps=path.eps)
+    time = time_sampler_from_legacy_cfg(
+        flat_hp.get("time_dist", "uniform"), eps=path.eps,
+        apply_iw=flat_hp.get("apply_iw", True),
+    )
     return VFMOrthros(
         input_dim=input_dim,
         path=path,
