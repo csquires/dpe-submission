@@ -25,6 +25,9 @@ class StudyConfig:
             pruner config.
         reduction_factor: hyperband reduction factor; must > 1.
         holdout_top_k: number of trials to evaluate on holdout pool; must > 0.
+        target_trials: per-study trial-count goal for the preempt keeper; the
+            keeper stops dispatching once a study's COMPLETE+PRUNED count
+            reaches it. must > 0.
         walltime_margin_minutes: buffer before hard timeout; must <
             walltime_minutes.
         nfs_base: root for journal files; defaults to $DPE_DATA_ROOT/optuna at
@@ -52,6 +55,7 @@ class StudyConfig:
     max_resource: int = 10000
     reduction_factor: int = 3
     holdout_top_k: int = 5
+    target_trials: int = 200
 
     walltime_margin_minutes: int = 10
     nfs_base: Optional[str] = None
@@ -106,6 +110,10 @@ class StudyConfig:
         # validate holdout_top_k
         if self.holdout_top_k <= 0:
             raise ValueError(f"holdout_top_k must > 0, got {self.holdout_top_k}")
+
+        # validate target_trials
+        if self.target_trials <= 0:
+            raise ValueError(f"target_trials must > 0, got {self.target_trials}")
 
         # validate n_jobs_per_task if set
         if self.n_jobs_per_task is not None and self.n_jobs_per_task <= 0:
