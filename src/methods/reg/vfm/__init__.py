@@ -350,18 +350,29 @@ def make_vfm(input_dim: int, device: str = "cuda", **kwargs) -> VFM:
 class VFMOrthros(DRE):
     """VFMOrthros: single-network orthros-variant velocity flow matching.
 
-    single-phase training on OrthrosNet (unified 2-head architecture outputting
-    posterior means x0_hat and x1_hat). integrates the orthros time-score via
-    predict_ldr_via_curve with IdentityCurve1D to predict log(p0/p1).
+    single-phase training on OrthrosNet (unified 2-head architecture). head 0
+    predicts the endpoint posterior E[x0|x_t]; head 1 predicts the denoiser
+    E[z|x_t]. at inference the x1 endpoint is derived from the interpolant
+    constraint and the velocity is reconstructed; the orthros time-score is
+    integrated via predict_ldr_via_curve with IdentityCurve1D to predict
+    log(p0/p1).
 
     uses DirectPath1D (no xstar), TimeSampler1D, IdentityCurve1D, and Integrator
     (Pillar E: four-slot surface). inherits legacy k parameter from VFM for path
     construction; n_t is not supported (not preserved).
 
-    note: gamma_min defaults to 0.1 (not 0.0 as in stock VFM). the denoiser is
-    reconstructed from the interpolant constraint as (x - a*x0 - b*x1)/gamma, so
-    head error gets a 1/gamma^2 amplification in the time-score; a positive
-    noise floor keeps inference numerically stable. tune it via the search space.
+    parameterization note: predicting the denoiser directly (rather than
+    reconstructing it from two endpoint heads) keeps eta_hat O(1), so the score
+    -eta_hat/gamma carries only the unavoidable 1/gamma of any interpolant
+    marginal score -- VFM-level stability, no 1/gamma^2 blow-up. gamma_min
+    defaults to 0.1 (tunable) as a conservative noise floor; see
+    vfm_orthros_time_score_1d.
+
+    the one residual cost of the 2-head form is the derived x1 endpoint's 1/beta
+    factor at the tau->0 corner. `test_eps` (default 0.05) clips the inference
+    integration domain to [test_eps, 1-test_eps] to exclude it -- empirically
+    this recovers VFM-parity MAE. a 3-head variant predicting {x0, x1, eta}
+    would remove the corner outright.
     """
     def __init__(
         self,
@@ -376,6 +387,7 @@ class VFMOrthros(DRE):
         gamma_min: float = 0.1,
         test_inner_eps: float = 0.0,
         test_gamma_min: float = 0.1,
+        test_eps: float = 0.05,
         test_path: Optional["DirectPath1D"] = None,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
@@ -405,7 +417,7 @@ class VFMOrthros(DRE):
             time = make_uniform(eps=path.eps)
 
         if test_path is None:
-            test_path = direct_vfm(k=k, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3)
+            test_path = direct_vfm(k=k, inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=test_eps)
 
         if curve is None:
             curve = IdentityCurve1D()
@@ -522,17 +534,15 @@ class VFMOrthros(DRE):
                 x0, x1 = batch["x0"], batch["x1"]
                 z = torch.randn_like(x0)
 
-                # positive noise
+                # positive noise: head 0 -> x0 endpoint, head 1 -> denoiser z
                 x_t_p, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                x0_hat_p, x1_hat_p = model(x_t_p, tau)
-                mse_p = ((x0_hat_p - x0)**2 + (x1_hat_p - x1)**2).sum(-1)
-                l_p = mse_p
+                x0_hat_p, eta_hat_p = model(x_t_p, tau)
+                l_p = ((x0_hat_p - x0)**2 + (eta_hat_p - z)**2).sum(-1)
 
-                # negative noise
+                # negative noise: the denoiser target flips with the noise
                 x_t_m, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
-                x0_hat_m, x1_hat_m = model(x_t_m, tau)
-                mse_m = ((x0_hat_m - x0)**2 + (x1_hat_m - x1)**2).sum(-1)
-                l_m = mse_m
+                x0_hat_m, eta_hat_m = model(x_t_m, tau)
+                l_m = ((x0_hat_m - x0)**2 + (eta_hat_m + z)**2).sum(-1)
 
                 outer = resolve_outer_lambda(reweight, tau)
                 return (0.5 * (l_p + l_m) * outer * iw.squeeze(-1)).mean()
@@ -542,8 +552,10 @@ class VFMOrthros(DRE):
                 x0, x1 = batch["x0"], batch["x1"]
                 z = torch.randn_like(x0)
                 x_t, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                x0_hat, x1_hat = model(x_t, tau)
-                mse = ((x0_hat - x0)**2 + (x1_hat - x1)**2).sum(-1)
+                # head 0 regresses the x0 endpoint posterior E[x0|x_t];
+                # head 1 regresses the denoiser E[z|x_t]
+                x0_hat, eta_hat = model(x_t, tau)
+                mse = ((x0_hat - x0)**2 + (eta_hat - z)**2).sum(-1)
                 outer = resolve_outer_lambda(reweight, tau)
                 return (mse * outer * iw.squeeze(-1)).mean()
             loss_orthros = loss_orthros_naive

@@ -355,6 +355,7 @@ def build_VFMOrthros(input_dim: int, device: str | torch.device, num_waypoints: 
         path=path,
         time=time,
         test_gamma_min=gamma_min,
+        test_eps=flat_hp.get("test_eps", 0.05),
         n_epochs=flat_hp["n_epochs"],
         batch_size=flat_hp["batch_size"],
         optim=_optim_from_hp(flat_hp),

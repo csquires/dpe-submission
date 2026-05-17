@@ -319,26 +319,37 @@ def vfm_orthros_time_score_1d(
     tau: Tensor,
     div_fn: Callable,
 ) -> Tensor:
-    """Compute negative time-score for VFM 1D inference with orthogonal reconstruction.
+    """Compute negative time-score for VFMOrthros 1D inference (stable parameterization).
 
-    Uses a two-head network (orthros_net) to estimate posterior means E[x0|x_t]
-    and E[x1|x_t], reconstructs the denoiser from the interpolant constraint,
-    computes the velocity field, and returns the time-score via divergence and
-    velocity-denoiser interaction.
+    The two-head network predicts an endpoint posterior E[x0|x_t] and the denoiser
+    E[z|x_t] directly. The x1 endpoint is *derived* from the interpolant constraint
+    x_t = alpha*x0 + beta*x1 + gamma*z:
+
+        x1_hat = (x - alpha*x0_hat - gamma*eta_hat) / beta
+
+    The velocity is v_hat = d_alpha*x0_hat + d_beta*x1_hat + dgamma*eta_hat, and the
+    time-score is -div(v_hat) + (v_hat . eta_hat) / gamma.
+
+    Predicting the denoiser as a head (rather than reconstructing it from the two
+    endpoints) keeps eta_hat O(1): the score -eta_hat/gamma carries only the single,
+    unavoidable 1/gamma of any interpolant marginal score (VFM-level), instead of the
+    1/gamma^2 a constraint-derived denoiser would incur. The derived endpoint
+    contributes a 1/beta factor to v_hat at the tau->0 corner only, bounded by the
+    path eps.
 
     Called inside torch.vmap for Hutchinson divergence estimation.
 
     Args:
         orthros_net: callable taking (x [B, D], tau [B, 1]) and returning tuple
-                     (x0_hat [B, D], x1_hat [B, D]). space-first arg order matches
-                     OrthrosNet.forward(x, t) and VFMOrthros training.
+                     (x0_hat [B, D], eta_hat [B, D]) -- endpoint posterior and
+                     denoiser. space-first arg order matches OrthrosNet.forward(x, t).
         path: DirectPath1D instance (callables: weights, gamma, dgamma_dtau).
         x: noisy sample, shape [B, D].
         tau: time parameter, shape [B, 1].
         div_fn: Hutchinson divergence estimator; takes (closure, x, state=tau).
 
     Returns:
-        time-score tensor, shape [B]. Combines -div(b_hat) + (b_hat . eta_hat) / gamma.
+        time-score tensor, shape [B]: -div(v_hat) + (v_hat . eta_hat) / gamma.
 
     vmap: in_dims=(None, None, 0, 0, None), out_dims=0.
           orthros_net, path, div_fn are not vmapped; x and tau are vmapped over batch.
@@ -348,48 +359,46 @@ def vfm_orthros_time_score_1d(
     gamma_t = path.gamma(tau)  # [B, 1]
     dgamma_t = path.dgamma_dtau(tau)  # [B, 1]
 
-    # network heads and denoiser reconstruction (space-first arg order)
-    x0_hat, x1_hat = orthros_net(x, tau)  # each [B, D]
-    eta_hat = (x - w.alpha * x0_hat - w.beta * x1_hat) / gamma_t  # [B, D]
+    # heads: endpoint posterior E[x0|x_t] and denoiser E[z|x_t]
+    x0_hat, eta_hat = orthros_net(x, tau)  # each [B, D]
 
-    # velocity reconstruction
-    b_hat = w.d_alpha * x0_hat + w.d_beta * x1_hat + dgamma_t * eta_hat  # [B, D]
+    # derive the x1 endpoint from the interpolant constraint
+    x1_hat = (x - w.alpha * x0_hat - gamma_t * eta_hat) / w.beta  # [B, D]
 
-    # single-sample reconstruction closure for div_fn
-    def _b_closure(xx, t):
+    # reconstruct velocity
+    v_hat = w.d_alpha * x0_hat + w.d_beta * x1_hat + dgamma_t * eta_hat  # [B, D]
+
+    # single-sample velocity closure for div_fn (re-derives x1 per sample)
+    def _v_closure(xx, t):
         xx_b = xx.unsqueeze(0)  # [1, D]
         t_b = t.unsqueeze(0)  # [1, 1]
-        x0_hat_b, x1_hat_b = orthros_net(xx_b, t_b)  # each [1, D]
-        x0_hat_s = x0_hat_b.squeeze(0)  # [D]
-        x1_hat_s = x1_hat_b.squeeze(0)  # [D]
+        x0_s, eta_s = orthros_net(xx_b, t_b)  # each [1, D]
+        x0_s = x0_s.squeeze(0)  # [D]
+        eta_s = eta_s.squeeze(0)  # [D]
 
         w_s = path.weights(t_b)
-        gamma_s = path.gamma(t_b)  # [1, 1]
-        dgamma_s = path.dgamma_dtau(t_b)  # [1, 1]
-
+        gamma_s = path.gamma(t_b).squeeze(0)  # [1]
+        dgamma_s = path.dgamma_dtau(t_b).squeeze(0)  # [1]
         alpha_s = w_s.alpha.squeeze(0)  # [1]
         beta_s = w_s.beta.squeeze(0)  # [1]
         d_alpha_s = w_s.d_alpha.squeeze(0)  # [1]
         d_beta_s = w_s.d_beta.squeeze(0)  # [1]
-        gamma_s_sq = gamma_s.squeeze(0)  # [1]
-        dgamma_s_sq = dgamma_s.squeeze(0)  # [1]
 
-        eta_s = (xx - alpha_s * x0_hat_s - beta_s * x1_hat_s) / gamma_s_sq  # [D]
-        b_s = d_alpha_s * x0_hat_s + d_beta_s * x1_hat_s + dgamma_s_sq * eta_s  # [D]
-
-        return b_s  # [D]
+        x1_s = (xx - alpha_s * x0_s - gamma_s * eta_s) / beta_s  # [D]
+        v_s = d_alpha_s * x0_s + d_beta_s * x1_s + dgamma_s * eta_s  # [D]
+        return v_s  # [D]
 
     # divergence estimation
-    div_b = div_fn(_b_closure, x, state=tau)
+    div_v = div_fn(_v_closure, x, state=tau)
 
     # time-score computation
-    numerator = (b_hat * eta_hat).sum(-1)  # [B]
+    numerator = (v_hat * eta_hat).sum(-1)  # [B]
     denominator = gamma_t.squeeze(-1)  # [B]
 
-    if div_b.dim() > 1:
-        div_b = div_b.squeeze(-1)  # [B]
+    if div_v.dim() > 1:
+        div_v = div_v.squeeze(-1)  # [B]
 
-    return -div_b + numerator / denominator
+    return -div_v + numerator / denominator
 
 
 def vfm_time_score_2d(

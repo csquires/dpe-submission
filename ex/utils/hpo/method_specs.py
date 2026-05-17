@@ -102,9 +102,11 @@ METHOD_SPECS = {
             "batch_size": ("choice", [64, 128, 256]),
             "k": ("choice", [10, 20, 40]),
             "eps": ("log_uniform", 1e-3, 5e-3),
-            # noise floor: orthros reconstructs the denoiser via /gamma, so a
-            # positive gamma_min is required for numerically stable inference
+            # gamma_min: standard VFM-style noise floor for the score term
             "gamma_min": ("log_uniform", 1e-2, 2e-1),
+            # test_eps: clips the inference integration domain away from the
+            # tau->0 corner where the derived x1 endpoint carries a 1/beta factor
+            "test_eps": ("log_uniform", 2e-2, 1e-1),
             "integration_steps": ("uniform_int", 300, 2600),
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),

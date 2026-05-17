@@ -28,7 +28,8 @@ class OrthrosNet(nn.Module):
             before/after each hidden activation.
 
     Returns:
-        tuple of (x0_hat, x1_hat), each [B, output_dim].
+        tuple of (head0_out, head1_out), each [B, output_dim]; semantics are
+        caller-defined (VFMOrthros: head 0 = x0 endpoint, head 1 = denoiser).
     """
 
     def __init__(
@@ -111,6 +112,8 @@ class OrthrosNet(nn.Module):
         """x: [B, input_dim], t: [B, 1] -> ([B, output_dim], [B, output_dim]). space-first."""
         shared_input = torch.cat([x, t], dim=-1)  # [B, input_dim+1]
         features = self.backbone(shared_input)  # [B, hidden_dim]
-        x0_hat = self.head0(features)  # [B, output_dim]
-        x1_hat = self.head1(features)  # [B, output_dim]
-        return (x0_hat, x1_hat)
+        # generic two-head outputs; the caller assigns semantics (VFMOrthros
+        # reads head 0 as the x0 endpoint posterior, head 1 as the denoiser).
+        head0_out = self.head0(features)  # [B, output_dim]
+        head1_out = self.head1(features)  # [B, output_dim]
+        return (head0_out, head1_out)
