@@ -863,26 +863,18 @@ def build_SmoothedTabularPluginDRE(input_dim: int, device: str | torch.device, n
 # registry mapping method label -> builder callable. consumed by the optuna
 # worker (ex.utils.hpo.optuna.worker.run_worker) to resolve a builder
 # from METADATA['builder'] in a suggest_hp module.
+# keyed by builder function name -- this is what suggest_hp METADATA["builder"]
+# stores and what worker.py looks up. building from fn.__name__ keeps the key
+# and the function identity in lockstep (no manual key string to drift).
 BUILDERS_REGISTRY = {
-    "TSM": build_TSM,
-    "CTSM": build_CTSM,
-    "VFM": build_VFM,
-    "VFMOrthros": build_VFMOrthros,
-    "BDRE": build_BDRE,
-    "MDRE": build_MDRE,
-    "MultiHeadTDRE": build_MHTDRE,
-    "FMDRE": build_FMDRE,
-    "FMDRE_S2": build_FMDRE_S2,
-    "TriangularFMDRE": build_TriangularFMDRE,
-    "TriangularTSM": build_TriangularTSM,
-    "MultiHeadTriangularTDRE": build_MHTTDRE,
-    "TriangularMDRE": build_TriangularMDRE,
-    "TriangularCTSM_V1": build_TriangularCTSM_V1,
-    "TriangularCTSM_V2": build_TriangularCTSM_V2,
-    "TriangularCTSM_V3": build_TriangularCTSM_V3,
-    "TriangularVFM_V1": build_TriangularVFM_V1,
-    "TriangularVFM_V2": build_TriangularVFM_V2,
-    "TriangularVFM_V3": build_TriangularVFM_V3,
-    "TabularPluginDRE": build_TabularPluginDRE,
-    "SmoothedTabularPluginDRE": build_SmoothedTabularPluginDRE,
+    fn.__name__: fn
+    for fn in (
+        build_TSM, build_CTSM, build_VFM, build_VFMOrthros, build_BDRE,
+        build_MDRE, build_MHTDRE, build_FMDRE, build_FMDRE_S2,
+        build_TriangularFMDRE, build_TriangularTSM, build_MHTTDRE,
+        build_TriangularMDRE, build_TriangularCTSM_V1, build_TriangularCTSM_V2,
+        build_TriangularCTSM_V3, build_TriangularVFM_V1, build_TriangularVFM_V2,
+        build_TriangularVFM_V3, build_TabularPluginDRE,
+        build_SmoothedTabularPluginDRE,
+    )
 }
