@@ -10,10 +10,10 @@ import h5py
 import numpy as np
 import yaml
 
-from ex.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
-config = yaml.load(open('ex/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/ablations/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
 # directories
 DATA_DIR = config['data_dir']
 RESULTS_DIR = config['results_dir']
@@ -43,7 +43,7 @@ def order_methods(available_methods):
     priority_lists = [
         load_winner_methods(HPO_SUMMARY_DIR),
         ALGORITHMS,
-        list(SEARCH_SPACES.keys()),
+        list(METHOD_SPECS.keys()),
         sorted(available_methods),
     ]
 

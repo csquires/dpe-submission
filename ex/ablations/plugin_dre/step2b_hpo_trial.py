@@ -16,12 +16,12 @@ import numpy as np
 import torch
 import yaml
 
-from ex.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", type=str, required=True, choices=list(SEARCH_SPACES.keys()))
+    parser.add_argument("--method", type=str, required=True, choices=list(METHOD_SPECS.keys()))
     parser.add_argument("--kl-idx", type=int, required=True)
     parser.add_argument("--trial-id", type=int, required=True)
     return parser.parse_args()
@@ -50,7 +50,7 @@ def run_trial(method: str, kl_idx: int, trial_id: int, config: dict, dataset_fil
 
     local_indices = select_eval_instances(kl_idx, num_instances_per_kl, num_eval, seed=config["seed"])
     row_offset = kl_idx * num_instances_per_kl
-    builder = SEARCH_SPACES[method]["builder"]
+    builder = METHOD_SPECS[method]["builder"]
 
     mae_per_instance = {}
     t0 = time.perf_counter()
@@ -105,7 +105,7 @@ def run_trial(method: str, kl_idx: int, trial_id: int, config: dict, dataset_fil
 
 def main():
     args = parse_args()
-    config = yaml.safe_load(open("ex/plugin_dre/config.yaml"))
+    config = yaml.safe_load(open("ex/ablations/plugin_dre/config.yaml"))
 
     print(f"HPO trial: method={args.method}, kl_idx={args.kl_idx}, trial_id={args.trial_id}")
     print(f"  KL={config['kl_divergences'][args.kl_idx]}, nsamples_train={config['nsamples_train']}")

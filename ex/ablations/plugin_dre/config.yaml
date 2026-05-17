@@ -2,6 +2,13 @@ data_dir: "${DPE_DATA_ROOT}/plugin_dre/data"
 results_dir: "ex/ablations/plugin_dre/results"
 figures_dir: "ex/ablations/plugin_dre/figures"
 
+# HPO (layout mirrors dre_sample_complexity / pstar_sample_complexity)
+hpo_configs_dir: "ex/ablations/plugin_dre/hpo_configs"
+hpo_results_dir: "ex/ablations/plugin_dre/hpo_results"
+hpo_summary_dir: "ex/ablations/plugin_dre/hpo_summary"
+hpo_num_trials: 30             # random search trials per (method, kl)
+hpo_num_eval_instances: 1      # capped at num_instances_per_kl (plugin_dre uses 1)
+
 data_dim: 2
 kl_divergences: [0.5, 2.0, 4.0, 8.0]
 num_instances_per_kl: 1        # Single instance per KL (simpler visualization)

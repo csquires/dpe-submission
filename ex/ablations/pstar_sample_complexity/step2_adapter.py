@@ -22,7 +22,6 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
 from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
@@ -54,18 +53,13 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
 
 
 def _build_estimator(method: str, hp: dict, config: dict, device: str):
-    """SEARCH_SPACES first (config-aware builders); else fall back to METHOD_SPECS
-    (canonical builders that take num_waypoints, no config). pstar's gold winners
-    are exclusively triangular methods, so most go through the METHOD_SPECS path.
+    """build an estimator via the canonical METHOD_SPECS builder.
 
     kwargs are merged into a single dict with hp last, so gold-yaml hp always
-    overrides config / METHOD_SPECS defaults on collision (e.g. num_waypoints).
+    overrides METHOD_SPECS defaults on collision (e.g. num_waypoints).
     """
-    if method in SEARCH_SPACES:
-        kwargs = {"input_dim": config["data_dim"], "device": device, "config": config, **hp}
-        return SEARCH_SPACES[method]["builder"](**kwargs)
     if method not in METHOD_SPECS:
-        raise KeyError(f"method {method!r} in neither SEARCH_SPACES nor METHOD_SPECS")
+        raise KeyError(f"method {method!r} not in METHOD_SPECS")
     spec = METHOD_SPECS[method]
     nwp = spec.get("num_waypoints", None)
     kwargs = {

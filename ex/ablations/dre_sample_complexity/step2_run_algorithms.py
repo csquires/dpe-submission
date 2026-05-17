@@ -22,12 +22,12 @@ import torch
 from tqdm import tqdm
 import yaml
 
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", type=str, default=None, choices=list(SEARCH_SPACES.keys()),
+    parser.add_argument("--method", type=str, default=None, choices=list(METHOD_SPECS.keys()),
                         help="Run only this method (default: all)")
     parser.add_argument("--force", action="store_true", help="Overwrite existing results")
     return parser.parse_args()
@@ -51,7 +51,7 @@ def build_estimator(method: str, kl_idx: int, winners: dict, config: dict) -> ob
         raise ValueError(f"No winner found for {method} {kl_key}. Run step2c first.")
 
     hyperparams = winners[method][kl_key]
-    builder = SEARCH_SPACES[method]["builder"]
+    builder = METHOD_SPECS[method]["builder"]
     return builder(
         input_dim=config["data_dim"],
         device=config["device"],
@@ -88,7 +88,7 @@ def main():
             existing = set(f.keys())
         print("Existing results:", list(existing))
 
-    methods_to_run = [args.method] if args.method else list(SEARCH_SPACES.keys())
+    methods_to_run = [args.method] if args.method else list(METHOD_SPECS.keys())
     nrows = len(kl_divergences) * num_instances_per_kl
     n_nsamples = len(nsamples_train_values)
 

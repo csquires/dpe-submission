@@ -26,7 +26,7 @@ import yaml
 from pathlib import Path
 
 from src.utils.io import _load_config
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def validate_winners_list_format(winners):
 def get_methods_to_run(winners, cli_methods=None):
     """
     determine methods to run: cli whitelist or all winners keys.
-    validate each is registered in SEARCH_SPACES.
+    validate each is registered in METHOD_SPECS.
 
     return (methods_list, unresolved_methods).
     if any unresolved, caller exits with error.
@@ -82,7 +82,7 @@ def get_methods_to_run(winners, cli_methods=None):
 
     unresolved = []
     for method in methods_list:
-        if method not in SEARCH_SPACES:
+        if method not in METHOD_SPECS:
             logger.warning(f"method {method} not registered; skipping")
             continue
         if method not in winners or not winners[method]:
@@ -104,7 +104,7 @@ def evaluate_candidate(
         trial_id = candidate["trial_id"]
 
         # build estimator
-        builder = SEARCH_SPACES[method]["builder"]
+        builder = METHOD_SPECS[method]["builder"]
         input_dim = config["num_samples_train"]
         estimator = builder(input_dim=input_dim, **hyperparams)
 
@@ -117,7 +117,7 @@ def evaluate_candidate(
         ).to(device)  # (nsamples_train, data_dim)
 
         # fit with pstar_train if required
-        requires_pstar = SEARCH_SPACES[method].get("requires_pstar", False)
+        requires_pstar = METHOD_SPECS[method].get("requires_pstar", False)
         if requires_pstar:
             pstar_train = torch.from_numpy(
                 dataset_file["samples_pstar_train_arr"][idx]
@@ -208,7 +208,7 @@ def run_method(method, winners, dataset_file, config, device, force=False):
         # re-fit on full data
         try:
             hyperparams = winner_candidate["hyperparams"]
-            builder = SEARCH_SPACES[method]["builder"]
+            builder = METHOD_SPECS[method]["builder"]
             input_dim = config["num_samples_train"]
             estimator = builder(input_dim=input_dim, **hyperparams)
 
@@ -219,7 +219,7 @@ def run_method(method, winners, dataset_file, config, device, force=False):
                 dataset_file["samples_p1_arr"][idx]
             ).to(device)
 
-            requires_pstar = SEARCH_SPACES[method].get("requires_pstar", False)
+            requires_pstar = METHOD_SPECS[method].get("requires_pstar", False)
             if requires_pstar:
                 pstar_train = torch.from_numpy(
                     dataset_file["samples_pstar_train_arr"][idx]
@@ -356,7 +356,7 @@ def main():
 
     # run each method
     for method in methods_list:
-        if method not in SEARCH_SPACES:
+        if method not in METHOD_SPECS:
             logger.warning(f"method {method} not registered; skipping")
             continue
 

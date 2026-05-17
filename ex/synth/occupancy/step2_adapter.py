@@ -36,7 +36,7 @@ import torch
 import yaml
 
 from src.utils.io import _load_config
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 from src.sampling.frozen_flow import FrozenFlow
 
 
@@ -69,7 +69,7 @@ NEEDS_LATENT = {"SmoothedTabularPluginDRE"}
 
 
 def _requires_pstar(method: str) -> bool:
-    return SEARCH_SPACES.get(method, {}).get("requires_pstar", False)
+    return METHOD_SPECS.get(method, {}).get("requires_pstar", False)
 
 
 # -----------------------------------------------------------------------------
@@ -159,14 +159,14 @@ def _attach_flow_module(encoding_cfg: dict, base_seed: int) -> dict:
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
     """fit on (p0, p1) (and pstar if triangular); predict_ldr on pstar samples."""
-    if method not in SEARCH_SPACES:
-        raise KeyError(f"method {method!r} not registered in SEARCH_SPACES")
+    if method not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} not registered in METHOD_SPECS")
     encoding_cfg = config["encoding"]
     encoding_type = encoding_cfg["type"]
     if encoding_type not in SUPPORTED_ENCODINGS.get(method, set()):
         raise ValueError(f"method {method!r} does not support encoding {encoding_type!r}")
 
-    spec = SEARCH_SPACES[method]
+    spec = METHOD_SPECS[method]
     builder = spec["builder"]
     input_dim = _derive_input_dim(encoding_cfg)
     num_waypoints = spec.get("num_waypoints", None)

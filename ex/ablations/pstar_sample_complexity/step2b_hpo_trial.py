@@ -23,12 +23,12 @@ import numpy as np
 import torch
 import yaml
 
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", type=str, required=True, choices=list(SEARCH_SPACES.keys()))
+    parser.add_argument("--method", type=str, required=True, choices=list(METHOD_SPECS.keys()))
     parser.add_argument("--pstar-idx", type=int, required=True, help="Index into nsamples_pstar_values list")
     parser.add_argument("--trial-id", type=int, required=True)
     return parser.parse_args()
@@ -69,7 +69,7 @@ def run_trial(
     # fixed eval instance indices for this pstar_idx (same across all trials)
     instance_indices = select_eval_instances(pstar_idx, num_instances, num_eval, seed=config["seed"])
 
-    builder = SEARCH_SPACES[method]["builder"]
+    builder = METHOD_SPECS[method]["builder"]
 
     mae_per_instance = {}
     t0 = time.perf_counter()

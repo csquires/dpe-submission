@@ -8,7 +8,7 @@ import os
 
 import yaml
 
-from ex.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def load_trials(hpo_results_dir: str, method: str, kl_idx: int) -> list[dict]:
@@ -39,7 +39,7 @@ def pick_best(trials: list[dict]) -> dict | None:
 
 
 def main():
-    config = yaml.safe_load(open("ex/plugin_dre/config.yaml"))
+    config = yaml.safe_load(open("ex/ablations/plugin_dre/config.yaml"))
     hpo_results_dir = config["hpo_results_dir"]
     hpo_summary_dir = config["hpo_summary_dir"]
     kl_divergences = config["kl_divergences"]
@@ -47,7 +47,7 @@ def main():
 
     winners = {}
 
-    for method in SEARCH_SPACES:
+    for method in METHOD_SPECS:
         method_kl_results = {}
 
         for kl_idx, kl_value in enumerate(kl_divergences):

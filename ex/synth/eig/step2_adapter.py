@@ -27,11 +27,11 @@ import torch
 
 from src.utils.io import _load_config
 from ex.utils.eig_ldr import joint_and_shuffled
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def _requires_pstar(method: str) -> bool:
-    return SEARCH_SPACES.get(method, {}).get("requires_pstar", False)
+    return METHOD_SPECS.get(method, {}).get("requires_pstar", False)
 
 
 # -----------------------------------------------------------------------------
@@ -88,10 +88,10 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
     returns:
         est_ldrs: array (1,) holding the scalar EIG estimate
     """
-    if method not in SEARCH_SPACES:
-        raise KeyError(f"method {method!r} not registered in SEARCH_SPACES")
+    if method not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} not registered in METHOD_SPECS")
 
-    spec = SEARCH_SPACES[method]
+    spec = METHOD_SPECS[method]
     builder = spec["builder"]
     input_dim = config["data_dim"] + 1   # theta (D) || y (1)
     num_waypoints = spec.get("num_waypoints", None)

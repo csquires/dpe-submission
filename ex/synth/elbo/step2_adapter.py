@@ -21,12 +21,12 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
-# methods that need pstar at fit time (forwarded from SEARCH_SPACES.requires_pstar)
+# methods that need pstar at fit time (forwarded from METHOD_SPECS.requires_pstar)
 def _requires_pstar(method: str) -> bool:
-    return SEARCH_SPACES.get(method, {}).get("requires_pstar", False)
+    return METHOD_SPECS.get(method, {}).get("requires_pstar", False)
 
 
 # -----------------------------------------------------------------------------
@@ -83,10 +83,10 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
         est_ldrs:  array (1,)            (the ELDR scalar wrapped for h5)
         est_ldrs_full: array (nsamples,) (per-sample ldr predictions, optional)
     """
-    if method not in SEARCH_SPACES:
-        raise KeyError(f"method {method!r} not registered in SEARCH_SPACES")
+    if method not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} not registered in METHOD_SPECS")
 
-    spec = SEARCH_SPACES[method]
+    spec = METHOD_SPECS[method]
     builder = spec["builder"]
     # input_dim = data_dim + 1 because samples are theta (data_dim) concat y (1)
     input_dim = config["data_dim"] + 1

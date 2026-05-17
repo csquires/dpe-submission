@@ -23,12 +23,12 @@ import numpy as np
 import torch
 import yaml
 
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", type=str, required=True, choices=list(SEARCH_SPACES.keys()))
+    parser.add_argument("--method", type=str, required=True, choices=list(METHOD_SPECS.keys()))
     parser.add_argument("--kl-idx", type=int, required=True, help="Index into kl_divergences list")
     parser.add_argument("--trial-id", type=int, required=True)
     return parser.parse_args()
@@ -74,7 +74,7 @@ def run_trial(
     # dataset rows for this kl_idx are contiguous: [kl_idx * N, (kl_idx+1) * N)
     row_offset = kl_idx * num_instances_per_kl
 
-    builder = SEARCH_SPACES[method]["builder"]
+    builder = METHOD_SPECS[method]["builder"]
 
     mae_per_instance = {}
     t0 = time.perf_counter()

@@ -4,9 +4,9 @@ cell axis: flat int over (alpha_idx, pair_idx). bucket axis: alpha_idx_<n>.
 """
 from ex.utils.step2_runner.adapter_base import make_adapter_module
 from ex.utils.step2_runner.adapter_specs import MNIST_COND
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
-_module = make_adapter_module(MNIST_COND, SEARCH_SPACES)
+_module = make_adapter_module(MNIST_COND, METHOD_SPECS)
 
 load_config = _module["load_config"]
 list_cells = _module["list_cells"]

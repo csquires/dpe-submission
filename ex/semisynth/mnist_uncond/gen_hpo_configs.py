@@ -1,80 +1,16 @@
 """
 generate random hpo configs for tsm, ctsm, or vfm.
 
-samples from predefined search spaces, writes one json per trial.
+samples from METHOD_SPECS search spaces, writes one json per trial.
 """
 
 import argparse
 import json
-import math
 import os
 import random
 
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
-
-
-def sample_param(spec):
-    """
-    sample a hyperparameter value according to spec.
-
-    spec: tuple with format matching SEARCH_SPACES entries
-          - ("log_uniform", lo, hi): continuous log-uniform in [lo, hi]
-          - ("log_uniform_int", lo, hi): log-uniform rounded to int
-          - ("uniform", lo, hi): continuous uniform in [lo, hi]
-          - ("uniform_int", lo, hi): uniform integer in [lo, hi]
-          - ("choice", options): discrete uniform from list
-
-    returns: sampled value (int, float, or object depending on spec type)
-    """
-    dist_type = spec[0]
-
-    if dist_type == "log_uniform":
-        _, lo, hi = spec
-        log_val = random.uniform(math.log(lo), math.log(hi))
-        return math.exp(log_val)
-
-    elif dist_type == "log_uniform_int":
-        _, lo, hi = spec
-        log_val = random.uniform(math.log(lo), math.log(hi))
-        return round(math.exp(log_val))
-
-    elif dist_type == "uniform":
-        _, lo, hi = spec
-        return random.uniform(lo, hi)
-
-    elif dist_type == "uniform_int":
-        _, lo, hi = spec
-        return random.randint(lo, hi)
-
-    elif dist_type == "choice":
-        _, options = spec
-        return random.choice(options)
-
-    else:
-        raise ValueError(f"unknown distribution type: {dist_type}")
-
-
-def gen_config(method, trial_id):
-    """
-    generate a complete hpo configuration for one trial.
-
-    method: "TSM", "CTSM", "VFM", "FMDRE", "FMDRE_S2", or "MHTTDRE"
-    trial_id: unique integer identifier for this trial
-
-    returns: dict with structure {"trial_id": int, "method": str, "hyperparams": dict}
-             hyperparams contains sampled values for all parameters in search space
-    """
-    space = SEARCH_SPACES[method]["search_space"]  # raises KeyError if invalid method
-
-    hyperparams = {}
-    for param_name, spec in space.items():
-        hyperparams[param_name] = sample_param(spec)
-
-    return {
-        "trial_id": trial_id,
-        "method": method,
-        "hyperparams": hyperparams
-    }
+from ex.utils.hpo.method_specs import METHOD_SPECS
+from ex.utils.hpo.sample import gen_config
 
 
 def main():
@@ -91,8 +27,8 @@ def main():
     """
     parser = argparse.ArgumentParser(description="generate hpo configs")
     parser.add_argument("--method", type=str, required=True,
-                       choices=list(SEARCH_SPACES.keys()),
-                       help="method name; must be a key in SEARCH_SPACES")
+                       choices=list(METHOD_SPECS.keys()),
+                       help="method name; must be a key in METHOD_SPECS")
     parser.add_argument("--num-trials", type=int, required=True,
                        help="number of trials to generate")
     parser.add_argument("--output-dir", type=str, required=True,

@@ -16,7 +16,7 @@ import os
 
 import yaml
 
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def load_trials(hpo_results_dir: str, method: str, pstar_idx: int) -> list[dict]:
@@ -58,7 +58,7 @@ def main():
     # winners[method][pstar_key] = hyperparams dict  (pstar_key = "pstar_0", "pstar_1", ...)
     winners = {}
 
-    for method in SEARCH_SPACES:
+    for method in METHOD_SPECS:
         method_pstar_results = {}
 
         for pstar_idx, nsamples_pstar in enumerate(nsamples_pstar_values):

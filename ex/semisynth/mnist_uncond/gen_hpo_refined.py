@@ -12,8 +12,8 @@ import os
 import random
 import glob
 
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
-from ex.semisynth.mnist_uncond.gen_hpo_configs import sample_param
+from ex.utils.hpo.method_specs import METHOD_SPECS
+from ex.utils.hpo.sample import sample_param
 
 
 ALPHA_PAIRS = {
@@ -38,7 +38,7 @@ def narrow_spec(spec, top_k_values):
     """
     narrow a search-space spec tuple around observed top-K values.
 
-    spec: tuple from SEARCH_SPACES (e.g., ("log_uniform", lo, hi))
+    spec: tuple from METHOD_SPECS (e.g., ("log_uniform", lo, hi))
     top_k_values: list of observed values from top-K trials
 
     returns: narrowed spec tuple of same kind, with bounds set to [min, max] of top_k_values.
@@ -128,7 +128,7 @@ def gen_refined_configs(method, trials, alpha_idx, num_trials, top_k=5):
     """
     pair_key = ALPHA_PAIRS[alpha_idx]
     ranges = extract_ranges(trials, pair_key, top_k)
-    broad_specs = SEARCH_SPACES[method]["search_space"]
+    broad_specs = METHOD_SPECS[method]["base_search_space"]
 
     configs = []
     for i in range(num_trials):
@@ -154,7 +154,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description="generate refined hpo configs")
     parser.add_argument("--method", type=str, required=True,
-                        choices=list(SEARCH_SPACES.keys()))
+                        choices=list(METHOD_SPECS.keys()))
     parser.add_argument("--results-dir", type=str, required=True,
                         help="directory with round-1 results (contains TSM/, CTSM/, VFM/)")
     parser.add_argument("--output-dir", type=str, required=True,

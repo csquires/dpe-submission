@@ -5,9 +5,9 @@ bucket axis: f"alpha_idx_{alpha_idx}". input_dim: config['latent_dim'].
 """
 from ex.utils.step2_runner.adapter_base import make_adapter_module
 from ex.utils.step2_runner.adapter_specs import MNIST_UNCOND
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
-_module = make_adapter_module(MNIST_UNCOND, SEARCH_SPACES)
+_module = make_adapter_module(MNIST_UNCOND, METHOD_SPECS)
 
 load_config = _module["load_config"]
 list_cells = _module["list_cells"]

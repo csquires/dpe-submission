@@ -8,7 +8,7 @@ from pathlib import Path
 from ex.utils.run_algorithms import (
     load_winners, load_data, create_estimator, run_method,
 )
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def parse_args(args=None):
@@ -89,7 +89,7 @@ def main():
             results_filename,
             config,
             DEVICE,
-            search_spaces=SEARCH_SPACES,
+            search_spaces=METHOD_SPECS,
             alpha_idx=args.alpha_idx,
             force=args.force,
             winners=winners,

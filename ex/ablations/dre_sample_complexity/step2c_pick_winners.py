@@ -16,7 +16,7 @@ import os
 
 import yaml
 
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def load_trials(hpo_results_dir: str, method: str, kl_idx: int) -> list[dict]:
@@ -58,7 +58,7 @@ def main():
     # winners[method][kl_key] = hyperparams dict  (kl_key = "kl_0", "kl_1", ...)
     winners = {}
 
-    for method in SEARCH_SPACES:
+    for method in METHOD_SPECS:
         method_kl_results = {}
 
         for kl_idx, kl_value in enumerate(kl_divergences):

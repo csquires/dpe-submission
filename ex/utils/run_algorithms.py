@@ -59,8 +59,8 @@ def create_estimator(method, config, device, search_spaces, alpha_idx=0, winners
     hpo methods (keyed in search_spaces) extract per-alpha hyperparams from winners.
     non-hpo methods use inline classifier construction.
 
-    search_spaces: the per-experiment SEARCH_SPACES dict, passed in by the caller.
-                   this module does NOT import SEARCH_SPACES; the caller threads it through.
+    search_spaces: the per-experiment METHOD_SPECS dict, passed in by the caller.
+                   this module does NOT import METHOD_SPECS; the caller threads it through.
     input_dim_fn: callback to resolve input dimension from config; defaults to config['latent_dim']
                   but dbpedia uses config.get('pca_dim', config['latent_dim']).
     """

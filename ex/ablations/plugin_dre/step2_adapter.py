@@ -4,8 +4,8 @@ cell axis: row index in dataset.h5 (kl_idx * num_instances_per_kl + local_idx).
 bucket axis: f"kl_idx_{kl_idx}".
 per-cell output: shape (num_grid_points,) — predicted ldr at the grid points.
 
-uses ex.plugin_dre.hpo_search_spaces.SEARCH_SPACES whose builders take
-(input_dim, device, config, **hp); we forward config explicitly.
+uses ex.utils.hpo.method_specs.METHOD_SPECS whose canonical builders take
+(input_dim, device, num_waypoints, **hp).
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from ex.ablations.plugin_dre.hpo_search_spaces import SEARCH_SPACES
 from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
@@ -42,17 +41,13 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
 
 
 def _build_estimator(method: str, hp: dict, config: dict, device: str):
-    """SEARCH_SPACES first (config-aware builders); else fall back to METHOD_SPECS
-    (canonical builders that take num_waypoints, no config).
+    """build an estimator via the canonical METHOD_SPECS builder.
 
     kwargs are merged into a single dict with hp last, so gold-yaml hp always
-    overrides config / METHOD_SPECS defaults on collision (e.g. num_waypoints).
+    overrides METHOD_SPECS defaults on collision (e.g. num_waypoints).
     """
-    if method in SEARCH_SPACES:
-        kwargs = {"input_dim": config["data_dim"], "device": device, "config": config, **hp}
-        return SEARCH_SPACES[method]["builder"](**kwargs)
     if method not in METHOD_SPECS:
-        raise KeyError(f"method {method!r} in neither SEARCH_SPACES nor METHOD_SPECS")
+        raise KeyError(f"method {method!r} not in METHOD_SPECS")
     spec = METHOD_SPECS[method]
     nwp = spec.get("num_waypoints", None)
     kwargs = {
@@ -117,5 +112,5 @@ def gather_dataset_name(method: str, config: dict) -> str:
 
 
 def gather_output_path(config: dict) -> str:
-    out_dir = config.get("results_dir", "ex/plugin_dre/results")
+    out_dir = config.get("results_dir", "ex/ablations/plugin_dre/results")
     return os.path.join(out_dir, "raw_results.h5")

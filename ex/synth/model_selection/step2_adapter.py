@@ -29,7 +29,7 @@ from src.utils.io import _load_config
 # bypass the stale ex.synth.model_selection.hpo_search_spaces (references
 # TDRE_5 which is no longer in the registry); use METHOD_SPECS directly. step2
 # only needs the builder + requires_pstar at runtime, not the search range.
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 # -----------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
 
 # methods that take pstar samples during fit
 def _requires_pstar(method: str) -> bool:
-    return SEARCH_SPACES.get(method, {}).get("requires_pstar", False)
+    return METHOD_SPECS.get(method, {}).get("requires_pstar", False)
 
 
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
@@ -90,10 +90,10 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
         mae_per_test_set:   array (ntest_sets,)
         true_ldrs:          array (ntest_sets, nsamples_test)
     """
-    if method not in SEARCH_SPACES:
-        raise KeyError(f"method {method!r} not registered in SEARCH_SPACES")
+    if method not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} not registered in METHOD_SPECS")
 
-    spec = SEARCH_SPACES[method]
+    spec = METHOD_SPECS[method]
     builder = spec["builder"]
     # input_dim for these binary-classifier-based estimators is the data
     # dimensionality of a single sample (model_selection: data_dim=3),

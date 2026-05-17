@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from src.utils.io import _load_config
-from ex.utils.hpo.method_specs import METHOD_SPECS as SEARCH_SPACES
+from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def _decode(flat_idx: int, config: dict) -> tuple[int, int, int]:
@@ -54,14 +54,14 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
 
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
-    if method not in SEARCH_SPACES:
-        raise KeyError(f"method {method!r} not in pendulum_eldr_estimation SEARCH_SPACES")
+    if method not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} not in pendulum_eldr_estimation METHOD_SPECS")
     k1, k2, seed = _decode(cell_idx, config)
     data_path = os.path.join(config["data_dir"], f"k1_{k1}_k2_{k2}_seed_{seed}.h5")
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"step1 data not found: {data_path}")
 
-    spec = SEARCH_SPACES[method]
+    spec = METHOD_SPECS[method]
     builder = spec["builder"]
     requires_pstar = spec.get("requires_pstar", False)
 

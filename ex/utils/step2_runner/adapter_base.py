@@ -85,7 +85,7 @@ def make_adapter_module(spec: AdapterSpec, search_spaces: dict) -> dict[str, Cal
         10. predict ldr and return as dict with key "est_ldrs".
         """
         if method not in search_spaces:
-            raise KeyError(f"method {method!r} not in {spec.name} SEARCH_SPACES")
+            raise KeyError(f"method {method!r} not in {spec.name} METHOD_SPECS")
         a, p = _decode(cell_idx, config)
         data_path = os.path.join(config["data_dir"], f"alpha_{a}_pair_{p}.h5")
         if not os.path.exists(data_path):

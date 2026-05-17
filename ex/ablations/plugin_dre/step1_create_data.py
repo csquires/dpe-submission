@@ -16,7 +16,7 @@ from tqdm import tqdm
 from ex.utils.prescribed_kls import create_two_gaussians_kl
 
 
-config = yaml.load(open('ex/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
+config = yaml.load(open('ex/ablations/plugin_dre/config.yaml', 'r'), Loader=yaml.FullLoader)
 
 # directories
 DATA_DIR = config['data_dir']
