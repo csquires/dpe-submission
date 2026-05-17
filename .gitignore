@@ -58,8 +58,10 @@ experiments/mnist_eldr_cond_flow/step5_compare.py
 # experiments/mnist_eldr_estimation/diagnostic_mem_profile.py
 slurm*
 tests/ablate.py
-scratch/hp*
-scratch/oor_*
+# scratch/hp*
+# scratch/oor_*
 smoke_test*
 jsons/
 *_EMA.md
+
+scratch/*
