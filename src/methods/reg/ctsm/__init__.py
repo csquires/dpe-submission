@@ -317,7 +317,8 @@ class CTSM(DRE):
                 x_flat = x_expanded.reshape(n_chunk * n_samps, -1)          # [chunk_len * n_samples, data_dim]
 
                 # network call; returns [chunk_len * n_samples, 1]
-                score_flat = self.model(tau_flat, x_flat)
+                # arg order (x, tau) matches TimeScoreNetwork1D.forward and training
+                score_flat = self.model(x_flat, tau_flat)
 
                 # reshape back and squeeze spatial dim
                 score = score_flat.reshape(n_chunk, n_samps, 1)             # [chunk_len, n_samples, 1]

@@ -355,12 +355,12 @@ class TriangularVFM2D(ELDR):
                 x_t_minus = x_t - 2 * torch.sqrt(path.gamma(t1, t2)) * z
 
                 # b1 predictions
-                b1_plus = net_b1(t1, t2, x_t_plus)    # [B, D]
-                b1_minus = net_b1(t1, t2, x_t_minus)  # [B, D]
+                b1_plus = net_b1(x_t_plus, t1, t2)    # [B, D]
+                b1_minus = net_b1(x_t_minus, t1, t2)  # [B, D]
 
                 # b2 predictions
-                b2_plus = net_b2(t1, t2, x_t_plus)    # [B, D]
-                b2_minus = net_b2(t1, t2, x_t_minus)  # [B, D]
+                b2_plus = net_b2(x_t_plus, t1, t2)    # [B, D]
+                b2_minus = net_b2(x_t_minus, t1, t2)  # [B, D]
 
                 # per-sample b1 loss (antithetic)
                 per_b1 = (
@@ -389,8 +389,8 @@ class TriangularVFM2D(ELDR):
                     path, x0, x1, xstar, t1, t2, z
                 )
 
-                b1_pred = net_b1(t1, t2, x_t)
-                b2_pred = net_b2(t1, t2, x_t)
+                b1_pred = net_b1(x_t, t1, t2)
+                b2_pred = net_b2(x_t, t1, t2)
 
                 per_b1 = (
                     0.5 * (b1_pred ** 2).sum(dim=-1)
@@ -491,7 +491,7 @@ class TriangularVFM2D(ELDR):
             x_t = (mu + gamma_t * z).detach()
 
             outer = resolve_outer_lambda(reweight, t1)
-            eta_pred = net_eta(t1, t2, x_t)
+            eta_pred = net_eta(x_t, t1, t2)
             per_sample = (
                 0.5 * (eta_pred ** 2).sum(dim=-1) - (z * eta_pred).sum(dim=-1)
             ) * outer.squeeze(-1)

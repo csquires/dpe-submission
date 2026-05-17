@@ -240,7 +240,7 @@ class TriangularCTSMV1(ELDR):
                 for i in range(chunk_len):
                     tau_scalar = ts[i, 0]
                     tau_batch = tau_scalar.view(1, 1).expand(n_samples, 1)  # [n_samples, 1]
-                    results.append(self.model(tau_batch, samples))  # [n_samples, 1]
+                    results.append(self.model(samples, tau_batch))  # [n_samples, 1]
                 return torch.stack(results, dim=0).squeeze(-1)  # [chunk_len, n_samples]
 
             # step 5: invoke unified integrator

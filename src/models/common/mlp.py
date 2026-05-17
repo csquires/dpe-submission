@@ -6,10 +6,10 @@ import torch.nn as nn
 
 
 class MLP(nn.Module):
-    """time-conditioned MLP: cat([t, x]) -> hidden stack -> output.
+    """time-conditioned MLP: cat([x, t]) -> hidden stack -> output.
 
     procedure:
-        [t, x] -> linear(input_dim+1 -> hidden_dim)
+        [x, t] -> linear(input_dim+1 -> hidden_dim)
               -> [(optional layernorm) activation linear(hidden_dim -> hidden_dim)] x (n_hidden_layers-1)
               -> linear(hidden_dim -> output_dim)
 
@@ -63,6 +63,6 @@ class MLP(nn.Module):
         layers.append(nn.Linear(hidden_dim, output_dim))
         self.net = nn.Sequential(*layers)
 
-    def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """t: [B, 1], x: [B, input_dim] -> [B, output_dim]."""
-        return self.net(torch.cat([t, x], dim=-1))
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """x: [B, input_dim], t: [B, 1] -> [B, output_dim]. space-first."""
+        return self.net(torch.cat([x, t], dim=-1))

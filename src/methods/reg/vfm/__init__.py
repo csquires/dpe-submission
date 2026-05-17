@@ -218,11 +218,11 @@ class VFM(DRE):
                 z = torch.randn_like(x0)
                 # positive noise
                 x_t_p, v_star_p = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                b_p = model(tau, x_t_p)
+                b_p = model(x_t_p, tau)
                 l_p = 0.5 * (b_p ** 2).sum(-1) - (v_star_p * b_p).sum(-1)
                 # negative noise
                 x_t_m, v_star_m = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
-                b_m = model(tau, x_t_m)
+                b_m = model(x_t_m, tau)
                 l_m = 0.5 * (b_m ** 2).sum(-1) - (v_star_m * b_m).sum(-1)
                 outer = resolve_outer_lambda(reweight, tau)
                 return (0.5 * (l_p + l_m) * outer * iw.squeeze(-1)).mean()
@@ -233,7 +233,7 @@ class VFM(DRE):
                 z = torch.randn_like(x0)
                 x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
                 outer = resolve_outer_lambda(reweight, tau)
-                b = model(tau, x_t)
+                b = model(x_t, tau)
                 return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
             loss_b = loss_b_naive
 
@@ -244,7 +244,7 @@ class VFM(DRE):
             x0, x1 = batch["x0"], batch["x1"]
             z = torch.randn_like(x0)
             x_t, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-            eta = model(tau, x_t)
+            eta = model(x_t, tau)
             outer = resolve_outer_lambda(reweight, tau)
             return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
@@ -320,6 +320,32 @@ class VFM(DRE):
                 self.ema_eta.restore(self.net_eta)
 
 
-from .tri import TriangularVFMV1, TriangularVFMV2, TriangularVFM2D
+def make_vfm(input_dim: int, device: str = "cuda", **kwargs) -> VFM:
+    """factory for VFM with sensible defaults; overrides passed via kwargs.
 
-__all__ = ["VFM", "TriangularVFMV1", "TriangularVFMV2", "TriangularVFM2D"]
+    `lr` is rerouted through OptimCfg; legacy keys not on the VFM surface
+    (eps, n_t, integration_type, log_every, verbose) are dropped.
+    """
+    defaults = {
+        "k": 20,
+        "n_epochs": 1000,
+        "hidden_dim": 256,
+        "n_hidden_layers": 3,
+        "batch_size": 512,
+        "integration_steps": 3000,
+        "antithetic": True,
+    }
+    lr = kwargs.pop("lr", 1.3e-3)
+    for legacy in ("eps", "n_t", "integration_type", "log_every", "verbose"):
+        kwargs.pop(legacy, None)
+    defaults.update(kwargs)
+    return VFM(input_dim, device=device, optim=OptimCfg(lr=lr), **defaults)
+
+
+from .tri import TriangularVFMV1, TriangularVFMV2, TriangularVFM2D
+from .orthros import VFMOrthros
+
+__all__ = [
+    "VFM", "make_vfm", "VFMOrthros",
+    "TriangularVFMV1", "TriangularVFMV2", "TriangularVFM2D",
+]

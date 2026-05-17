@@ -276,7 +276,8 @@ class TriangularCTSMV2(ELDR):
                 device=self.device,
             )
             with torch.no_grad():
-                # inline CTSM time-score: model(tau, x) -> [B, 1]
+                # inline CTSM time-score; space-first model(x, tau) matches
+                # TimeScoreNetwork.forward and make_sb_loss training
                 # stack over tau grid: [n_points, B]
                 vals = torch.stack([
                     -self.model(xs, torch.full((n, 1), float(t.item()), device=self.device))
