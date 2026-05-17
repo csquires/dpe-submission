@@ -241,6 +241,9 @@ def train_two_phase(
     loss_kwargs_eta: dict | None = None,
     model_module_b: nn.Module | None = None,
     model_module_eta: nn.Module | None = None,
+    step_cb: Callable[[int, float], None] | None = None,
+    eval_fn: Callable[[Any], torch.Tensor] | None = None,
+    step_cb_interval: int = 50,
 ) -> None:
     """train velocity then denoiser sequentially via two `train_loop` calls.
 
@@ -259,6 +262,14 @@ def train_two_phase(
     is a non-Module callable (e.g. a preconditioning wrapper). used for device
     resolution, the optim-ownership assertion, train()/eval() toggling, and is
     forwarded to train_loop as `model_module`. defaults to model_b / model_eta.
+
+    step_cb, eval_fn, step_cb_interval: optuna pruning hooks, forwarded to the
+    phase-2 train_loop only. step_cb=None (default) disables instrumentation.
+    phase 1 (model_b) is never instrumented: the held-out eval needs both
+    networks, which is meaningless until model_eta is trained. reported step
+    indices are phase-2-local (the phase-2 train_loop's own 0-based counter), so
+    hyperband sees the same rung ladder for this method as for any single-phase
+    method.
     """
     # backing nn.Module for each phase; defaults to the model itself when the
     # model is already an nn.Module (no preconditioning wrapper).
@@ -317,6 +328,9 @@ def train_two_phase(
         eps=eps,
         loss_kwargs=loss_kwargs_eta,
         model_module=mod_eta,
+        step_cb=step_cb,
+        eval_fn=eval_fn,
+        step_cb_interval=step_cb_interval,
     )
 
     mod_b.eval()
