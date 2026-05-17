@@ -10,7 +10,7 @@ from src.utils.pendulum import PendulumCfg, F, sample_mu0, log_mu0, r_upright, r
 from src.utils.pendulum_q import QGridCfg, load_or_build_q
 from src.utils.pendulum_policies import GaussPolicy, MixPolicy
 from src.sampling.pendulum_traj import rollout, log_density, pack
-from ex.utils.prescribed_kls import load_or_build_traj_grid, prescribe_traj
+from ex.utils.prescribed_kls import load_or_build_traj_grid, prescribe_k1
 from ex.utils.alpha_grid import make_alphas
 
 
@@ -104,7 +104,7 @@ def _build_env_and_q_cfg(config: Dict[str, Any]) -> Tuple[PendulumCfg, QGridCfg]
 def per_cell(
     config: Dict[str, Any],
     k1_idx: int,
-    k2_idx: int,
+    beta_idx: int,
     seed: int,
     force: bool = False,
 ) -> bool:
@@ -118,17 +118,17 @@ def per_cell(
       4. extract trajectory length T, num_samples N, sigma_pi from config
       5. build grid_cfg dict from config traj_kl_grid section
       6. load or build cached trajectory-KL grid via load_or_build_traj_grid
-      7. look up (K₁, K₂) targets from config["kl_targets"]
-      8. prescribe (α*, β*) via prescribe_traj; check feasibility
+      7. look up K₁ target from config["kl_targets"]; β is fixed by config
+      8. prescribe α* from K₁ via prescribe_k1; check feasibility
       9. if infeasible: log reason, return False
-      10. snap α* to nearest grid index i_snap; retrieve q_O = grid["q_O_grid"][i_snap]
+      10. snap α* to nearest grid index i_snap; build q_O at α*
       11. construct π_E, π_O, π^β* policies
       12. roll out N trajectories under each of three policies (π^β*, π_O, π_E)
       13. compute cross-densities: log_p_{pstar,p0,p1}[N, 3] (columns: π^β*, π_O, π_E)
       14. compute inverse-direction KLs and integrated ELDR via MC
       15. compute true_ldrs[N] = log p0(pstar) - log p1(pstar) at pstar samples
           (column 1 minus column 2 of log_p_pstar; p0 = π_O, p1 = π_E)
-      16. write HDF5 atomically to {data_dir}/k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5
+      16. write HDF5 atomically to {data_dir}/k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5
 
     HDF5 schema written (per-cell):
       datasets:
@@ -140,13 +140,13 @@ def per_cell(
         log_p_p1      : float32, [N, 3], columns = (π^β*, π_O, π_E)
         true_ldrs     : float32, [N], = log p0(pstar) - log p1(pstar)
                         (consumed by HPO/eval as the ground-truth per-sample LDR)
-      attrs: alpha_star, beta_star, K1_*, K2_*, KL_*, integrated_eldr,
+      attrs: alpha_star, beta, K1_*, K2_realized, KL_*, integrated_eldr,
              mc_se, T, N, sigma_pi, i_snap, seed, q_E_residual, q_O_residual
 
     args:
       config: loaded yaml config dict
       k1_idx: index into config["kl_targets"]["k1_values"]
-      k2_idx: index into config["kl_targets"]["k2_values"]
+      beta_idx: index into config["kl_targets"]["beta_values"]
       seed: seed offset; actual numpy/torch seed = config["seed"] + seed
       force: if False, skip if output HDF5 exists
 
@@ -159,11 +159,11 @@ def per_cell(
 
     # guard empty kl_targets early -- single-cell CLI path does not protect against this.
     k1_values = config["kl_targets"]["k1_values"]
-    k2_values = config["kl_targets"]["k2_values"]
-    if len(k1_values) == 0 or len(k2_values) == 0:
+    beta_values = config["kl_targets"]["beta_values"]
+    if len(k1_values) == 0 or len(beta_values) == 0:
         print(
             "kl_targets is empty; cannot prescribe a target. "
-            "run with --smoke to print the feasible (K1, K2) region, "
+            "run with --smoke to build the grid and inspect the feasible K1 range, "
             "then populate kl_targets in config.yaml and rerun."
         )
         return False
@@ -204,16 +204,16 @@ def per_cell(
     )
 
     K1 = float(config["kl_targets"]["k1_values"][k1_idx])
-    K2 = float(config["kl_targets"]["k2_values"][k2_idx])
-    res = prescribe_traj(grid, K1, K2)
+    beta_star = float(config["kl_targets"]["beta_values"][beta_idx])
+    res = prescribe_k1(grid["KL1"], grid["alphas"], K1)
 
     if not res["feasible"]:
-        print(f"skip (k1={K1}, k2={K2}): {res['reason']}")
+        print(f"skip (k1={K1}): {res['reason']}")
         return False
 
     alpha_star = float(res["alpha_star"])
-    beta_star = float(res["beta_star"])
-    i_snap = int(res["i_snap"])
+    # beta_star is fixed by config (not inverted from a prescribed K2).
+    i_snap = int(np.argmin(np.abs(np.asarray(grid["alphas"]) - alpha_star)))
 
     # build q_O at the inverted alpha_star (cached on disk by alpha key);
     # avoids the grid-snap error that dominates k1_err in steep regions.
@@ -271,7 +271,7 @@ def per_cell(
 
     output_path = os.path.join(
         config["data_dir"],
-        f"k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5"
+        f"k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
     )
 
     if _hdf5_exists(output_path) and not force:
@@ -296,11 +296,10 @@ def per_cell(
 
     attrs = {
         "alpha_star": alpha_star,
-        "beta_star": beta_star,
+        "beta": beta_star,
         "K1_prescribed": K1,
-        "K2_prescribed": K2,
         "K1_realized": float(res["realized_K1"]),
-        "K2_realized": float(res["realized_K2"]),
+        "K2_realized": float(KL_mix_E),
         "KL_O_E": KL_O_E,
         "KL_E_mix": KL_E_mix,
         "KL_mix_E": KL_mix_E,
@@ -326,26 +325,21 @@ def main():
     CLI dispatcher: parse arguments and dispatch to per_cell or sweep.
 
     flags:
-      --smoke: run single smoke cell (first available k1_idx, k2_idx, seed=0); force=True
-      --k1-idx K1_IDX: if set with k2-idx and seed, run single cell
-      --k2-idx K2_IDX: if set with k1-idx and seed, run single cell
-      --seed SEED: if set with k1-idx and k2-idx, run single cell
+      --smoke: run single smoke cell (k1_idx=0, beta_idx=0, seed=0); force=True
+      --k1-idx K1_IDX: if set with beta-idx and seed, run single cell
+      --beta-idx BETA_IDX: if set with k1-idx and seed, run single cell
+      --seed SEED: if set with k1-idx and beta-idx, run single cell
       --force: force recomputation (ignore existing HDF5 files)
 
     behaviors:
       1. load config from ex/semisynth/pendulum/config.yaml
-      2. --smoke: pick first available (k1_idx=0, k2_idx=0, seed=0) and run per_cell.
-         - if config["kl_targets"]["k1_values"] is empty: print message explaining that
-           user should populate kl_targets after seeing feasible region, then call
-           load_or_build_traj_grid directly to trigger a single grid build and print
-           feasible region, then return (do not crash).
-      3. single-cell (--k1-idx / --k2-idx / --seed all set): run per_cell once.
-      4. default (sweep): iterate over (k1_idx, k2_idx) in product of ranges.
-         - for each (K1, K2) pair, decide n_seeds via hard_corner_threshold policy:
-           if K1 >= threshold and K2 >= threshold: n_seeds = seeds_hard
-           else: n_seeds = seeds_default
-         - call per_cell(config, k1_idx, k2_idx, seed, force) for seed in range(n_seeds)
-         - track and print summary: processed, skipped, total_cells
+      2. --smoke: pick (k1_idx=0, beta_idx=0, seed=0) and run per_cell.
+         - if kl_targets is empty: build the trajectory-KL grid once (so the
+           feasible K1 range is inspectable), then return (do not crash).
+      3. single-cell (--k1-idx / --beta-idx / --seed all set): run per_cell once.
+      4. default (sweep): iterate (k1_idx, beta_idx) in product of ranges,
+         call per_cell(config, k1_idx, beta_idx, seed, force) for each seed,
+         track and print summary: processed, skipped, total_cells.
     """
 
     parser = argparse.ArgumentParser(
@@ -357,7 +351,7 @@ def main():
         )
     )
     parser.add_argument("--k1-idx", type=int, default=None, help="K1 grid index")
-    parser.add_argument("--k2-idx", type=int, default=None, help="K2 grid index")
+    parser.add_argument("--beta-idx", type=int, default=None, help="beta grid index")
     parser.add_argument("--seed", type=int, default=None, help="seed offset")
     parser.add_argument("--force", action="store_true", help="force recomputation")
     parser.add_argument("--smoke", action="store_true", help="smoke test: 1 cell")
@@ -368,9 +362,9 @@ def main():
 
     if args.smoke:
         k1_values = config["kl_targets"].get("k1_values", [])
-        k2_values = config["kl_targets"].get("k2_values", [])
+        beta_values = config["kl_targets"].get("beta_values", [])
 
-        if len(k1_values) == 0 or len(k2_values) == 0:
+        if len(k1_values) == 0 or len(beta_values) == 0:
             print("kl_targets is empty. populating it after initial grid build...")
             print("building trajectory-KL grid to determine feasible region...")
 
@@ -411,33 +405,25 @@ def main():
             print("grid build complete. feasible region visible in grid. update kl_targets in config.yaml.")
             return
 
-        print(f"smoke: (k1_idx=0, k2_idx=0, seed=0)")
+        print(f"smoke: (k1_idx=0, beta_idx=0, seed=0)")
         per_cell(config, 0, 0, 0, force=True)
         print("smoke test complete")
 
-    elif args.k1_idx is not None and args.k2_idx is not None and args.seed is not None:
-        per_cell(config, args.k1_idx, args.k2_idx, args.seed, force=args.force)
+    elif args.k1_idx is not None and args.beta_idx is not None and args.seed is not None:
+        per_cell(config, args.k1_idx, args.beta_idx, args.seed, force=args.force)
 
     else:
         k1_values = config["kl_targets"]["k1_values"]
-        k2_values = config["kl_targets"]["k2_values"]
-        hard_threshold = config["kl_targets"]["hard_corner_threshold"]
+        beta_values = config["kl_targets"]["beta_values"]
         seeds_default = config["kl_targets"]["seeds_default"]
-        seeds_hard = config["kl_targets"]["seeds_hard"]
 
-        total_cells = len(k1_values) * len(k2_values)
+        total_cells = len(k1_values) * len(beta_values)
         processed = 0
         skipped = 0
 
-        for k1_idx, k2_idx in product(range(len(k1_values)), range(len(k2_values))):
-            K1 = k1_values[k1_idx]
-            K2 = k2_values[k2_idx]
-
-            is_hard = (K1 >= hard_threshold and K2 >= hard_threshold)
-            n_seeds = seeds_hard if is_hard else seeds_default
-
-            for seed in range(n_seeds):
-                result = per_cell(config, k1_idx, k2_idx, seed, force=args.force)
+        for k1_idx, beta_idx in product(range(len(k1_values)), range(len(beta_values))):
+            for seed in range(seeds_default):
+                result = per_cell(config, k1_idx, beta_idx, seed, force=args.force)
                 if result:
                     processed += 1
                 else:

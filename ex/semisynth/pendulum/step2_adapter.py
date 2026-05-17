@@ -1,10 +1,10 @@
 """step2_runner adapter for pendulum_eldr_estimation.
 
-cell axis: flat int over (k1_idx, k2_idx, seed). 4 k1 x 1 k2 x 40 seeds = 160 cells.
+cell axis: flat int over (k1_idx, beta_idx, seed). 3 k1 x 1 beta x 40 seeds = 120 cells.
 bucket axis: f"k1_idx_{k1_idx}".
 input_dim: 18 (pendulum trajectory dimension; per-cell h5 has samples_p0 of shape
            (5000, 18)). configurable via config['data_dim'] if present.
-per-cell input: <data_dir>/k1_<k1>_k2_<k2>_seed_<s>.h5
+per-cell input: <data_dir>/k1_<k1>_beta_<b>_seed_<s>.h5
 """
 from __future__ import annotations
 
@@ -19,11 +19,11 @@ from ex.utils.hpo.method_specs import METHOD_SPECS
 
 
 def _decode(flat_idx: int, config: dict) -> tuple[int, int, int]:
-    n_k2 = len(config["kl_targets"]["k2_values"])
+    n_beta = len(config["kl_targets"]["beta_values"])
     seeds = config["kl_targets"].get("seeds_default", 1)
     seed = flat_idx % seeds
     rest = flat_idx // seeds
-    return rest // n_k2, rest % n_k2, seed
+    return rest // n_beta, rest % n_beta, seed
 
 
 def load_config(path: str) -> dict:
@@ -42,9 +42,9 @@ def _input_dim(config: dict) -> int:
 
 def list_cells(config: dict) -> list[int]:
     n_k1 = len(config["kl_targets"]["k1_values"])
-    n_k2 = len(config["kl_targets"]["k2_values"])
+    n_beta = len(config["kl_targets"]["beta_values"])
     seeds = config["kl_targets"].get("seeds_default", 1)
-    return list(range(n_k1 * n_k2 * seeds))
+    return list(range(n_k1 * n_beta * seeds))
 
 
 def bucket_for_cell(cell_idx: int, config: dict) -> str:
@@ -56,8 +56,8 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
     if method not in METHOD_SPECS:
         raise KeyError(f"method {method!r} not in pendulum_eldr_estimation METHOD_SPECS")
-    k1, k2, seed = _decode(cell_idx, config)
-    data_path = os.path.join(config["data_dir"], f"k1_{k1}_k2_{k2}_seed_{seed}.h5")
+    k1, beta, seed = _decode(cell_idx, config)
+    data_path = os.path.join(config["data_dir"], f"k1_{k1}_beta_{beta}_seed_{seed}.h5")
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"step1 data not found: {data_path}")
 

@@ -42,10 +42,8 @@ traj_kl_grid:
 
 # === Prescribed KL Targets (Deferred) ===
 kl_targets:
-  # leave empty initially: the first grid build will print achievable (K1, K2) bounds.
-  # then populate with concrete values and rerun. workflow: empty -> grid build -> inspect bounds -> populate -> rerun.
-  k1_values: [0.9, 2.7, 8.1, 24.3]   # geometric schedule (ratio 3); 0.3 dropped because logspace-alpha grid is too coarse near zero to snap there
-  k2_values: [0.6]                   # singleton; large enough to escape near-zero KL2 saturation, small enough to be reachable at all four K1 alphas
+  k1_values: [4, 12, 36]             # geometric schedule (ratio 3) on the smooth KL1(alpha) ramp; lands on grid points (realK1 ~4.05, 12.5, 36.9). KL1_max ~36.9.
+  beta_values: [0.5]                 # singleton mixture weight for pstar = (1-beta)*pi_O + beta*pi_E. fixed at 0.5: pstar is the equal mixture. K2 = KL(pstar||pi_E) is derived per k1 cell (~0.9, 5.1, 15.6), not prescribed.
   hard_corner_threshold: 1.0e+9  # float; sentinel; hard-corner branch unused since seeds_default == seeds_hard. note: yaml 1.1 requires the explicit `+` for scientific notation to parse as float, not str.
   seeds_default: 40        # int > 0; seeds per (k1_idx, k2_idx, seed) cell
   seeds_hard: 40           # int > 0; matched to seeds_default (no hard-cell distinction)

@@ -57,12 +57,12 @@ def load_summary_h5(path: str) -> tuple[np.ndarray, dict[str, dict[str, np.ndarr
     - /eldr_err_{method}: float32 [G_k1]
     - /eldr_err_se_{method}: float32 [G_k1]
     - /eldr_err_n_{method}: int32 [G_k1] (optional)
-    - Root attrs: k2_value (float), k2_count (int)
+    - Root attrs: beta_value (float), beta_count (int)
 
     Returns:
       - k1_values: [G_k1] float32 array
       - results: dict[method -> {mae_mean, mae_se, eldr_mean, eldr_se}]
-      - attrs: dict with 'k2_value', 'k2_count'
+      - attrs: dict with 'beta_value', 'beta_count'
 
     Raises:
       - FileNotFoundError: if path does not exist
@@ -83,8 +83,8 @@ def load_summary_h5(path: str) -> tuple[np.ndarray, dict[str, dict[str, np.ndarr
         # initialize results and attrs
         results = {}
         attrs = {
-            'k2_value': f.attrs.get('k2_value', np.nan),
-            'k2_count': f.attrs.get('k2_count', 1),
+            'beta_value': f.attrs.get('beta_value', np.nan),
+            'beta_count': f.attrs.get('beta_count', 1),
         }
 
         # scan all keys for pointwise_mae_* and eldr_err_* datasets
@@ -154,7 +154,7 @@ def load_summary_h5(path: str) -> tuple[np.ndarray, dict[str, dict[str, np.ndarr
 def plot_k1_vs_mae(
     k1_values: np.ndarray,
     results: dict[str, dict[str, np.ndarray]],
-    k2_value: float,
+    beta_value: float,
     out_dir: str
 ) -> None:
     """
@@ -166,7 +166,7 @@ def plot_k1_vs_mae(
       - x-axis: k1_values, log scale
       - y-axis: pointwise_mae, log scale; floor at 1e-4
       - one line per method; translucent ±SE band (alpha=0.2)
-      - title: f"Pointwise LDR MAE (K2 = {k2_value})"
+      - title: f"Pointwise LDR MAE (beta = {beta_value})"
       - legend: method names (sorted), positioned 'best'
       - grid: alpha=0.3
       - dpi: 300
@@ -207,7 +207,7 @@ def plot_k1_vs_mae(
     ax.set_yscale('log')
     ax.set_xlabel('K1', fontsize=12)
     ax.set_ylabel('Pointwise MAE', fontsize=12)
-    ax.set_title(f'Pointwise LDR MAE (K2 = {k2_value})', fontsize=12)
+    ax.set_title(f'Pointwise LDR MAE (beta = {beta_value})', fontsize=12)
     ax.legend(loc='best', fontsize=12)
     ax.grid(True, alpha=0.3)
 
@@ -225,7 +225,7 @@ def plot_k1_vs_mae(
 
 def plot_eldr_err_bars(
     results: dict[str, dict[str, np.ndarray]],
-    k2_value: float,
+    beta_value: float,
     out_dir: str
 ) -> None:
     """
@@ -237,7 +237,7 @@ def plot_eldr_err_bars(
       - x-axis: method names (sorted, rotated 45°)
       - y-axis: ELDR error (mean of eldr_err_{method} across K1)
       - error bars: SE (mean of eldr_err_se_{method} across K1)
-      - title: f"Integrated ELDR Error by Method (K2 = {k2_value})"
+      - title: f"Integrated ELDR Error by Method (beta = {beta_value})"
       - colors: METHOD_COLORS palette
       - dpi: 300
       - figsize: (10, 6)
@@ -280,7 +280,7 @@ def plot_eldr_err_bars(
     ax.set_xticks(x_pos)
     ax.set_xticklabels(methods, rotation=45, ha='right', fontsize=11)
     ax.set_ylabel('ELDR Error', fontsize=12)
-    ax.set_title(f'Integrated ELDR Error by Method (K2 = {k2_value})', fontsize=12)
+    ax.set_title(f'Integrated ELDR Error by Method (beta = {beta_value})', fontsize=12)
     ax.grid(axis='y', alpha=0.3)
     fig.tight_layout()
 
@@ -306,7 +306,7 @@ def main() -> None:
       3. extract processed_results_dir and figures_dir
       4. ensure figures_dir exists
       5. load HDF5 summary
-      6. extract k2_value from attrs (warn if k2_count > 1)
+      6. extract beta_value from attrs (warn if beta_count > 1)
       7. emit both figures
       8. print summary
     """
@@ -326,16 +326,16 @@ def main() -> None:
     h5_path = os.path.join(processed_results_dir, 'mae_summary.h5')
     k1_values, results, attrs = load_summary_h5(h5_path)
 
-    # extract k2_value
-    k2_value = attrs.get('k2_value', 'unknown')
-    k2_count = attrs.get('k2_count', 1)
+    # extract beta_value
+    beta_value = attrs.get('beta_value', 'unknown')
+    beta_count = attrs.get('beta_count', 1)
 
-    if k2_count > 1:
+    if beta_count > 1:
         warnings.warn('future extension: multi-K2 not supported; using first K2')
 
     # emit figures
-    plot_k1_vs_mae(k1_values, results, k2_value, figures_dir)
-    plot_eldr_err_bars(results, k2_value, figures_dir)
+    plot_k1_vs_mae(k1_values, results, beta_value, figures_dir)
+    plot_eldr_err_bars(results, beta_value, figures_dir)
 
     print(f'Both figures saved to {figures_dir}')
 

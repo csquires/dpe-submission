@@ -63,19 +63,19 @@ def parse_args(args=None):
 
     returns: argparse.Namespace with fields:
         - k1_idx: int, index into config["kl_targets"]["k1_values"]
-        - k2_idx: int, index into config["kl_targets"]["k2_values"]
+        - beta_idx: int, index into config["kl_targets"]["beta_values"]
         - seed: int, random seed
         - methods: str or None, comma-separated method names (default: run all)
         - force: bool, overwrite existing results (default False)
 
-    required args: --k1-idx, --k2-idx, --seed (no shortcuts; explicit long form).
+    required args: --k1-idx, --beta-idx, --seed (no shortcuts; explicit long form).
     optional args: --methods (comma-separated string; default None means all), --force (flag).
     """
     parser = argparse.ArgumentParser(
         description="Fit density-ratio methods on step1 pendulum data."
     )
     parser.add_argument("--k1-idx", type=int, required=True, help="Index into k1_values")
-    parser.add_argument("--k2-idx", type=int, required=True, help="Index into k2_values")
+    parser.add_argument("--beta-idx", type=int, required=True, help="Index into beta_values")
     parser.add_argument("--seed", type=int, required=True, help="Random seed")
     parser.add_argument(
         "--methods",
@@ -364,21 +364,21 @@ def main():
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
 
-    if args.k1_idx is None or args.k2_idx is None or args.seed is None:
-        raise ValueError("--k1-idx, --k2-idx, --seed required")
+    if args.k1_idx is None or args.beta_idx is None or args.seed is None:
+        raise ValueError("--k1-idx, --beta-idx, --seed required")
 
-    k1_idx, k2_idx, seed = args.k1_idx, args.k2_idx, args.seed
+    k1_idx, beta_idx, seed = args.k1_idx, args.beta_idx, args.seed
 
     data_subdir = config["data_dir"]
     data_filename = os.path.join(
         data_subdir,
-        f"k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5"
+        f"k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
     )
 
     results_subdir = config["raw_results_dir"]
     results_filename = os.path.join(
         results_subdir,
-        f"k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5"
+        f"k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
     )
 
     if not os.path.exists(data_filename):

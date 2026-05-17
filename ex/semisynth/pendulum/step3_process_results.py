@@ -91,16 +91,16 @@ def compute_metrics_for_seed(data_path, results_path, method):
 
 def aggregate_cells(config):
     """
-    loop over all (k1_idx, k2_idx, seed) and collect metrics for each method.
+    loop over all (k1_idx, beta_idx, seed) and collect metrics for each method.
 
     logic:
-      1. extract from config: data_dir, raw_results_dir, k1_values, k2_values,
+      1. extract from config: data_dir, raw_results_dir, k1_values, beta_values,
          algorithms, seeds_default
-      2. initialize results[k1_idx][k2_idx] = {method: [list of (mae, eldr_err) tuples]}
-      3. nested loop: for k1_idx, k2_idx, seed:
+      2. initialize results[k1_idx][beta_idx] = {method: [list of (mae, eldr_err) tuples]}
+      3. nested loop: for k1_idx, beta_idx, seed:
          - construct paths
          - call compute_metrics_for_seed for each method
-         - if not None, append to results[k1_idx][k2_idx][method]
+         - if not None, append to results[k1_idx][beta_idx][method]
       4. return results (3-level nested dict)
     """
     data_dir = config['data_dir']
@@ -108,26 +108,26 @@ def aggregate_cells(config):
 
     kl_targets = config['kl_targets']
     k1_values = np.array(kl_targets['k1_values'], dtype=np.float32)
-    k2_values = np.array(kl_targets['k2_values'], dtype=np.float32)
+    beta_values = np.array(kl_targets['beta_values'], dtype=np.float32)
     seeds_default = kl_targets['seeds_default']
 
     algorithms = config['algorithms']
 
     G_k1 = len(k1_values)
-    G_k2 = len(k2_values)
+    G_beta = len(beta_values)
 
     # results[i][j] = {method: [list of (mae, eldr_err) tuples]}
-    results = [[{method: [] for method in algorithms} for _ in range(G_k2)] for _ in range(G_k1)]
+    results = [[{method: [] for method in algorithms} for _ in range(G_beta)] for _ in range(G_k1)]
 
     missing_data_files = set()
     missing_results_files = set()
     missing_method_keys = set()
 
     for k1_idx in range(G_k1):
-        for k2_idx in range(G_k2):
+        for beta_idx in range(G_beta):
             for seed in range(seeds_default):
-                data_path = f"{data_dir}/k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5"
-                results_path = f"{raw_results_dir}/k1_{k1_idx}_k2_{k2_idx}_seed_{seed}.h5"
+                data_path = f"{data_dir}/k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
+                results_path = f"{raw_results_dir}/k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
 
                 # check files exist
                 if not os.path.exists(data_path):
@@ -140,7 +140,7 @@ def aggregate_cells(config):
                 for method in algorithms:
                     metrics = compute_metrics_for_seed(data_path, results_path, method)
                     if metrics is not None:
-                        results[k1_idx][k2_idx][method].append(metrics)
+                        results[k1_idx][beta_idx][method].append(metrics)
                     else:
                         # track missing method keys
                         try:
@@ -160,7 +160,7 @@ def aggregate_cells(config):
     return results
 
 
-def write_summary_h5(out_path, k1_values, k2_value, k2_count, per_method):
+def write_summary_h5(out_path, k1_values, beta_value, beta_count, per_method):
     """
     write 1D HDF5 summary file.
 
@@ -171,7 +171,7 @@ def write_summary_h5(out_path, k1_values, k2_value, k2_count, per_method):
       1. create output directory if needed
       2. open h5 file for writing
       3. write dataset k1_values (float32)
-      4. set root attrs: k2_value (float), k2_count (int)
+      4. set root attrs: beta_value (float), beta_count (int)
       5. for each method in per_method:
          - write datasets: pointwise_mae_{method}, pointwise_mae_se_{method}, pointwise_mae_n_{method},
            eldr_err_{method}, eldr_err_se_{method}, eldr_err_n_{method}
@@ -183,8 +183,8 @@ def write_summary_h5(out_path, k1_values, k2_value, k2_count, per_method):
 
     with h5py.File(out_path, 'w') as f:
         f.create_dataset('k1_values', data=k1_values, dtype=np.float32)
-        f.attrs['k2_value'] = float(k2_value)
-        f.attrs['k2_count'] = int(k2_count)
+        f.attrs['beta_value'] = float(beta_value)
+        f.attrs['beta_count'] = int(beta_count)
 
         for method in per_method:
             method_data = per_method[method]
@@ -228,8 +228,8 @@ def main():
 
     kl_targets = config['kl_targets']
     k1_values = np.array(kl_targets['k1_values'], dtype=np.float32)
-    k2_values = np.array(kl_targets['k2_values'], dtype=np.float32)
-    k2_value = k2_values[0]
+    beta_values = np.array(kl_targets['beta_values'], dtype=np.float32)
+    beta_value = beta_values[0]
 
     G_k1 = len(k1_values)
 
@@ -248,7 +248,7 @@ def main():
     # aggregate per k1_idx
     for k1_idx in range(G_k1):
         for method in algorithms:
-            # k2_idx is always 0 (singleton k2)
+            # beta_idx is always 0 (singleton beta)
             vals_list = results[k1_idx][0][method]
 
             if len(vals_list) > 0:
@@ -282,7 +282,7 @@ def main():
     # write output
     os.makedirs(processed_results_dir, exist_ok=True)
     output_path = f'{processed_results_dir}/mae_summary.h5'
-    write_summary_h5(output_path, k1_values, k2_value, 1, per_method)
+    write_summary_h5(output_path, k1_values, beta_value, 1, per_method)
 
     # print summary
     print("\n" + "="*100)
@@ -290,7 +290,7 @@ def main():
     print("="*100)
     print(f"Processed results saved to: {output_path}")
     print(f"\nK1 values: {list(k1_values)}")
-    print(f"K2 value: {k2_value} (singleton)")
+    print(f"beta value: {beta_value} (singleton; K2 is derived per-k1)")
     print(f"Algorithms: {algorithms}")
     print(f"\nMetrics per K1:")
 
