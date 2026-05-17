@@ -43,6 +43,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         lr_hidden_dim_scale: bool = False,
         lr_base_dim: int = 16,
         batch_size: int | None = None,
+        weight_decay: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -68,6 +69,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         self.hidden_dim = hidden_dim
         self.head_dim = head_dim
         self.batch_size = batch_size
+        self.weight_decay = weight_decay
 
         # apply epoch scaling (match total optimization budget of separate classifiers)
         self.num_epochs = num_epochs * epoch_scale
@@ -161,7 +163,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         self.train()
 
         loss_fn = nn.BCEWithLogitsLoss()
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         num_heads = len(xs_per_head)
         n_per_head = [xs.shape[0] for xs in xs_per_head]
         max_n = max(n_per_head)
@@ -220,10 +222,10 @@ class MultiHeadBinaryClassifier(nn.Module):
             return self.forward(xs)
 
 
-def make_multi_head_binary_classifier(**kwargs) -> MultiHeadBinaryClassifier:
+def make_multi_head_binary_classifier(weight_decay: float = 0.0, **kwargs) -> MultiHeadBinaryClassifier:
     """Factory function for convenient instantiation.
 
     args: arbitrary keyword arguments passed to MultiHeadBinaryClassifier
     returns: MultiHeadBinaryClassifier instance
     """
-    return MultiHeadBinaryClassifier(**kwargs)
+    return MultiHeadBinaryClassifier(weight_decay=weight_decay, **kwargs)

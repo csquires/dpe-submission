@@ -7,6 +7,7 @@ from collections.abc import Callable
 import optuna
 
 from . import bdre
+from . import mh_tdre
 from . import mh_triangular_tdre
 from . import triangular_fmdre
 from . import tabular_plugin_dre
@@ -16,6 +17,7 @@ from . import vfmorthros
 
 SUGGEST_HP_REGISTRY: dict[str, tuple[Callable[[optuna.Trial], dict], dict]] = {
     "BDRE": (bdre.suggest_hp, bdre.METADATA),
+    "MultiHeadTDRE": (mh_tdre.suggest_hp, mh_tdre.METADATA),
     "MultiHeadTriangularTDRE": (mh_triangular_tdre.suggest_hp, mh_triangular_tdre.METADATA),
     "TriangularFMDRE": (triangular_fmdre.suggest_hp, triangular_fmdre.METADATA),
     "TabularPluginDRE": (tabular_plugin_dre.suggest_hp, tabular_plugin_dre.METADATA),

@@ -1,26 +1,26 @@
-"""suggest hyperparameters for MultiHeadTriangularTDRE via optuna.
+"""suggest hyperparameters for MultiHeadTDRE via optuna.
 
 maps base_search_space from method_specs.py to optuna trial calls.
-triangular methods require intermediate distribution p* from adapter.
+flat parameter space; behavioral inertness probe confirmed all parameters
+active in every training context, so no conditional branching.
 """
 
 from typing import Any
 import optuna
 
 
+METADATA = {
+    "cores_per_trial": 2,
+    "uses_pruning": True,
+    "requires_pstar": False,
+    "builder": "build_MHTDRE",
+}
+
 N_EPOCHS = 1000
 
 
-METADATA = {
-    "cores_per_trial": 4,
-    "uses_pruning": True,
-    "requires_pstar": True,
-    "builder": "build_MHTTDRE",
-}
-
-
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
-    """suggest hyperparameters for MultiHeadTriangularTDRE.
+    """suggest hyperparameters for MultiHeadTDRE.
 
     translate method_specs.py base_search_space to optuna calls:
     - learning_rate: log-uniform [1e-4, 1e-2]
@@ -28,16 +28,19 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     - head_dim: categorical [10, 20, 40]
     - num_shared_layers: categorical [1, 2, 3]
     - num_waypoints: categorical [5, 10, 15]
-    - vertex: uniform [0.2, 0.8]
     - batch_size: categorical [None, 128, 256, 512]
     - weight_decay: categorical [0.0, 1e-5, 1e-4, 1e-3]
-    - midpoint_oversample: categorical [0, 3, 5, 7]
-    - gamma_power: log-uniform [1.0, 5.0]
-    - num_epochs: constant N_EPOCHS
 
-    returns flat dict passed to builder; builder validates shape constraints.
+    num_epochs fixed at N_EPOCHS per shared HPO decision: uniform resource
+    axis for Hyperband. builder (build_MHTDRE) reads flat_hp["num_epochs"]
+    mandatorily.
+
+    returns flat dict passed to builder; no branching—all parameters active.
     """
     hp = {}
+
+    # fixed training budget (Hyperband resource axis)
+    hp["num_epochs"] = N_EPOCHS
 
     # log-uniform continuous
     hp["learning_rate"] = trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True)
@@ -49,15 +52,5 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["num_waypoints"] = trial.suggest_categorical("num_waypoints", [5, 10, 15])
     hp["batch_size"] = trial.suggest_categorical("batch_size", [None, 128, 256, 512])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3])
-    hp["midpoint_oversample"] = trial.suggest_categorical("midpoint_oversample", [0, 3, 5, 7])
-
-    # uniform continuous (position on interpolation path)
-    hp["vertex"] = trial.suggest_float("vertex", 0.2, 0.8)
-
-    # log-uniform continuous (preconditioning power)
-    hp["gamma_power"] = trial.suggest_float("gamma_power", 1.0, 5.0, log=True)
-
-    # constant (training iterations)
-    hp["num_epochs"] = N_EPOCHS
 
     return hp

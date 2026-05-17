@@ -1,3 +1,5 @@
+from typing import Callable
+
 import torch
 
 from ...common.base import DRE
@@ -35,23 +37,69 @@ class MultiHeadTDRE(DRE):
         self,
         samples_p0: torch.Tensor,  # [b0, dim]
         samples_p1: torch.Tensor,  # [b1, dim]
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
+        """
+        Fit multi-head classifier on waypoint pairs.
+
+        args:
+            samples_p0: samples from p0, shape [n0, dim]
+            samples_p1: samples from p1, shape [n1, dim]
+            step_cb: optional callback(step, score) invoked at intervals during training
+            eval_data: optional dict with keys "pstar" and "true_ldrs" for evaluation
+            step_cb_interval: number of steps between callback invocations (default: 50)
+        """
+        # build waypoints: [num_waypoints, batch_size, dim]
         waypoint_samples = self.waypoint_builder.build_waypoints(
             samples_p0, samples_p1, self.num_waypoints
         )  # [w, b, dim]
-        b = waypoint_samples.shape[1]
+        b = waypoint_samples.shape[1]  # batch size
 
+        # prepare training data for each head
         xs_per_head = []
         ys_per_head = []
         for i in range(self.num_waypoints - 1):
-            xs = torch.cat([waypoint_samples[i], waypoint_samples[i + 1]], dim=0)
-            p_num_labels = torch.ones((b, 1), dtype=torch.float, device=self.device)
-            p_den_labels = torch.zeros((b, 1), dtype=torch.float, device=self.device)
-            ys = torch.cat([p_num_labels, p_den_labels], dim=0)
+            xs_i = waypoint_samples[i]  # [b, dim]
+            xs_i1 = waypoint_samples[i + 1]  # [b, dim]
+
+            ones_labels = torch.ones(b, 1, device=self.device)
+            zeros_labels = torch.zeros(b, 1, device=self.device)
+
+            xs = torch.cat([xs_i, xs_i1], dim=0)  # [2*b, dim]
+            ys = torch.cat([ones_labels, zeros_labels], dim=0)  # [2*b, 1]
+
             xs_per_head.append(xs)
             ys_per_head.append(ys)
 
-        self.classifier.fit(xs_per_head, ys_per_head)
+        # build uniform predict_ldr MAE eval function if instrumentation is enabled.
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """compute MAE between predict_ldr(pstar_eval) and true_ldrs_eval.
+
+                this is the uniform eval signal: single forward pass on eval pstar,
+                sum logits across heads, measure error against reference LDRs. _model
+                argument is ignored; self.predict_ldr closure-captures self for access
+                to classifier logits.
+                """
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
+        # train multi-head classifier
+        self.classifier.fit(
+            xs_per_head,
+            ys_per_head,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
+        )
 
     def predict_ldr(
         self,
