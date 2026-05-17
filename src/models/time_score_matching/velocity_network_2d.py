@@ -74,17 +74,17 @@ class MLP2D(nn.Module):
         layers.append(nn.Linear(hidden_dim, output_dim))
         self.net = nn.Sequential(*layers)
 
-    def forward(self, t1: Tensor, t2: Tensor, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, t1: Tensor, t2: Tensor) -> Tensor:
         """
-        Compute output at (t_1, t_2, x).
+        Compute output at (x, t_1, t_2). space-first arg order.
 
         Args:
+            x: [B, D] spatial coordinates.
             t1: [B, 1] first time coordinate.
             t2: [B, 1] second time coordinate.
-            x: [B, D] spatial coordinates.
 
         Returns:
             [B, output_dim] vector field output.
         """
-        tx = torch.cat([t1, t2, x], dim=-1)  # [B, D+2]
+        tx = torch.cat([x, t1, t2], dim=-1)  # [B, D+2]
         return self.net(tx)  # [B, output_dim]

@@ -228,11 +228,11 @@ class _TriangularVFMBase(ELDR):
         if gamma_t.dim() > 0:
             gamma_t = gamma_t.squeeze()
 
-        b_pred = self.net_b(t_batch, x)
-        eta_pred = self.net_eta(t_batch, x)
+        b_pred = self.net_b(x, t_batch)
+        eta_pred = self.net_eta(x, t_batch)
 
         def b_single(x_single):
-            return self.net_b(t_scalar.view(1, 1), x_single.unsqueeze(0)).squeeze(0)
+            return self.net_b(x_single.unsqueeze(0), t_scalar.view(1, 1)).squeeze(0)
 
         div_b = self._div_fn(b_single, x)
         b_dot_eta = (b_pred * eta_pred).sum(dim=-1)

@@ -118,7 +118,7 @@ def make_sb_loss(*, path, reweight: bool = False) -> Callable:
             epsilon = torch.randn_like(x0)
             outer = resolve_outer_lambda(reweight, tau)
             x_t, target, lambda_t = ctsm_regression_target_1d(path, x0, x1, xstar, tau, epsilon)
-            pred = model(tau, x_t)
+            pred = model(x_t, tau)  # space-first: TimeScoreNetwork.forward(x, t)
             return (((target - lambda_t * pred) ** 2).squeeze(-1) * outer * iw.squeeze(-1)).mean()
         loss.required_keys = frozenset({"x0", "x1", "xstar"})
     elif isinstance(path, DirectPath1D):
@@ -127,7 +127,7 @@ def make_sb_loss(*, path, reweight: bool = False) -> Callable:
             epsilon = torch.randn_like(x0)
             outer = resolve_outer_lambda(reweight, tau)
             x_t, target, lambda_t = ctsm_regression_target_direct_1d(path, x0, x1, tau, epsilon)
-            pred = model(tau, x_t)
+            pred = model(x_t, tau)  # space-first: TimeScoreNetwork.forward(x, t)
             return (((target - lambda_t * pred) ** 2).squeeze(-1) * outer * iw.squeeze(-1)).mean()
         loss.required_keys = frozenset({"x0", "x1"})
     elif isinstance(path, TriangularPath2D):
@@ -167,8 +167,8 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 outer = resolve_outer_lambda(reweight, tau)
                 x_t_plus, v_plus = vfm_velocity_target_1d(path, x0, x1, xstar, tau, z)
                 x_t_minus, v_minus = vfm_velocity_target_1d(path, x0, x1, xstar, tau, -z)
-                b_plus = model(tau, x_t_plus)
-                b_minus = model(tau, x_t_minus)
+                b_plus = model(x_t_plus, tau)
+                b_minus = model(x_t_minus, tau)
                 lp = 0.5 * (b_plus ** 2).sum(-1) - (v_plus * b_plus).sum(-1)
                 lm = 0.5 * (b_minus ** 2).sum(-1) - (v_minus * b_minus).sum(-1)
                 return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
@@ -180,7 +180,7 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 z = torch.randn_like(x0)
                 outer = resolve_outer_lambda(reweight, tau)
                 x_t, v_star = vfm_velocity_target_1d(path, x0, x1, xstar, tau, z)
-                b = model(tau, x_t)
+                b = model(x_t, tau)
                 return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss.required_keys = frozenset({"x0", "x1", "xstar"})
@@ -193,8 +193,8 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 outer = resolve_outer_lambda(reweight, tau)
                 x_t_plus, v_plus = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
                 x_t_minus, v_minus = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
-                b_plus = model(tau, x_t_plus)
-                b_minus = model(tau, x_t_minus)
+                b_plus = model(x_t_plus, tau)
+                b_minus = model(x_t_minus, tau)
                 lp = 0.5 * (b_plus ** 2).sum(-1) - (v_plus * b_plus).sum(-1)
                 lm = 0.5 * (b_minus ** 2).sum(-1) - (v_minus * b_minus).sum(-1)
                 return (0.5 * (lp + lm) * outer * iw.squeeze(-1)).mean()
@@ -205,7 +205,7 @@ def make_velo_loss(*, path, antithetic: bool = False, reweight: bool = False) ->
                 z = torch.randn_like(x0)
                 outer = resolve_outer_lambda(reweight, tau)
                 x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                b = model(tau, x_t)
+                b = model(x_t, tau)
                 return ((0.5 * (b ** 2).sum(-1) - (v_star * b).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss.required_keys = frozenset({"x0", "x1"})
@@ -234,7 +234,7 @@ def make_denoiser_loss(*, path, reweight: bool = False) -> Callable:
             mu = w.alpha * x0 + w.beta * x1 + w.w_star * xstar
             gamma_t = path.gamma(tau)
             x_t = mu + gamma_t * z
-            eta = model(tau, x_t)
+            eta = model(x_t, tau)
             return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss.required_keys = frozenset({"x0", "x1", "xstar"})
@@ -248,7 +248,7 @@ def make_denoiser_loss(*, path, reweight: bool = False) -> Callable:
             mu = w.alpha * x0 + w.beta * x1
             gamma_t = path.gamma(tau)
             x_t = mu + gamma_t * z
-            eta = model(tau, x_t)
+            eta = model(x_t, tau)
             return ((0.5 * (eta ** 2).sum(-1) - (z * eta).sum(-1)) * outer * iw.squeeze(-1)).mean()
 
         loss.required_keys = frozenset({"x0", "x1"})
