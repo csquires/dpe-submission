@@ -10,15 +10,19 @@ class MultiHeadBinaryClassifier(nn.Module):
     """Multi-head binary classifier with shared backbone and parallel heads.
 
     Processes samples through a shared feature extraction backbone, then applies
-    independent 2-layer binary classification heads IN PARALLEL using batched
-    matrix operations. Each head discriminates between adjacent waypoint
-    distributions in density ratio estimation.
+    independent binary classification heads IN PARALLEL using batched matrix
+    operations. Each head discriminates between adjacent waypoint distributions
+    in density ratio estimation.
 
     architecture:
-    - backbone: shared feature extractor (configurable depth)
-    - heads: batched parameters for parallel computation
-      layer1: [num_heads, hidden_dim, head_dim] + bias [num_heads, head_dim]
-      layer2: [num_heads, head_dim, 1] + bias [num_heads, 1]
+    - backbone: num_shared_layers hidden layers (input->hidden, then hidden->hidden,
+      ReLU after each).
+    - heads: variable-depth batched parameters for parallel computation.
+      total hidden layers per head pathway = n_hidden_layers; head-specific hidden
+      layers h = n_hidden_layers - num_shared_layers.
+      if h >= 1: head has h+1 layers (h hidden layers hidden_dim/head_dim, then
+        output head_dim->1).
+      if h == 0: head is a single output layer hidden_dim->1.
 
     forward(x) -> [batch, num_heads] logits (parallel head computation)
     fit(xs_per_head, ys_per_head) -> trains with batched backbone pass
@@ -37,6 +41,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         hidden_dim: int = 10,
         head_dim: int = 10,
         num_shared_layers: int = 2,
+        n_hidden_layers: int = 3,
         learning_rate: float = 0.005,
         num_epochs: int = 300,
         epoch_scale: int = 1,
@@ -47,6 +52,16 @@ class MultiHeadBinaryClassifier(nn.Module):
     ) -> None:
         super().__init__()
 
+        # validation (mirror OrthrosNet)
+        if n_hidden_layers < 1:
+            raise ValueError("n_hidden_layers must be >= 1")
+        if num_shared_layers < 1:
+            raise ValueError("num_shared_layers must be >= 1")
+        if num_shared_layers > n_hidden_layers:
+            raise ValueError("num_shared_layers must be <= n_hidden_layers")
+
+        h = n_hidden_layers - num_shared_layers  # head-specific hidden layers
+
         # build backbone
         backbone_layers = []
         backbone_layers.append(nn.Linear(input_dim, hidden_dim))
@@ -56,13 +71,24 @@ class MultiHeadBinaryClassifier(nn.Module):
             backbone_layers.append(nn.ReLU())
         self.backbone = nn.Sequential(*backbone_layers)
 
-        # batched head parameters for parallel computation
-        # layer 1: [num_heads, hidden_dim, head_dim]
-        self.heads_w1 = nn.Parameter(torch.empty(num_heads, hidden_dim, head_dim))
-        self.heads_b1 = nn.Parameter(torch.empty(num_heads, head_dim))
-        # layer 2: [num_heads, head_dim, 1]
-        self.heads_w2 = nn.Parameter(torch.empty(num_heads, head_dim, 1))
-        self.heads_b2 = nn.Parameter(torch.empty(num_heads, 1))
+        # build batched head parameters
+        # h >= 1: h+1 layers; h == 0: single output layer
+        head_weights = []
+        head_biases = []
+        if h >= 1:
+            head_weights.append(nn.Parameter(torch.empty(num_heads, hidden_dim, head_dim)))  # [n, h_in, h_dim]
+            head_biases.append(nn.Parameter(torch.empty(num_heads, head_dim)))               # [n, h_dim]
+            for _ in range(h - 1):
+                head_weights.append(nn.Parameter(torch.empty(num_heads, head_dim, head_dim)))  # [n, h_dim, h_dim]
+                head_biases.append(nn.Parameter(torch.empty(num_heads, head_dim)))             # [n, h_dim]
+            head_weights.append(nn.Parameter(torch.empty(num_heads, head_dim, 1)))  # [n, h_dim, 1]
+            head_biases.append(nn.Parameter(torch.empty(num_heads, 1)))             # [n, 1]
+        else:
+            head_weights.append(nn.Parameter(torch.empty(num_heads, hidden_dim, 1)))  # [n, h_in, 1]
+            head_biases.append(nn.Parameter(torch.empty(num_heads, 1)))               # [n, 1]
+
+        self.head_weights = nn.ParameterList(head_weights)
+        self.head_biases = nn.ParameterList(head_biases)
 
         # store config
         self.num_heads = num_heads
@@ -70,12 +96,12 @@ class MultiHeadBinaryClassifier(nn.Module):
         self.head_dim = head_dim
         self.batch_size = batch_size
         self.weight_decay = weight_decay
+        self._h = h  # head-specific hidden layers
 
-        # apply epoch scaling (match total optimization budget of separate classifiers)
+        # apply epoch scaling
         self.num_epochs = num_epochs * epoch_scale
 
         # apply learning rate scaling for larger models
-        # scale UP for larger hidden_dim to compensate for multi-task gradient averaging
         if lr_hidden_dim_scale:
             import math
             scale_factor = math.sqrt(hidden_dim / lr_base_dim)
@@ -93,33 +119,31 @@ class MultiHeadBinaryClassifier(nn.Module):
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
 
-        # init heads: xavier-like scaling
-        nn.init.xavier_uniform_(self.heads_w1.view(self.num_heads, -1))
-        nn.init.zeros_(self.heads_b1)
-        nn.init.xavier_uniform_(self.heads_w2.view(self.num_heads, -1))
-        nn.init.zeros_(self.heads_b2)
+        # xavier per head weight, zeros per head bias
+        for W in self.head_weights:
+            nn.init.xavier_uniform_(W.view(self.num_heads, -1))
+        for b in self.head_biases:
+            nn.init.zeros_(b)
 
     def _apply_heads_parallel(self, features: torch.Tensor) -> torch.Tensor:
-        """Apply all heads in parallel using batched matmul.
+        """Apply all heads in parallel using batched einsum.
+
+        features [batch, hidden_dim] -> layer0 (first einsum uses 'bh,nho->bno')
+        -> relu -> layer1..h-1 ('bnh,nho->bno') -> relu -> output layer -> squeeze.
+        relu applied between layers, not after the final output layer.
 
         features: [batch, hidden_dim]
         returns: [batch, num_heads]
         """
-        # layer 1: features @ w1 + b1
-        # features: [batch, hidden_dim] -> [batch, 1, hidden_dim]
-        # w1: [num_heads, hidden_dim, head_dim]
-        # result: [batch, num_heads, head_dim]
-        h = torch.einsum('bh,nhd->bnd', features, self.heads_w1) + self.heads_b1
+        # first layer: features [batch, hidden_dim] x W[0] [num_heads, hidden_dim, out]
+        x = torch.einsum('bh,nho->bno', features, self.head_weights[0]) + self.head_biases[0]  # [batch, num_heads, out0]
 
-        # relu
-        h = F.relu(h)
+        num_layers = len(self.head_weights)
+        for k in range(1, num_layers):
+            x = F.relu(x)
+            x = torch.einsum('bnh,nho->bno', x, self.head_weights[k]) + self.head_biases[k]  # [batch, num_heads, outk]
 
-        # layer 2: h @ w2 + b2
-        # h: [batch, num_heads, head_dim]
-        # w2: [num_heads, head_dim, 1]
-        # result: [batch, num_heads, 1] -> squeeze -> [batch, num_heads]
-        logits = torch.einsum('bnd,ndo->bno', h, self.heads_w2) + self.heads_b2
-        return logits.squeeze(-1)
+        return x.squeeze(-1)  # [batch, num_heads]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute logits for all heads in parallel.
@@ -179,9 +203,13 @@ class MultiHeadBinaryClassifier(nn.Module):
             features_split = torch.split(features_cat, sizes, dim=0)
             total_loss = 0.0
             for i, (feat_i, ys_i) in enumerate(zip(features_split, ys_list)):
-                h = feat_i @ self.heads_w1[i] + self.heads_b1[i]
-                h = F.relu(h)
-                logits_i = (h @ self.heads_w2[i] + self.heads_b2[i]).squeeze(-1)
+                # first head layer: feat_i [n_i, hidden_dim]
+                x = feat_i @ self.head_weights[0][i] + self.head_biases[0][i]  # [n_i, out0]
+                num_layers = len(self.head_weights)
+                for k in range(1, num_layers):
+                    x = F.relu(x)
+                    x = x @ self.head_weights[k][i] + self.head_biases[k][i]  # [n_i, outk]
+                logits_i = x.squeeze(-1)
                 total_loss = total_loss + loss_fn(logits_i, ys_i.squeeze(-1))
             total_loss.backward()
             optimizer.step()
