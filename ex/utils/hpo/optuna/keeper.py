@@ -25,6 +25,7 @@ import time
 
 from optuna.trial import TrialState
 
+from ex.utils.hpo.optuna.lanes import get_lane, LaneProfile
 from ex.utils.hpo.optuna.study_config import load_config
 from ex.utils.hpo.optuna.storage import create_or_load
 
@@ -59,7 +60,8 @@ def job_name(experiment: str, method: str) -> str:
 
 
 def dispatch(config_module: str, combo_index: int, experiment: str,
-             method: str, args: argparse.Namespace) -> str:
+             method: str, lane: LaneProfile, workdir: str, log_dir: str,
+             dry_run: bool) -> str:
     """sbatch one preempt-partition optuna worker; return its jobid.
 
     the worker is the ordinary `ex.utils.hpo.optuna.submit` entrypoint pinned
@@ -68,24 +70,25 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
     """
     name = job_name(experiment, method)
     wrap = (
-        f"source ~/.bashrc && conda activate fac && cd {args.workdir} && "
+        f"source ~/.bashrc && conda activate fac && cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
-        f"--config {config_module} --combo-index {combo_index}"
+        f"--config {config_module} --lane preempt --combo-index {combo_index}"
     )
     cmd = [
         "sbatch", "--parsable",
         "--job-name", name,
-        "--partition", args.preempt_partition,
-        "--qos", args.preempt_qos,
-        "--time", args.worker_walltime,
-        "--cpus-per-task", str(args.cpus),
-        "--mem", args.mem,
-        "--gpus", str(args.gpus),
+        "--partition", lane.partition,
+        "--time", lane.worker_walltime,
+        "--cpus-per-task", str(lane.cpus_per_task),
+        "--mem", lane.mem,
+        "--gpus", str(lane.gpus),
         "--requeue",
-        "--output", os.path.join(args.log_dir, f"{name}_%j.out"),
+        "--output", os.path.join(log_dir, f"{name}_%j.out"),
         "--wrap", wrap,
     ]
-    if args.dry_run:
+    if lane.qos:
+        cmd += ["--qos", lane.qos]
+    if dry_run:
         logger.info("DRY-RUN dispatch %s: %s", name, " ".join(cmd))
         return "dry-run"
     jid = subprocess.run(
@@ -113,13 +116,6 @@ def _parse_args() -> argparse.Namespace:
                    help="stop after N cycles (0 = run until all studies reach "
                         "target); use --max-cycles 1 with --dry-run for a "
                         "one-shot check")
-    p.add_argument("--worker-walltime", default="3:00:00",
-                   help="--time for each dispatched preempt worker")
-    p.add_argument("--preempt-partition", default="preempt")
-    p.add_argument("--preempt-qos", default="preempt_qos")
-    p.add_argument("--cpus", type=int, default=4)
-    p.add_argument("--mem", default="32G")
-    p.add_argument("--gpus", type=int, default=1)
     p.add_argument("--workdir", default=os.getcwd())
     p.add_argument("--log-dir", default="logs")
     p.add_argument("--dry-run", action="store_true",
@@ -153,6 +149,7 @@ def main() -> int:
     os.makedirs(args.log_dir, exist_ok=True)
 
     config = load_config(args.config)
+    lane = get_lane("preempt")
     user = os.environ.get("USER")
     logger.info(
         "keeper start: experiment=%s methods=%s target_trials=%d "
@@ -188,8 +185,8 @@ def main() -> int:
 
         # 2. preempt queue headroom under the caps.
         try:
-            my_pending = squeue_count(args.preempt_partition, user=user)
-            total_pending = squeue_count(args.preempt_partition)
+            my_pending = squeue_count(lane.partition, user=user)
+            total_pending = squeue_count(lane.partition)
         except Exception as e:
             logger.warning("cycle %d: squeue failed: %s; sleeping", cycle, e)
             time.sleep(args.poll_interval)
@@ -215,7 +212,7 @@ def main() -> int:
                 break
             try:
                 running = squeue_count(
-                    args.preempt_partition, user=user,
+                    lane.partition, user=user,
                     name=job_name(config.experiment, method),
                 )
             except Exception as e:
@@ -225,7 +222,8 @@ def main() -> int:
             for _ in range(deficit):
                 if dispatched >= headroom:
                     break
-                dispatch(args.config, i, config.experiment, method, args)
+                dispatch(args.config, i, config.experiment, method, lane,
+                         args.workdir, args.log_dir, args.dry_run)
                 dispatched += 1
         logger.info("cycle %d: dispatched %d preempt worker(s) "
                     "(%d done this run)", cycle, dispatched, dispatched)

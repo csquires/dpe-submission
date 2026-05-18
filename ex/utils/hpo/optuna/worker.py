@@ -49,7 +49,7 @@ def run_worker(
       9. log completion
 
     thread config must precede torch import (env vars only take effect on first load).
-    sampler seed = (study_seed * 1000 + worker_id) & 0xFFFFFFFF.
+    sampler seed = hash((study_seed, slurm_job_id, slurm_array_task_id, worker_id)) & 0xFFFFFFFF.
     pruner determined by method.uses_pruning from suggest_hp.get_metadata(method).
 
     args:
@@ -97,9 +97,11 @@ def run_worker(
 
     # bootstrap 4: load or create study
     try:
-        seed_for_worker = (study_seed * 1000 + worker_id) & 0xFFFFFFFF
+        slurm_job_id = int(os.environ.get("SLURM_JOB_ID", 0))
+        slurm_array_task_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
+        seed_for_worker = hash((study_seed, slurm_job_id, slurm_array_task_id, worker_id)) & 0xFFFFFFFF
         sampler = optuna.samplers.TPESampler(
-            n_startup_trials=10, multivariate=True, group=True, seed=seed_for_worker
+            n_startup_trials=10, multivariate=True, group=True, constant_liar=True, seed=seed_for_worker
         )
 
         metadata = get_metadata(method)

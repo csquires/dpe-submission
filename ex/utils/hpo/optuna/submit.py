@@ -13,11 +13,10 @@ from pathlib import Path
 
 import joblib
 
-from ex.utils.hpo.optuna.study_config import load_config
+from ex.utils.hpo.optuna.study_config import load_config, resolve_combo
 from ex.utils.hpo.optuna.cores_registry import get_cores_for_method
 from ex.utils.hpo.optuna.storage import (
     create_or_load,
-    cleanup_zombies,
     study_path,
 )
 from ex.utils.hpo.optuna import worker
@@ -40,6 +39,30 @@ def _sigterm_handler(signum, frame):
     """
     logger.warning("SIGTERM received, shutting down workers...")
     raise _SigtermReceived()
+
+
+def _walltime_seconds(walltime_str: str) -> float:
+    """parse HH:MM:SS string to seconds.
+
+    args:
+        walltime_str: time string, e.g. "00:30:00"
+
+    returns: total seconds as float
+
+    raises: ValueError if format invalid
+    """
+    parts = walltime_str.split(':')
+    if len(parts) != 3:
+        raise ValueError(
+            f"walltime must be HH:MM:SS, got '{walltime_str}'"
+        )
+    try:
+        hours, minutes, seconds = map(int, parts)
+        return hours * 3600 + minutes * 60 + seconds
+    except ValueError as e:
+        raise ValueError(
+            f"invalid walltime format '{walltime_str}': {e}"
+        )
 
 
 def _run_parallel(
@@ -65,11 +88,8 @@ def _run_parallel(
     returns: 0 on success or SIGTERM, 1 on error
     """
     try:
-        # load study; cleanup zombies idempotently
-        study = create_or_load(experiment, method)
-        count = cleanup_zombies(study)
-        logger.info(f"cleaned up {count} zombie trials")
-
+        # stale-trial reaping is done once in main() before dispatch; the
+        # loky workers each create_or_load the study themselves.
         # compute timeout from budget minus margin
         timeout_seconds = (walltime_minutes - walltime_margin_minutes) * 60
         study_url = str(study_path(experiment, method))
@@ -159,6 +179,11 @@ def main() -> int:
         default=None,
         help="index into combo list (default: SLURM_ARRAY_TASK_ID)",
     )
+    parser.add_argument(
+        "--lane",
+        required=True,
+        help="lane profile name (e.g., 'gpu', 'cpu', 'short')",
+    )
     args = parser.parse_args()
 
     # validate environment
@@ -192,20 +217,31 @@ def main() -> int:
         logger.error(f"failed to load config {args.config}: {e}")
         return 1
 
-    # resolve combo
-    combos = [(config.experiment, method) for method in config.methods]
-    if not combos:
-        logger.error("no methods in config")
+    # resolve (experiment, method) from config and combo_index
+    try:
+        experiment, method = resolve_combo(config, combo_index)
+        logger.info(f"resolved combo {combo_index}: ({experiment}, {method})")
+    except (ValueError, IndexError) as e:
+        logger.error(f"failed to resolve combo {combo_index}: {e}")
         return 1
 
-    combo_idx = combo_index % len(combos)
-    experiment, method = combos[combo_idx]
-    logger.info(f"resolved combo {combo_idx}: ({experiment}, {method})")
+    # get lane profile
+    try:
+        from ex.utils.hpo.optuna.lanes import get_lane
+        lane = get_lane(args.lane)
+        logger.info(
+            f"loaded lane '{args.lane}': "
+            f"partition={lane.partition}, cpus_per_task={lane.cpus_per_task}, "
+            f"batch_size={lane.batch_size}, worker_walltime={lane.worker_walltime}"
+        )
+    except (KeyError, Exception) as e:
+        logger.error(f"failed to load lane '{args.lane}': {e}")
+        return 1
 
-    # compute parallelism
+    # compute cores per trial
     try:
         cores_per_trial = get_cores_for_method(
-            method, config.cores_per_trial_overrides
+            method, config.cores_per_trial
         )
     except KeyError as e:
         logger.error(f"failed to get cores for method {method}: {e}")
@@ -214,30 +250,82 @@ def main() -> int:
     cores_available = len(os.sched_getaffinity(0))
     logger.info(f"cores available: {cores_available}, cores_per_trial: {cores_per_trial}")
 
-    if config.n_jobs_per_task is not None:
-        n_workers = config.n_jobs_per_task
+    # compute batch size from lane
+    if lane.batch_size is not None:
+        B = lane.batch_size
+        logger.info(f"batch_size from lane: {B}")
     else:
-        n_workers = cores_available // cores_per_trial
-
-    if n_workers < 1:
-        logger.error(
-            f"computed n_workers={n_workers} < 1 "
-            f"(cores_available={cores_available}, cores_per_trial={cores_per_trial})"
+        B = max(1, cores_available // cores_per_trial)
+        logger.info(
+            f"batch_size computed from cores: "
+            f"max(1, {cores_available} // {cores_per_trial}) = {B}"
         )
+
+    if B < 1:
+        logger.error(f"computed batch_size={B} < 1")
         return 1
 
-    logger.info(f"computed n_workers={n_workers}")
+    # parse walltime from lane and call reaper at startup
+    try:
+        walltime_seconds = _walltime_seconds(lane.worker_walltime)
+    except ValueError as e:
+        logger.error(f"invalid lane walltime '{lane.worker_walltime}': {e}")
+        return 1
 
-    # spawn workers
-    return _run_parallel(
-        experiment=experiment,
-        method=method,
-        study_seed=config.study_seed,
-        n_workers=n_workers,
-        cores_per_trial=cores_per_trial,
-        walltime_minutes=config.walltime_minutes,
-        walltime_margin_minutes=config.walltime_margin_minutes,
-    )
+    # create study and reap stale trials
+    try:
+        study = create_or_load(experiment, method)
+        margin_seconds = 600  # 10-minute buffer
+        max_age = walltime_seconds + margin_seconds
+        from ex.utils.hpo.optuna.storage import reap_stale_trials
+        count = reap_stale_trials(study, max_age_seconds=max_age)
+        logger.info(
+            f"reaped {count} stale trials (max_age={max_age}s = {walltime_seconds}s + {margin_seconds}s margin)"
+        )
+    except Exception as e:
+        logger.error(f"failed to reap stale trials: {e}")
+        return 1
+
+    # dispatch: B=1 -> direct in-process call; B>1 -> loky fanout
+    if B == 1:
+        # direct call in-process (no loky, CUDA-clean)
+        logger.info(f"B=1: calling run_worker directly (in-process)")
+        try:
+            # optimize() soft timeout from StudyConfig -- intentionally separate
+            # from lane.worker_walltime (the slurm hard --time / reaper basis).
+            # both the B==1 and B>1 paths use config.walltime_minutes here.
+            timeout_seconds = (
+                config.walltime_minutes - config.walltime_margin_minutes
+            ) * 60
+            worker.run_worker(
+                experiment=experiment,
+                method=method,
+                study_seed=config.study_seed,
+                timeout_seconds=timeout_seconds,
+                worker_id=0,
+                cores_per_trial=cores_per_trial,
+            )
+            logger.info("worker completed normally")
+            return 0
+        except SystemExit as e:
+            # worker calls sys.exit() on failure
+            logger.info(f"worker exited with code {e.code}")
+            return e.code if e.code is not None else 1
+        except Exception as e:
+            logger.error(f"worker execution failed: {e}")
+            return 1
+    else:
+        # loky fanout via joblib.Parallel (B > 1)
+        logger.info(f"B={B}: spawning loky workers via Parallel")
+        return _run_parallel(
+            experiment=experiment,
+            method=method,
+            study_seed=config.study_seed,
+            n_workers=B,
+            cores_per_trial=cores_per_trial,
+            walltime_minutes=config.walltime_minutes,
+            walltime_margin_minutes=config.walltime_margin_minutes,
+        )
 
 
 if __name__ == "__main__":

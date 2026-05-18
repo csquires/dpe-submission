@@ -11,6 +11,7 @@ from optuna.samplers import TPESampler
 from optuna.pruners import HyperbandPruner
 from optuna.trial import TrialState
 import optuna
+import datetime
 
 
 def study_path(experiment: str, method: str) -> Path:
@@ -115,21 +116,29 @@ def create_or_load(
     return study
 
 
-def cleanup_zombies(study: optuna.Study) -> int:
-    """flip all trials in RUNNING state to FAIL.
+def reap_stale_trials(study: optuna.Study, max_age_seconds: float) -> int:
+    """fail trials in RUNNING state older than max_age_seconds.
 
-    idempotent; safe to call repeatedly or during optimization.
+    a RUNNING trial older than (worker walltime + margin) cannot be alive —
+    its slurm job was killed at walltime — so this is safe for any worker to
+    call concurrently; it never touches a genuinely-live trial. the journal
+    storage automatically re-reads the latest state, and skip_if_finished=True
+    ensures concurrent reapers idempotently skip already-finished trials.
 
     args:
         study: optuna Study instance.
+        max_age_seconds: age threshold (seconds). trials with
+            state == RUNNING and age > max_age_seconds are marked FAIL.
 
     returns:
-        int: count of trials flipped from RUNNING to FAIL.
+        int: count of trials marked FAIL.
     """
     count = 0
+    now = datetime.datetime.now()
     for trial in study.trials:
-        if trial.state == TrialState.RUNNING:
-            # study.trials returns FrozenTrial; study.tell accepts a trial number
-            study.tell(trial.number, state=TrialState.FAIL)
-            count += 1
+        if trial.state == TrialState.RUNNING and trial.datetime_start is not None:
+            age = (now - trial.datetime_start).total_seconds()
+            if age > max_age_seconds:
+                study.tell(trial.number, state=TrialState.FAIL, skip_if_finished=True)
+                count += 1
     return count

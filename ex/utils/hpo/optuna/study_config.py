@@ -35,9 +35,6 @@ class StudyConfig:
             string.
         cores_per_trial: per-method core count; if set, method names must be
             in registry. If None, uses cores_registry defaults.
-        n_jobs_per_task: parallel trials per slurm task; default computed at
-            runtime from (cores_per_node //
-            max(cores_per_trial[m] for m in methods)).
         resume_existing: load existing study journal if present, else start
             fresh.
         include_tabular: if True, methods may include tabular; warn if True
@@ -60,7 +57,6 @@ class StudyConfig:
     walltime_margin_minutes: int = 10
     nfs_base: Optional[str] = None
     cores_per_trial: Optional[Dict[str, int]] = None
-    n_jobs_per_task: Optional[int] = None
 
     resume_existing: bool = True
     include_tabular: bool = False
@@ -115,12 +111,6 @@ class StudyConfig:
         if self.target_trials <= 0:
             raise ValueError(f"target_trials must > 0, got {self.target_trials}")
 
-        # validate n_jobs_per_task if set
-        if self.n_jobs_per_task is not None and self.n_jobs_per_task <= 0:
-            raise ValueError(
-                f"n_jobs_per_task must > 0 if set, got {self.n_jobs_per_task}"
-            )
-
         # validate cores_per_trial if provided
         if self.cores_per_trial is not None:
             for method, cores in self.cores_per_trial.items():
@@ -169,3 +159,29 @@ def load_config(module_path: str) -> StudyConfig:
         )
 
     return config
+
+
+def resolve_combo(config: StudyConfig, combo_index: int) -> tuple[str, str]:
+    """Resolve (experiment, method) pair from config and combo index.
+
+    Builds cartesian product of (experiment, method) where method is from
+    config.methods. Returns the pair at combo_index with wraparound via modulo.
+
+    Single shared resolver used by submit.py and keeper.py to avoid duplicating
+    logic for experiment-method pair construction.
+
+    Args:
+        config: StudyConfig instance with experiment and methods fields.
+        combo_index: index into (experiment, method) product; wraparound via %.
+
+    Returns:
+        tuple of (experiment_name, method_name).
+
+    Raises:
+        ValueError: if config.methods is empty.
+    """
+    if not config.methods:
+        raise ValueError("config.methods must not be empty")
+
+    combos = [(config.experiment, m) for m in config.methods]
+    return combos[combo_index % len(combos)]
