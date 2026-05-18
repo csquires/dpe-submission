@@ -6,7 +6,7 @@ provides canonical journal paths, idempotent study creation, and zombie trial cl
 from pathlib import Path
 from os import environ
 from optuna.storages import JournalStorage
-from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
+from optuna.storages.journal import JournalFileBackend, JournalFileSymlinkLock
 from optuna.samplers import TPESampler
 from optuna.pruners import HyperbandPruner
 from optuna.trial import TrialState
@@ -45,9 +45,14 @@ def _get_storage(path: Path) -> JournalStorage:
 
     returns:
         JournalStorage: configured with JournalFileBackend and 30s lock grace period.
+
+    note:
+        uses JournalFileSymlinkLock (atomic symlink(2) on NFSv2+), not
+        JournalFileOpenLock -- the latter relies on open(O_EXCL), which is
+        unreliable across nodes on NFS and caused torn-write journal corruption.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock = JournalFileOpenLock(str(path) + ".lock", grace_period=30)
+    lock = JournalFileSymlinkLock(str(path) + ".lock", grace_period=30)
     backend = JournalFileBackend(str(path), lock_obj=lock)
     return JournalStorage(backend)
 
@@ -63,7 +68,7 @@ def create_or_load(
 ) -> optuna.Study:
     """create study if not exists; load if exists (idempotent).
 
-    concurrent access from multiple workers is serialized via JournalFileOpenLock
+    concurrent access from multiple workers is serialized via JournalFileSymlinkLock
     (grace_period=30s). reuses on-disk config on existing studies; passed sampler/
     pruner args are ignored if study already exists.
 
