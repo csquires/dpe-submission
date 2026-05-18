@@ -2,7 +2,7 @@
 
 Defines compute profiles (LaneProfile) for distinct execution contexts:
 - array:   cpu, many small slurm elements; <=96 (array_qos MaxJobsPU=100).
-- cpu:     cpu qos, fat loky-fanout elements; <=8 (cpu_qos MaxJobsPU=10).
+- cpu:     cpu qos, fat loky-fanout elements; <=7 (cpu_qos MaxJobsPU=10 minus 3 keeper slots).
 - general: gpu, non-preemptible single-process; <=6 (normal-qos MaxTRESPU gpu=8).
 - preempt: gpu, preemptible single-process; <=22 (preempt_qos MaxJobsPU=24).
 
@@ -67,11 +67,11 @@ LANES: dict[str, LaneProfile] = {
         partition="cpu",
         qos="cpu_qos",
         gpus=0,
-        cpus_per_task=16,
-        mem="64G",
+        cpus_per_task=64,
+        mem="32G",
         batch_size=None,
         worker_walltime="06:00:00",
-        max_concurrent=8,
+        max_concurrent=7,
     ),
     "general": LaneProfile(
         partition="general",
