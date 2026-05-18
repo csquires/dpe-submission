@@ -24,11 +24,13 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the VFMOrthros search space.
 
-    emits n_epochs as the fixed constant N_EPOCHS, plus 27 tuned params:
+    emits n_epochs as the fixed constant N_EPOCHS, plus 26 tuned params:
     5 switch (sched, inner_eps, div_method, precond, time_dist), 6 conditional
     (k, gamma_min, div_noise, n_hutch_samples, reweight, apply_iw -- each
-    suggested only when its switch condition holds), and 16 unconditional
-    (incl. the VFMOrthros-specific n_shared_layers). the test-path params
+    suggested only when its switch condition holds), and 15 unconditional
+    (incl. the VFMOrthros-specific n_shared_layers). the depth knob
+    n_hidden_layers is not searched: it is pinned per-experiment via
+    StudyConfig.fixed_hp. the test-path params
     (test_sched, test_sigma, test_inner_eps, test_gamma_min, test_k) are
     derived equal to their train counterparts; test_eps is the only
     independent test-path knob.
@@ -78,7 +80,6 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["sigma"] = trial.suggest_float("sigma", 0.3, 3.0, log=True)
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 1e-1, log=True)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
-    hp["n_hidden_layers"] = trial.suggest_categorical("n_hidden_layers", [2, 3, 4])
     hp["layernorm"] = trial.suggest_categorical("layernorm", ["off", "pre", "post"])
     hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3])
