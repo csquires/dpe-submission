@@ -38,10 +38,23 @@ logger = logging.getLogger(__name__)
 _TERMINAL = (TrialState.COMPLETE, TrialState.PRUNED)
 
 
-def count_terminal(experiment: str, method: str) -> int:
-    """count COMPLETE + PRUNED trials in a study's journal."""
-    study = create_or_load(experiment, method)
-    return sum(1 for t in study.trials if t.state in _TERMINAL)
+def count_terminal(experiment: str, method: str, attempts: int = 3) -> int:
+    """count COMPLETE + PRUNED trials in a study's journal.
+
+    the whole journal is replayed on each call; a concurrent worker append can
+    momentarily tear that read (decode/parse error). the tear is transient, so
+    retry a few times before giving up.
+    """
+    last_err: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            study = create_or_load(experiment, method)
+            return sum(1 for t in study.trials if t.state in _TERMINAL)
+        except Exception as e:  # torn read; retry
+            last_err = e
+            if attempt < attempts - 1:
+                time.sleep(2)
+    raise last_err
 
 
 def squeue_count(
@@ -263,21 +276,32 @@ def main() -> int:
 
         # (1) count terminal trials; collect studies still below target.
         pending: list[tuple[int, str, int]] = []  # (combo_index, method, n_terminal)
+        count_errors = 0
         for i, method in enumerate(config.methods):
             try:
                 n = count_terminal(config.experiment, method)
             except Exception as e:
                 logger.warning("cycle %d: count failed for %s: %s", cycle, method, e)
+                count_errors += 1
                 continue
             if n < config.target_trials:
                 pending.append((i, method, n))
 
-        if not pending:
+        # only conclude "done" when every count SUCCEEDED and all are at target.
+        # an empty `pending` caused by count failures is NOT done -- retry.
+        if not pending and count_errors == 0:
             logger.info(
                 "cycle %d: all %d studies reached target_trials=%d; done",
                 cycle, len(config.methods), config.target_trials,
             )
             break
+        if not pending and count_errors:
+            logger.warning(
+                "cycle %d: no studies pending but %d count(s) failed -- not "
+                "concluding done; retrying next cycle", cycle, count_errors,
+            )
+            time.sleep(args.poll_interval)
+            continue
 
         # (2) for each lane: split lane.max_concurrent (the per-lane total
         # running cap) evenly across the studies still under target.
