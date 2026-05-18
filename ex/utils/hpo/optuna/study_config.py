@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, List
 import importlib
 import logging
@@ -39,6 +39,8 @@ class StudyConfig:
             fresh.
         include_tabular: if True, methods may include tabular; warn if True
             but methods has no tabular.
+        lanes: lane names the multi-lane keeper drains for this study; each must be a
+            key in ex.utils.hpo.optuna.lanes.LANES. default ['preempt', 'array'].
         schema_version: config schema version; mismatch logs warning, does not
             error.
     """
@@ -60,6 +62,7 @@ class StudyConfig:
 
     resume_existing: bool = True
     include_tabular: bool = False
+    lanes: List[str] = field(default_factory=lambda: ["preempt", "array"])
     schema_version: str = "1.0"
 
     def __post_init__(self):
@@ -123,6 +126,15 @@ class StudyConfig:
                     raise ValueError(
                         f"cores_per_trial['{method}'] must > 0, got {cores}"
                     )
+
+        # validate lanes exist in LANES registry
+        from ex.utils.hpo.optuna.lanes import LANES
+        offending = [lane for lane in self.lanes if lane not in LANES]
+        if offending:
+            known = list(LANES.keys())
+            raise ValueError(
+                f"lanes {offending} not in LANES registry; known lanes: {known}"
+            )
 
 
 def load_config(module_path: str) -> StudyConfig:

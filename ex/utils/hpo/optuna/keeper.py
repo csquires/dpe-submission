@@ -1,17 +1,19 @@
-"""preempt-partition keeper for optuna hpo -- companion to the array baseline.
+"""multi-lane keeper for optuna hpo -- drains all configured lanes.
 
 a long-lived cpu-partition job. each cycle it counts terminal trials
 (COMPLETE + PRUNED) in every (experiment, method) study of a StudyConfig and,
-for any study still short of `target_trials`, tops its preempt-partition worker
-population up to `jobs_per_method`, subject to user/cluster queue caps. exits
-once every study has reached its target.
+for any study still short of `target_trials`, tops its worker population
+across all lanes in config.lanes, subject to per-lane caps and cluster safety
+limits. exits once every study has reached its target.
 
-idempotent under its own preemption: per-cycle state is recomputed from the
-journals and from `squeue`, so a slurm requeue of the keeper loses nothing --
-there is no local bookkeeping to corrupt. this is what lets the optuna stack
-do a double-ended (array + preempt) drain without the legacy per-trial
-`missing_array` machinery: every dispatched worker is fungible and cooperates
-through the shared journal.
+the array lane receives ONE slurm --array job per under-target study; the job
+handles self-throttling via %max_concurrent. preempt/cpu/general lanes dispatch
+individual per-worker sbatch jobs, each pinned to one combo.
+
+idempotent under preemption: per-cycle state is recomputed from journals and
+squeue, so a keeper requeue loses nothing -- no local bookkeeping. this enables
+fungible workers across lanes cooperating through the shared journal without
+legacy per-trial machinery.
 
 cli:
   python -m ex.utils.hpo.optuna.keeper --config <dotted.module> [flags]
@@ -54,25 +56,42 @@ def squeue_count(
     return sum(1 for line in out.splitlines() if line.strip())
 
 
-def job_name(experiment: str, method: str) -> str:
-    """slurm job-name for a keeper-dispatched preempt worker."""
-    return f"optk_{experiment}_{method}"
+def job_name(experiment: str, method: str, lane_name: str) -> str:
+    """slurm job-name for a keeper-dispatched worker, embedding the lane.
+
+    format: optk_{experiment}_{method}_{lane_name}. the lane is included so
+    per-lane squeue -n counts never collide across lanes.
+    """
+    return f"optk_{experiment}_{method}_{lane_name}"
 
 
 def dispatch(config_module: str, combo_index: int, experiment: str,
-             method: str, lane: LaneProfile, workdir: str, log_dir: str,
-             dry_run: bool) -> str:
-    """sbatch one preempt-partition optuna worker; return its jobid.
+             method: str, lane_name: str, lane: LaneProfile, workdir: str,
+             log_dir: str, dry_run: bool) -> str:
+    """sbatch one optuna worker on a non-array lane (preempt/cpu/general).
 
-    the worker is the ordinary `ex.utils.hpo.optuna.submit` entrypoint pinned
-    to one combo via --combo-index; it is preempt-safe on its own (journal +
-    cleanup_zombies + SIGTERM handler).
+    the worker is the ordinary ex.utils.hpo.optuna.submit entrypoint pinned
+    to one combo via --combo-index; it is preemption-safe on its own
+    (journal + cleanup_zombies + SIGTERM handler).
+
+    args:
+      config_module: dotted module path to StudyConfig.
+      combo_index: combo index (method ordinal) to pass to submit.
+      experiment: experiment name.
+      method: method name.
+      lane_name: logical lane name (e.g. "preempt", "cpu", "general").
+      lane: LaneProfile for this dispatch.
+      workdir: working directory for submit.
+      log_dir: directory for sbatch stdout/stderr.
+      dry_run: if True, log the sbatch command and return "dry-run".
+
+    returns: job ID (str) if submitted; "dry-run" if dry_run=True.
     """
-    name = job_name(experiment, method)
+    name = job_name(experiment, method, lane_name)
     wrap = (
         f"source ~/.bashrc && conda activate fac && cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
-        f"--config {config_module} --lane preempt --combo-index {combo_index}"
+        f"--config {config_module} --lane {lane_name} --combo-index {combo_index}"
     )
     cmd = [
         "sbatch", "--parsable",
@@ -81,33 +100,104 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
         "--time", lane.worker_walltime,
         "--cpus-per-task", str(lane.cpus_per_task),
         "--mem", lane.mem,
-        "--gpus", str(lane.gpus),
         "--requeue",
         "--output", os.path.join(log_dir, f"{name}_%j.out"),
         "--wrap", wrap,
     ]
+    # include --gpus only if lane requires gpus.
+    if lane.gpus > 0:
+        cmd += ["--gpus", str(lane.gpus)]
+    # include --qos only if lane specifies a qos.
     if lane.qos:
         cmd += ["--qos", lane.qos]
+
     if dry_run:
         logger.info("DRY-RUN dispatch %s: %s", name, " ".join(cmd))
         return "dry-run"
-    jid = subprocess.run(
-        cmd, capture_output=True, text=True, check=True
-    ).stdout.strip()
-    logger.info("dispatched %s -> jobid %s", name, jid)
-    return jid
+
+    try:
+        jid = subprocess.run(
+            cmd, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        logger.info("dispatched %s -> jobid %s", name, jid)
+        return jid
+    except subprocess.CalledProcessError as e:
+        logger.error("dispatch failed for %s: %s", name, e.stderr)
+        raise
+
+
+def dispatch_array(config_module: str, combo_index: int, experiment: str,
+                   method: str, lane: LaneProfile, workdir: str,
+                   log_dir: str, dry_run: bool) -> str:
+    """sbatch one array job per (experiment, method) study.
+
+    the array has size N = lane.max_concurrent (the number of concurrent workers
+    allowed on array partition) and throttle K = lane.max_concurrent (self-regulate
+    via %K). all array elements pin to the same combo and cooperate through the
+    journal, so they are fungible workers each running submit on the same study.
+
+    args:
+      config_module: dotted module path to StudyConfig.
+      combo_index: combo index (method ordinal) to pass to submit.
+      experiment: experiment name.
+      method: method name.
+      lane: LaneProfile for array lane (partition="array", qos="", gpus=0, max_concurrent=100).
+      workdir: working directory for submit.
+      log_dir: directory for sbatch stdout/stderr.
+      dry_run: if True, log the sbatch command and return "dry-run".
+
+    returns: job ID (str) if submitted; "dry-run" if dry_run=True.
+
+    note: the array lane ALWAYS has gpus=0 and qos=""; no --gpus or --qos flags.
+    """
+    name = job_name(experiment, method, "array")
+    N = lane.max_concurrent
+    K = lane.max_concurrent
+    array_spec = f"0-{N-1}%{K}"
+
+    wrap = (
+        f"source ~/.bashrc && conda activate fac && cd {workdir} && "
+        f"python -m ex.utils.hpo.optuna.submit "
+        f"--config {config_module} --lane array --combo-index {combo_index}"
+    )
+
+    cmd = [
+        "sbatch", "--parsable",
+        f"--array={array_spec}",
+        "--job-name", name,
+        "--partition", "array",
+        "--time", lane.worker_walltime,
+        "--cpus-per-task", str(lane.cpus_per_task),
+        "--mem", lane.mem,
+        "--requeue",
+        "--output", os.path.join(log_dir, f"{name}_%A_%a.out"),
+        "--wrap", wrap,
+    ]
+
+    if dry_run:
+        logger.info("DRY-RUN dispatch_array %s: %s", name, " ".join(cmd))
+        return "dry-run"
+
+    try:
+        jid = subprocess.run(
+            cmd, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        logger.info("dispatched array %s (size=%d, throttle=%d) -> jobid %s",
+                    name, N, K, jid)
+        return jid
+    except subprocess.CalledProcessError as e:
+        logger.error("dispatch_array failed for %s: %s", name, e.stderr)
+        raise
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="preempt keeper for optuna hpo")
+    p = argparse.ArgumentParser(description="multi-lane keeper for optuna hpo")
     p.add_argument("--config", required=True,
                    help="dotted StudyConfig module path")
-    p.add_argument("--jobs-per-method", type=int, default=4,
-                   help="target concurrent preempt workers per under-target study")
     p.add_argument("--my-cap", type=int, default=80,
-                   help="max own preempt jobs (headroom under MaxJobSubmitPU)")
+                   help="max own jobs across all lanes (headroom under MaxJobSubmitPU)")
     p.add_argument("--total-cap", type=int, default=200,
-                   help="max total preempt jobs (all users) before pausing")
+                   help="max total jobs (all users) across all lanes before pausing")
     p.add_argument("--poll-interval", type=int, default=60,
                    help="seconds between cycles")
     p.add_argument("--max-dispatch-per-cycle", type=int, default=10,
@@ -127,12 +217,11 @@ def main() -> int:
     """keeper main loop.
 
     per cycle: (1) count terminal trials per study; if all >= target_trials,
-    exit. (2) compute preempt queue headroom under the caps. (3) for each
-    under-target study, top up its named preempt jobs toward jobs_per_method,
-    bounded by headroom and max_dispatch_per_cycle.
+    exit. (2) for each lane in config.lanes, compute headroom and dispatch
+    workers to under-target studies. array lane uses --array jobs (one per
+    study); per-worker lanes use individual sbatch jobs. (3) sleep and repeat.
     """
-    # configure the keeper logger explicitly (single handler, no propagation)
-    # so import-time logging setup elsewhere cannot double or drop our lines.
+    # configure keeper logger.
     handler = logging.StreamHandler()
     handler.setFormatter(
         logging.Formatter("[%(asctime)s] [keeper] %(levelname)s: %(message)s")
@@ -143,90 +232,158 @@ def main() -> int:
 
     args = _parse_args()
 
+    # check env and prepare.
     if "DPE_DATA_ROOT" not in os.environ:
         logger.error("DPE_DATA_ROOT not set")
         return 1
     os.makedirs(args.log_dir, exist_ok=True)
 
     config = load_config(args.config)
-    lane = get_lane("preempt")
     user = os.environ.get("USER")
+
+    # warn if keeper was requeued/restarted.
+    restart_count = int(os.environ.get("SLURM_RESTART_COUNT", "0"))
+    if restart_count > 0:
+        logger.warning(
+            "keeper restarted (restart_count=%d); resuming drain idempotently",
+            restart_count,
+        )
+
     logger.info(
-        "keeper start: experiment=%s methods=%s target_trials=%d "
-        "jobs_per_method=%d",
-        config.experiment, config.methods, config.target_trials,
-        args.jobs_per_method,
+        "keeper start: experiment=%s methods=%s target_trials=%d lanes=%s",
+        config.experiment, config.methods, config.target_trials, config.lanes,
     )
 
     cycle = 0
     while True:
         cycle += 1
         if args.max_cycles and cycle > args.max_cycles:
-            logger.info("reached max_cycles=%d; exiting (studies may still be "
-                        "below target)", args.max_cycles)
+            logger.info(
+                "reached max_cycles=%d; exiting (studies may still be below target)",
+                args.max_cycles,
+            )
             break
 
-        # 1. count terminal trials; collect studies still below target.
-        pending: list[tuple[int, str, int]] = []
+        # (1) count terminal trials; collect studies still below target.
+        pending: list[tuple[int, str, int]] = []  # (combo_index, method, n_terminal)
         for i, method in enumerate(config.methods):
             try:
                 n = count_terminal(config.experiment, method)
             except Exception as e:
-                logger.warning("cycle %d: count failed for %s: %s",
-                                cycle, method, e)
+                logger.warning("cycle %d: count failed for %s: %s", cycle, method, e)
                 continue
             if n < config.target_trials:
                 pending.append((i, method, n))
+
         if not pending:
-            logger.info("cycle %d: all %d studies reached target_trials=%d; "
-                        "done", cycle, len(config.methods),
-                        config.target_trials)
+            logger.info(
+                "cycle %d: all %d studies reached target_trials=%d; done",
+                cycle, len(config.methods), config.target_trials,
+            )
             break
 
-        # 2. preempt queue headroom under the caps.
-        try:
-            my_pending = squeue_count(lane.partition, user=user)
-            total_pending = squeue_count(lane.partition)
-        except Exception as e:
-            logger.warning("cycle %d: squeue failed: %s; sleeping", cycle, e)
-            time.sleep(args.poll_interval)
-            continue
-        headroom = min(
-            args.my_cap - my_pending,
-            args.total_cap - total_pending,
-            args.max_dispatch_per_cycle,
-        )
-        logger.info(
-            "cycle %d: %d study(ies) below target; preempt my=%d total=%d "
-            "headroom=%d", cycle, len(pending), my_pending, total_pending,
-            headroom,
-        )
-        if headroom <= 0:
-            time.sleep(args.poll_interval)
-            continue
-
-        # 3. top each under-target study up toward jobs_per_method.
-        dispatched = 0
-        for (i, method, n) in pending:
-            if dispatched >= headroom:
-                break
+        # (2) for each lane, dispatch workers to under-target studies.
+        cycle_dispatched = 0
+        for lane_name in config.lanes:
             try:
-                running = squeue_count(
-                    lane.partition, user=user,
-                    name=job_name(config.experiment, method),
-                )
+                lane = get_lane(lane_name)
             except Exception as e:
-                logger.warning("squeue by name failed for %s: %s", method, e)
+                logger.warning(
+                    "cycle %d: failed to get lane %s: %s; skipping",
+                    cycle, lane_name, e,
+                )
                 continue
-            deficit = args.jobs_per_method - running
-            for _ in range(deficit):
-                if dispatched >= headroom:
-                    break
-                dispatch(args.config, i, config.experiment, method, lane,
-                         args.workdir, args.log_dir, args.dry_run)
-                dispatched += 1
-        logger.info("cycle %d: dispatched %d preempt worker(s) "
-                    "(%d done this run)", cycle, dispatched, dispatched)
+
+            if lane_name == "array":
+                # array lane: one job per study.
+                for (combo_index, method, n) in pending:
+                    try:
+                        count = squeue_count(
+                            partition="array", user=user,
+                            name=job_name(config.experiment, method, "array"),
+                        )
+                    except Exception as e:
+                        logger.warning("squeue failed for array %s: %s", method, e)
+                        continue
+
+                    if count == 0:
+                        # no array job alive; submit one.
+                        try:
+                            dispatch_array(
+                                args.config, combo_index, config.experiment, method,
+                                lane, args.workdir, args.log_dir, args.dry_run,
+                            )
+                            cycle_dispatched += 1
+                        except Exception as e:
+                            logger.warning("dispatch_array failed for %s: %s", method, e)
+                    # else: array job already running; skip (self-throttles).
+
+            else:
+                # per-worker lanes (preempt, cpu, general).
+                try:
+                    my_pending = squeue_count(partition=lane.partition, user=user)
+                    total_pending = squeue_count(partition=lane.partition)
+                except Exception as e:
+                    logger.warning(
+                        "cycle %d: squeue failed for %s: %s; skipping lane",
+                        cycle, lane_name, e,
+                    )
+                    continue
+
+                headroom = min(
+                    args.my_cap - my_pending,
+                    args.total_cap - total_pending,
+                    args.max_dispatch_per_cycle,
+                )
+
+                if headroom <= 0:
+                    logger.info(
+                        "cycle %d: %s lane headroom=%d; skipping",
+                        cycle, lane_name, headroom,
+                    )
+                    continue
+
+                for (combo_index, method, n) in pending:
+                    if headroom <= 0:
+                        break
+
+                    try:
+                        running = squeue_count(
+                            partition=lane.partition, user=user,
+                            name=job_name(config.experiment, method, lane_name),
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "squeue by name failed for %s on %s: %s",
+                            method, lane_name, e,
+                        )
+                        continue
+
+                    deficit = lane.max_concurrent - running
+                    # clamp to trials remaining.
+                    deficit = min(deficit, config.target_trials - n)
+                    # clamp to headroom.
+                    deficit = min(deficit, headroom)
+
+                    for _ in range(deficit):
+                        try:
+                            dispatch(
+                                args.config, combo_index, config.experiment, method,
+                                lane_name, lane, args.workdir, args.log_dir, args.dry_run,
+                            )
+                            cycle_dispatched += 1
+                            headroom -= 1
+                        except Exception as e:
+                            logger.warning(
+                                "dispatch failed for %s on %s: %s",
+                                method, lane_name, e,
+                            )
+                            break
+
+        logger.info(
+            "cycle %d: %d study(ies) below target; dispatched %d worker(s)",
+            cycle, len(pending), cycle_dispatched,
+        )
         time.sleep(args.poll_interval)
 
     logger.info("keeper exiting normally after %d cycle(s)", cycle)

@@ -41,7 +41,10 @@ class PendulumAdapter(ExperimentAdapter):
             cfg = yaml.safe_load(f)
 
         self._data_dir = cfg["data_dir"]
-        self._device = cfg.get("device", "cpu")
+        # runtime device discovery: config.yaml pins device "cpu" for the main
+        # pendulum experiment, but HPO trials should follow whatever node they
+        # land on, so pendulum HPO can use the GPU on the preempt lane.
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self._num_waypoints = cfg.get("num_waypoints")
         kl = cfg.get("kl_targets", {})
         self._k1_values = kl.get("k1_values", [])

@@ -65,6 +65,7 @@ sbatch_args=(
 	--array="0-$((array_size - 1))%${concurrency}"
 	--partition="${partition}"
 	--time="${worker_walltime}"
+	--requeue
 	--cpus-per-task="${cpus_per_task}"
 	--mem="${mem}"
 	--job-name="${job_name}"
