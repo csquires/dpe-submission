@@ -15,17 +15,23 @@ that helper. callers that do `yaml.safe_load(open(...))` directly get it
 through the patch installed here. all configs should template path keys as
 ${DPE_DATA_ROOT}/<exp>/... or ${DPE_CKPT_ROOT}/<exp>/ckpt.
 
-defaults (override by exporting the env var before running):
-    DPE_DATA_ROOT -> $HOME/dpe-data        (set NFS path on clusters)
-    DPE_CKPT_ROOT -> $HOME/dpe-ckpt        (set node-local scratch on clusters)
+resource roots are taken directly from the environment -- no path is invented
+here. cluster setup (e.g. ~/.bashrc) must export them; a missing var is a hard
+error, never a silent $HOME or cluster-hardcoded fallback:
+    DPE_DATA_ROOT -> NFS-shared data root
+    DPE_CKPT_ROOT -> node-local scratch ckpt root
 """
 import os
 
 import yaml
 
 
-os.environ.setdefault("DPE_DATA_ROOT", os.path.expanduser("~/dpe-data"))
-os.environ.setdefault("DPE_CKPT_ROOT", os.path.expanduser("~/dpe-ckpt"))
+for _var in ("DPE_DATA_ROOT", "DPE_CKPT_ROOT"):
+    if not os.environ.get(_var):
+        raise RuntimeError(
+            f"{_var} is not set -- cluster setup must export it before "
+            f"importing ex.* (see ~/.bashrc)."
+        )
 
 
 def _expand_env(value):

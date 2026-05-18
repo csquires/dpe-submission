@@ -15,22 +15,21 @@ New experiments should import these functions from here.
 """
 
 
-DPE_DATA_ROOT_DEFAULT = os.path.expanduser("~/dpe-data")
-DPE_CKPT_ROOT_DEFAULT = os.path.expanduser("~/dpe-ckpt")
+def _require_path_env_roots() -> None:
+	"""require DPE_DATA_ROOT and DPE_CKPT_ROOT to be set in the environment.
 
-
-def _set_path_env_defaults() -> None:
+	no path is invented here. cluster setup (e.g. ~/.bashrc) must export
+	DPE_DATA_ROOT (NFS data root) and DPE_CKPT_ROOT (node-local scratch ckpt
+	root). a missing var is a hard error -- never a silent $HOME or
+	cluster-hardcoded fallback. configs reference these as
+	${DPE_DATA_ROOT}/<exp>/... and ${DPE_CKPT_ROOT}/<exp>/ckpt.
 	"""
-	idempotently install DPE_DATA_ROOT and DPE_CKPT_ROOT env-var defaults.
-
-	on shared clusters the user is expected to export these to point at NFS
-	(data) and node-local scratch (ckpt). the $HOME-relative fallback is just
-	a non-cluster-specific safety net so scripts don't crash when run on a
-	local dev machine; configs reference these as ${DPE_DATA_ROOT}/<exp>/...
-	and ${DPE_CKPT_ROOT}/<exp>/ckpt.
-	"""
-	os.environ.setdefault("DPE_DATA_ROOT", DPE_DATA_ROOT_DEFAULT)
-	os.environ.setdefault("DPE_CKPT_ROOT", DPE_CKPT_ROOT_DEFAULT)
+	for var in ("DPE_DATA_ROOT", "DPE_CKPT_ROOT"):
+		if not os.environ.get(var):
+			raise RuntimeError(
+				f"{var} is not set -- cluster setup must export it "
+				f"before running (see ~/.bashrc)."
+			)
 
 
 def _expand_env(value):
@@ -69,7 +68,7 @@ def _install_yaml_envvar_patch() -> None:
 	yaml._dpe_envvar_patched = True
 
 
-_set_path_env_defaults()
+_require_path_env_roots()
 _install_yaml_envvar_patch()
 
 
@@ -85,7 +84,7 @@ def _load_config(config_path: str) -> Dict[str, Any]:
 	returns dict with all keys described in config.yaml schema.
 	raises FileNotFoundError if config_path does not exist.
 	"""
-	_set_path_env_defaults()
+	_require_path_env_roots()
 	with open(config_path, 'r') as f:
 		config = yaml.safe_load(f)
 	return _expand_env(config)
