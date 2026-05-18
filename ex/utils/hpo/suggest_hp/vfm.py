@@ -45,7 +45,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # fixed constant + mandatory builder keys
     hp["n_epochs"] = N_EPOCHS
-    hp["lr"] = trial.suggest_float("lr", 5e-4, 3e-3, log=True)
+    hp["lr"] = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256])
 
     # switch params (suggest before any branch that reads them)
@@ -70,14 +70,14 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
     # unconditional always-active params (17)
-    hp["eps"] = trial.suggest_float("eps", 1e-3, 5e-3, log=True)
+    hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
     hp["integration_steps"] = trial.suggest_int("integration_steps", 300, 2600)
     hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["activation"] = trial.suggest_categorical("activation", ["gelu", "elu", "silu"])
     hp["sigma"] = trial.suggest_float("sigma", 0.3, 3.0, log=True)
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 1e-1, log=True)
-    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [128, 256, 512])
+    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
     hp["n_hidden_layers"] = trial.suggest_categorical("n_hidden_layers", [2, 3, 4])
     hp["layernorm"] = trial.suggest_categorical("layernorm", ["off", "pre", "post"])
     hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])

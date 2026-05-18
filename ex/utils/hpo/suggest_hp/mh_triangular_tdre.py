@@ -8,7 +8,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 1000
+N_EPOCHS = 1500
 
 
 METADATA = {
@@ -24,7 +24,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     translate method_specs.py base_search_space to optuna calls:
     - learning_rate: log-uniform [1e-4, 1e-2]
-    - hidden_dim: categorical [16, 32, 64, 128]
+    - hidden_dim: categorical [64, 128, 256]
     - head_dim: categorical [10, 20, 40]
     - num_shared_layers: categorical [1, 2, 3]
     - num_waypoints: categorical [5, 10, 15]
@@ -43,7 +43,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["learning_rate"] = trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True)
 
     # categorical discrete
-    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [16, 32, 64, 128])
+    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
     hp["head_dim"] = trial.suggest_categorical("head_dim", [10, 20, 40])
     hp["num_shared_layers"] = trial.suggest_categorical("num_shared_layers", [1, 2, 3])
     hp["num_waypoints"] = trial.suggest_categorical("num_waypoints", [5, 10, 15])
