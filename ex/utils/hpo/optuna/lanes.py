@@ -1,10 +1,10 @@
 """Lane registry for lane-aware HPO double-ended drain.
 
 Defines compute profiles (LaneProfile) for distinct execution contexts:
-- array:   cpu, many small slurm elements, capped at 100 concurrent.
-- cpu:     cpu qos, <=8 fat concurrent elements fanned out via loky batch logic.
-- general: gpu, non-preemptible single-process, capped at 8 concurrent.
-- preempt: gpu, preemptible single-process, capped at 80 concurrent.
+- array:   cpu, many small slurm elements; <=96 (array_qos MaxJobsPU=100).
+- cpu:     cpu qos, fat loky-fanout elements; <=8 (cpu_qos MaxJobsPU=10).
+- general: gpu, non-preemptible single-process; <=6 (normal-qos MaxTRESPU gpu=8).
+- preempt: gpu, preemptible single-process; <=22 (preempt_qos MaxJobsPU=24).
 
 Note: general and preempt require gpus>=1.
 
@@ -38,9 +38,9 @@ class LaneProfile:
                     None = derive at runtime as cpus_per_task // cores_per_trial(method).
                     int = pin to this value.
         worker_walltime: per-worker walltime limit, HH:MM:SS format.
-        max_concurrent: per-lane concurrent-worker target. Keeper tops a study up to this
-                       many concurrent jobs on this lane. For array lane, this is the
-                       array %K running-throttle / array size.
+        max_concurrent: per-lane TOTAL concurrent-job cap (the binding qos
+                       MaxJobsPU/MaxTRESPU minus headroom). The keeper splits it
+                       evenly across the studies still under target.
     """
     partition: str
     qos: str
@@ -58,17 +58,17 @@ LANES: dict[str, LaneProfile] = {
         qos="",
         gpus=0,
         cpus_per_task=16,
-        mem="256G",
+        mem="64G",
         batch_size=None,
         worker_walltime="06:00:00",
-        max_concurrent=100,
+        max_concurrent=96,
     ),
     "cpu": LaneProfile(
         partition="cpu",
         qos="cpu_qos",
         gpus=0,
         cpus_per_task=16,
-        mem="256G",
+        mem="64G",
         batch_size=None,
         worker_walltime="06:00:00",
         max_concurrent=8,
@@ -81,7 +81,7 @@ LANES: dict[str, LaneProfile] = {
         mem="32G",
         batch_size=1,
         worker_walltime="06:00:00",
-        max_concurrent=8,
+        max_concurrent=6,
     ),
     "preempt": LaneProfile(
         partition="preempt",
@@ -91,7 +91,7 @@ LANES: dict[str, LaneProfile] = {
         mem="32G",
         batch_size=1,
         worker_walltime="03:00:00",
-        max_concurrent=80,
+        max_concurrent=22,
     ),
 }
 

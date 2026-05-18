@@ -6,9 +6,10 @@ for any study still short of `target_trials`, tops its worker population
 across all lanes in config.lanes, subject to per-lane caps and cluster safety
 limits. exits once every study has reached its target.
 
-the array lane receives ONE slurm --array job per under-target study; the job
-handles self-throttling via %max_concurrent. preempt/cpu/general lanes dispatch
-individual per-worker sbatch jobs, each pinned to one combo.
+each lane's max_concurrent is the per-lane total running cap; the keeper splits
+it evenly across the studies still under target. the array lane gets ONE slurm
+--array job per under-target study (sized to that study's share); preempt/cpu/
+general lanes dispatch individual per-worker sbatch jobs.
 
 idempotent under preemption: per-cycle state is recomputed from journals and
 squeue, so a keeper requeue loses nothing -- no local bookkeeping. this enables
@@ -127,21 +128,22 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
 
 
 def dispatch_array(config_module: str, combo_index: int, experiment: str,
-                   method: str, lane: LaneProfile, workdir: str,
-                   log_dir: str, dry_run: bool) -> str:
-    """sbatch one array job per (experiment, method) study.
+                   method: str, lane: LaneProfile, n_workers: int,
+                   workdir: str, log_dir: str, dry_run: bool) -> str:
+    """sbatch one array job for a (experiment, method) study.
 
-    the array has size N = lane.max_concurrent (the number of concurrent workers
-    allowed on array partition) and throttle K = lane.max_concurrent (self-regulate
-    via %K). all array elements pin to the same combo and cooperate through the
-    journal, so they are fungible workers each running submit on the same study.
+    the array has size N = throttle K = n_workers -- this study's share of the
+    array lane's total cap (lane.max_concurrent // studies still under target).
+    all elements pin to the same combo and cooperate through the journal, so
+    they are fungible workers each running submit on the same study.
 
     args:
       config_module: dotted module path to StudyConfig.
       combo_index: combo index (method ordinal) to pass to submit.
       experiment: experiment name.
       method: method name.
-      lane: LaneProfile for array lane (partition="array", qos="", gpus=0, max_concurrent=100).
+      lane: LaneProfile for the array lane.
+      n_workers: array size and %throttle for this study.
       workdir: working directory for submit.
       log_dir: directory for sbatch stdout/stderr.
       dry_run: if True, log the sbatch command and return "dry-run".
@@ -151,9 +153,8 @@ def dispatch_array(config_module: str, combo_index: int, experiment: str,
     note: the array lane ALWAYS has gpus=0 and qos=""; no --gpus or --qos flags.
     """
     name = job_name(experiment, method, "array")
-    N = lane.max_concurrent
-    K = lane.max_concurrent
-    array_spec = f"0-{N-1}%{K}"
+    n = max(1, n_workers)
+    array_spec = f"0-{n - 1}%{n}"
 
     wrap = (
         f"source ~/.bashrc && conda activate fac && cd {workdir} && "
@@ -182,8 +183,7 @@ def dispatch_array(config_module: str, combo_index: int, experiment: str,
         jid = subprocess.run(
             cmd, capture_output=True, text=True, check=True
         ).stdout.strip()
-        logger.info("dispatched array %s (size=%d, throttle=%d) -> jobid %s",
-                    name, N, K, jid)
+        logger.info("dispatched array %s (size=%d) -> jobid %s", name, n, jid)
         return jid
     except subprocess.CalledProcessError as e:
         logger.error("dispatch_array failed for %s: %s", name, e.stderr)
@@ -194,10 +194,6 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="multi-lane keeper for optuna hpo")
     p.add_argument("--config", required=True,
                    help="dotted StudyConfig module path")
-    p.add_argument("--my-cap", type=int, default=80,
-                   help="max own jobs across all lanes (headroom under MaxJobSubmitPU)")
-    p.add_argument("--total-cap", type=int, default=200,
-                   help="max total jobs (all users) across all lanes before pausing")
     p.add_argument("--poll-interval", type=int, default=60,
                    help="seconds between cycles")
     p.add_argument("--max-dispatch-per-cycle", type=int, default=10,
@@ -217,9 +213,10 @@ def main() -> int:
     """keeper main loop.
 
     per cycle: (1) count terminal trials per study; if all >= target_trials,
-    exit. (2) for each lane in config.lanes, compute headroom and dispatch
-    workers to under-target studies. array lane uses --array jobs (one per
-    study); per-worker lanes use individual sbatch jobs. (3) sleep and repeat.
+    exit. (2) for each lane in config.lanes, split lane.max_concurrent (the
+    per-lane total running cap) evenly across the studies still under target
+    and top each up to its share; array lane uses one --array job per study,
+    per-worker lanes use individual sbatch jobs. (3) sleep and repeat.
     """
     # configure keeper logger.
     handler = logging.StreamHandler()
@@ -282,7 +279,9 @@ def main() -> int:
             )
             break
 
-        # (2) for each lane, dispatch workers to under-target studies.
+        # (2) for each lane: split lane.max_concurrent (the per-lane total
+        # running cap) evenly across the studies still under target.
+        n_pending = len(pending)
         cycle_dispatched = 0
         for lane_name in config.lanes:
             try:
@@ -294,8 +293,12 @@ def main() -> int:
                 )
                 continue
 
+            # this study's share of the lane's total running cap.
+            per_study = max(1, lane.max_concurrent // n_pending)
+
             if lane_name == "array":
-                # array lane: one job per study.
+                # array lane: one --array job per under-target study, sized to
+                # that study's share; skip if a job is already alive.
                 for (combo_index, method, n) in pending:
                     try:
                         count = squeue_count(
@@ -307,44 +310,21 @@ def main() -> int:
                         continue
 
                     if count == 0:
-                        # no array job alive; submit one.
                         try:
                             dispatch_array(
-                                args.config, combo_index, config.experiment, method,
-                                lane, args.workdir, args.log_dir, args.dry_run,
+                                args.config, combo_index, config.experiment,
+                                method, lane, per_study, args.workdir,
+                                args.log_dir, args.dry_run,
                             )
                             cycle_dispatched += 1
                         except Exception as e:
                             logger.warning("dispatch_array failed for %s: %s", method, e)
-                    # else: array job already running; skip (self-throttles).
 
             else:
-                # per-worker lanes (preempt, cpu, general).
-                try:
-                    my_pending = squeue_count(partition=lane.partition, user=user)
-                    total_pending = squeue_count(partition=lane.partition)
-                except Exception as e:
-                    logger.warning(
-                        "cycle %d: squeue failed for %s: %s; skipping lane",
-                        cycle, lane_name, e,
-                    )
-                    continue
-
-                headroom = min(
-                    args.my_cap - my_pending,
-                    args.total_cap - total_pending,
-                    args.max_dispatch_per_cycle,
-                )
-
-                if headroom <= 0:
-                    logger.info(
-                        "cycle %d: %s lane headroom=%d; skipping",
-                        cycle, lane_name, headroom,
-                    )
-                    continue
-
+                # per-worker lanes (preempt, cpu, general): top each study up to
+                # its per_study share, bounded by the per-cycle burst cap.
                 for (combo_index, method, n) in pending:
-                    if headroom <= 0:
+                    if cycle_dispatched >= args.max_dispatch_per_cycle:
                         break
 
                     try:
@@ -359,20 +339,20 @@ def main() -> int:
                         )
                         continue
 
-                    deficit = lane.max_concurrent - running
-                    # clamp to trials remaining.
+                    deficit = per_study - running
                     deficit = min(deficit, config.target_trials - n)
-                    # clamp to headroom.
-                    deficit = min(deficit, headroom)
+                    deficit = min(
+                        deficit, args.max_dispatch_per_cycle - cycle_dispatched
+                    )
 
-                    for _ in range(deficit):
+                    for _ in range(max(0, deficit)):
                         try:
                             dispatch(
-                                args.config, combo_index, config.experiment, method,
-                                lane_name, lane, args.workdir, args.log_dir, args.dry_run,
+                                args.config, combo_index, config.experiment,
+                                method, lane_name, lane, args.workdir,
+                                args.log_dir, args.dry_run,
                             )
                             cycle_dispatched += 1
-                            headroom -= 1
                         except Exception as e:
                             logger.warning(
                                 "dispatch failed for %s on %s: %s",
