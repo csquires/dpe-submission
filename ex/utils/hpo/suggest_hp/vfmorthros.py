@@ -24,16 +24,18 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the VFMOrthros search space.
 
-    emits n_epochs as the fixed constant N_EPOCHS, plus 26 tuned params:
-    5 switch (sched, inner_eps, div_method, precond, time_dist), 6 conditional
-    (k, gamma_min, div_noise, n_hutch_samples, reweight, apply_iw -- each
-    suggested only when its switch condition holds), and 15 unconditional
-    (incl. the VFMOrthros-specific n_shared_layers). the depth knob
-    n_hidden_layers is not searched: it is pinned per-experiment via
-    StudyConfig.fixed_hp. the test-path params
-    (test_sched, test_sigma, test_inner_eps, test_gamma_min, test_k) are
-    derived equal to their train counterparts; test_eps is the only
-    independent test-path knob.
+    emits n_epochs as the fixed constant N_EPOCHS, plus 22 tuned params:
+    4 switch (sched, inner_eps, precond, time_dist), 4 conditional
+    (k, gamma_min, reweight, apply_iw -- each suggested only when its switch
+    condition holds), and 14 unconditional (incl. the VFMOrthros-specific
+    n_shared_layers).
+
+    not searched -- pinned: n_hidden_layers (per-experiment via
+    StudyConfig.fixed_hp), div_method/div_noise/n_hutch_samples (provisionally
+    hutchinson/rademacher/4 samples), activation (the VFM class default). the
+    test-path params (test_sched, test_sigma, test_inner_eps, test_gamma_min,
+    test_k) are derived equal to their train counterparts; test_eps is the
+    only independent test-path knob.
 
     args:
         trial: optuna trial object
@@ -56,19 +58,21 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["sched"] = sched
     inner_eps = trial.suggest_categorical("inner_eps", [0.0, 0.05, 0.1])
     hp["inner_eps"] = inner_eps
-    div_method = trial.suggest_categorical("div_method", ["hutchinson", "exact"])
-    hp["div_method"] = div_method
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 
-    # conditional params (6 inertness edges)
+    # provisionally pinned, not searched (a dedicated study is deferred):
+    # divergence estimator -> hutchinson/rademacher/4; activation -> VFM default.
+    hp["div_method"] = "hutchinson"
+    hp["div_noise"] = "rademacher"
+    hp["n_hutch_samples"] = 4
+    hp["activation"] = "silu"
+
+    # conditional params
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40])
     if inner_eps == 0.0:
         hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
-    if div_method == "hutchinson":
-        hp["div_noise"] = trial.suggest_categorical("div_noise", ["rademacher", "gaussian"])
-        hp["n_hutch_samples"] = trial.suggest_categorical("n_hutch_samples", [1, 4, 16])
     if not precond:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
@@ -76,7 +80,6 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["n_shared_layers"] = trial.suggest_categorical("n_shared_layers", [1, 2])
     hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
-    hp["activation"] = trial.suggest_categorical("activation", ["gelu", "elu", "silu"])
     hp["sigma"] = trial.suggest_float("sigma", 0.3, 3.0, log=True)
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 1e-1, log=True)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
