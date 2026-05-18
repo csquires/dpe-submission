@@ -167,7 +167,7 @@ def run_worker(
 
     # report results
     logger.info(
-        f"n_trials={study.n_trials}, "
+        f"n_trials={len(study.trials)}, "
         f"best_value={study.best_value}, "
         f"best_params={study.best_params}"
     )
