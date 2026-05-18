@@ -15,10 +15,7 @@ import joblib
 
 from ex.utils.hpo.optuna.study_config import load_config, resolve_combo
 from ex.utils.hpo.optuna.cores_registry import get_cores_for_method
-from ex.utils.hpo.optuna.storage import (
-    create_or_load,
-    study_path,
-)
+from ex.utils.hpo.optuna.storage import create_or_load
 from ex.utils.hpo.optuna import worker
 
 
@@ -73,6 +70,10 @@ def _run_parallel(
     cores_per_trial: int,
     walltime_minutes: int,
     walltime_margin_minutes: int,
+    min_resource: int = 100,
+    max_resource: int = 10000,
+    reduction_factor: int = 3,
+    fixed_hp: dict | None = None,
 ) -> int:
     """spawn M loky workers and consume task generator with SIGTERM protection.
 
@@ -92,8 +93,6 @@ def _run_parallel(
         # loky workers each create_or_load the study themselves.
         # compute timeout from budget minus margin
         timeout_seconds = (walltime_minutes - walltime_margin_minutes) * 60
-        study_url = str(study_path(experiment, method))
-        study_name = f"{experiment}_{method}"
         logger.info(
             f"spawning {n_workers} workers for {experiment}/{method}, "
             f"timeout={timeout_seconds}s, cores={cores_per_trial}"
@@ -101,20 +100,19 @@ def _run_parallel(
 
         # build task generator
         def make_tasks():
-            """yield M delayed worker tasks."""
-            # objective_factory is constructed per-worker from study_url, not in orchestrator
-            def objective_factory(trial):
-                raise NotImplementedError("use worker-local objective construction")
-
+            """yield M delayed worker.run_worker tasks, one per loky worker."""
             for i in range(n_workers):
                 yield joblib.delayed(worker.run_worker)(
-                    study_url=study_url,
-                    study_name=study_name,
+                    experiment=experiment,
+                    method=method,
                     study_seed=study_seed,
                     timeout_seconds=timeout_seconds,
-                    objective_factory=objective_factory,
                     worker_id=i,
                     cores_per_trial=cores_per_trial,
+                    min_resource=min_resource,
+                    max_resource=max_resource,
+                    reduction_factor=reduction_factor,
+                    fixed_hp=fixed_hp,
                 )
 
         # spawn parallel executor with SIGTERM handler
@@ -304,6 +302,10 @@ def main() -> int:
                 timeout_seconds=timeout_seconds,
                 worker_id=0,
                 cores_per_trial=cores_per_trial,
+                min_resource=config.min_resource,
+                max_resource=config.max_resource,
+                reduction_factor=config.reduction_factor,
+                fixed_hp=config.fixed_hp,
             )
             logger.info("worker completed normally")
             return 0
@@ -325,6 +327,10 @@ def main() -> int:
             cores_per_trial=cores_per_trial,
             walltime_minutes=config.walltime_minutes,
             walltime_margin_minutes=config.walltime_margin_minutes,
+            min_resource=config.min_resource,
+            max_resource=config.max_resource,
+            reduction_factor=config.reduction_factor,
+            fixed_hp=config.fixed_hp,
         )
 
 

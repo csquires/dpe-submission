@@ -33,6 +33,10 @@ def run_worker(
     worker_id: int,
     cores_per_trial: int,
     max_retry: int = 2,
+    min_resource: int = 100,
+    max_resource: int = 10000,
+    reduction_factor: int = 3,
+    fixed_hp: dict | None = None,
 ) -> None:
     """
     run optuna.study.optimize() in isolated loky subprocess.
@@ -108,7 +112,8 @@ def run_worker(
         uses_pruning = metadata.get("uses_pruning", False)
         if uses_pruning:
             pruner = optuna.pruners.HyperbandPruner(
-                min_resource=100, max_resource=10000, reduction_factor=3
+                min_resource=min_resource, max_resource=max_resource,
+                reduction_factor=reduction_factor,
             )
         else:
             pruner = optuna.pruners.NopPruner()
@@ -136,7 +141,8 @@ def run_worker(
 
     # bootstrap 6: construct objective
     try:
-        objective_fn = make_objective(adapter, method, builder, study_seed)
+        objective_fn = make_objective(adapter, method, builder, study_seed,
+                                      fixed_hp=fixed_hp)
     except Exception as e:
         logger.error(f"objective factory failed: {e}")
         sys.exit(1)

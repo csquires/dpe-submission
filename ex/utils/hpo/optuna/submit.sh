@@ -21,11 +21,11 @@ done
 [[ -z "${DPE_DATA_ROOT:-}" ]] && echo "error: DPE_DATA_ROOT not set" && exit 1
 
 # resolve lane profile
-lane_data=$(python -c "import sys; sys.path.insert(0, '.'); from ex.utils.hpo.optuna.lanes import get_lane; p = get_lane('${lane}'); print(p.partition, p.qos, p.gpus, p.cpus_per_task, p.mem, p.worker_walltime)" 2>/dev/null) || {
+lane_data=$(python -c "import sys; sys.path.insert(0, '.'); from ex.utils.hpo.optuna.lanes import get_lane; p = get_lane('${lane}'); print('|'.join(str(x) for x in (p.partition, p.qos, p.gpus, p.cpus_per_task, p.mem, p.worker_walltime)))" 2>/dev/null) || {
 	echo "error: failed to resolve lane '${lane}'"; exit 1; }
 
-# split into vars
-read -r partition qos gpus cpus_per_task mem worker_walltime <<< "$lane_data"
+# split into vars; IFS='|' preserves an empty qos field (array/general lanes)
+IFS='|' read -r partition qos gpus cpus_per_task mem worker_walltime <<< "$lane_data"
 
 [[ -z "$partition" ]] && echo "error: lane resolution returned empty partition" && exit 1
 [[ -z "$gpus" ]] && echo "error: lane resolution returned empty gpus" && exit 1
