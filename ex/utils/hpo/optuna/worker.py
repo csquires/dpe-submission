@@ -1,8 +1,8 @@
 """
 per-loky-worker optuna study optimizer.
 
-run_worker(experiment, method, study_seed, timeout_seconds, worker_id, cores_per_trial, max_retry)
-bootstraps BLAS env, loads study from storage, registers retry callback, and calls study.optimize()
+run_worker(experiment, method, study_seed, timeout_seconds, worker_id, cores_per_trial)
+bootstraps BLAS env, loads study from storage, and calls study.optimize()
 until timeout. designed to run in isolated loky subprocess.
 """
 
@@ -12,7 +12,6 @@ import sys
 import signal
 
 import optuna
-import optuna.storages
 import optuna.pruners
 import optuna.samplers
 import optuna.exceptions
@@ -32,7 +31,6 @@ def run_worker(
     timeout_seconds: float,
     worker_id: int,
     cores_per_trial: int,
-    max_retry: int = 2,
     min_resource: int = 100,
     max_resource: int = 10000,
     reduction_factor: int = 3,
@@ -63,7 +61,6 @@ def run_worker(
       timeout_seconds: float, wall-clock timeout for this worker's optimize() call
       worker_id: int, [0, n_jobs); used to derive unique sampler seed per worker
       cores_per_trial: int, BLAS threads to allocate
-      max_retry: int, retries on trial failure (default 2 = 3 total attempts)
 
     returns: None (logs errors and exits nonzero on failure)
     """
@@ -147,21 +144,12 @@ def run_worker(
         logger.error(f"objective factory failed: {e}")
         sys.exit(1)
 
-    # bootstrap 7: build callbacks list
-    callbacks = [
-        optuna.storages.RetryFailedTrialCallback(
-            max_retry=max_retry, inherit_intermediate_values=False
-        )
-    ]
-    logger.info(f"registered RetryFailedTrialCallback(max_retry={max_retry})")
-
-    # bootstrap 8: optimize study
+    # bootstrap 7: optimize study
     try:
         study.optimize(
             objective_fn,
             timeout=timeout_seconds,
             gc_after_trial=True,
-            callbacks=callbacks,
             catch=(RuntimeError, ValueError),
         )
         logger.info("optimize() completed or timed out")

@@ -116,19 +116,31 @@ def create_or_load(
     return study
 
 
-def reap_stale_trials(study: optuna.Study, max_age_seconds: float) -> int:
-    """fail trials in RUNNING state older than max_age_seconds.
+def reap_stale_trials(
+    study: optuna.Study, max_age_seconds: float, max_retry: int = 2
+) -> int:
+    """fail RUNNING trials older than max_age_seconds and re-enqueue their config.
 
     a RUNNING trial older than (worker walltime + margin) cannot be alive —
-    its slurm job was killed at walltime — so this is safe for any worker to
-    call concurrently; it never touches a genuinely-live trial. the journal
-    storage automatically re-reads the latest state, and skip_if_finished=True
-    ensures concurrent reapers idempotently skip already-finished trials.
+    its slurm job was killed at walltime/preemption — so this is safe for any
+    worker to call concurrently; it never touches a genuinely-live trial. the
+    journal storage automatically re-reads the latest state, and
+    skip_if_finished=True ensures concurrent reapers idempotently skip
+    already-finished trials.
+
+    option-B preemption recovery: a reaped trial's hyperparameters would
+    otherwise be lost (a FAIL contributes nothing to TPE). so each reaped
+    trial's params are re-enqueued as a fresh WAITING trial for a clean retry,
+    bounded by max_retry via a `reap_retry_count` user-attr. skip_if_exists
+    keeps concurrent reapers from enqueueing duplicate retries.
 
     args:
         study: optuna Study instance.
         max_age_seconds: age threshold (seconds). trials with
             state == RUNNING and age > max_age_seconds are marked FAIL.
+        max_retry: max number of times a given config is re-enqueued after
+            being reaped (tracked per-lineage via the reap_retry_count
+            user-attr); default 2.
 
     returns:
         int: count of trials marked FAIL.
@@ -141,4 +153,12 @@ def reap_stale_trials(study: optuna.Study, max_age_seconds: float) -> int:
             if age > max_age_seconds:
                 study.tell(trial.number, state=TrialState.FAIL, skip_if_finished=True)
                 count += 1
+                # re-enqueue the preempted config for a clean retry.
+                n_retry = trial.user_attrs.get("reap_retry_count", 0)
+                if n_retry < max_retry and trial.params:
+                    study.enqueue_trial(
+                        trial.params,
+                        user_attrs={"reap_retry_count": n_retry + 1},
+                        skip_if_exists=True,
+                    )
     return count
