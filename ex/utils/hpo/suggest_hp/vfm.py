@@ -2,8 +2,8 @@
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
 calls. implements conditional suggestion of inert params per
-notes/vfm_vfmorthros_conditionality.md. fixes n_epochs at 1500 (HPO decision:
-uniform Hyperband resource axis).
+notes/vfm_vfmorthros_conditionality.md. fixes n_epochs at 2000 (HPO decision:
+uniform multi-fidelity resource axis).
 """
 
 from typing import Any
@@ -11,7 +11,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 1500
+N_EPOCHS = 2000
 
 
 METADATA = {

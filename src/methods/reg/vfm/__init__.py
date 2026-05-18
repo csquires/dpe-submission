@@ -12,7 +12,7 @@ from ..common._cfgs import (
     OptimCfg, SchedCfg, EmaCfg,
     make_optim, make_sched, make_ema,
 )
-from ..common._trainer import train_two_phase, train_loop
+from ..common._trainer import train_interleaved, train_loop
 from ..common._weighting import resolve_outer_lambda
 from ..common._estimator_helpers import _validate_and_store_slots
 from ..common._paradigm_funcs import (
@@ -207,7 +207,7 @@ class VFM(DRE):
         eval_data: dict[str, torch.Tensor] | None = None,
         step_cb_interval: int = 50,
     ) -> None:
-        """train b then eta sequentially via train_two_phase.
+        """train b and eta jointly via train_interleaved.
 
         the loss_b closure binds antithetic, reweight, path geometry, and
         the time sampler so the inner loop sees only one specialized body.
@@ -329,33 +329,37 @@ class VFM(DRE):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
-        train_two_phase(
-            model_b=net_b_callable,
-            model_eta=net_eta_callable,
-            model_module_b=self.net_b,
-            model_module_eta=self.net_eta,
-            samples_p0=samples_p0,
-            samples_p1=samples_p1,
-            samples_pstar=None,
-            loss_b=loss_b,
-            loss_eta=loss_eta,
-            optim_b=optim_b,
-            optim_eta=optim_eta,
-            n_steps_b=self.n_epochs,
-            n_steps_eta=self.n_epochs,
-            batch_size=self.batch_size,
-            time_sampler=self.time,
-            scheduler_b=sched_b,
-            scheduler_eta=sched_eta,
-            ema_b=ema_b,
-            ema_eta=ema_eta,
-            grad_clip_norm_b=self.optim.grad_clip_norm,
-            grad_clip_norm_eta=self.optim.grad_clip_norm,
-            eps=self.path.eps,
-            step_cb=step_cb,
-            eval_fn=eval_fn,
-            step_cb_interval=step_cb_interval,
-        )
+        try:
+            train_interleaved(
+                model_b=net_b_callable,
+                model_eta=net_eta_callable,
+                model_module_b=self.net_b,
+                model_module_eta=self.net_eta,
+                samples_p0=samples_p0,
+                samples_p1=samples_p1,
+                samples_pstar=None,
+                loss_b=loss_b,
+                loss_eta=loss_eta,
+                optim_b=optim_b,
+                optim_eta=optim_eta,
+                n_steps=self.n_epochs,
+                batch_size=self.batch_size,
+                time_sampler=self.time,
+                scheduler_b=sched_b,
+                scheduler_eta=sched_eta,
+                ema_b=ema_b,
+                ema_eta=ema_eta,
+                grad_clip_norm_b=self.optim.grad_clip_norm,
+                grad_clip_norm_eta=self.optim.grad_clip_norm,
+                eps=self.path.eps,
+                step_cb=step_cb,
+                eval_fn=eval_fn,
+                step_cb_interval=step_cb_interval,
+            )
+        finally:
+            # invariant: outside fit, both networks are always in eval mode.
+            self.net_b.eval()
+            self.net_eta.eval()
 
         self.net_b.eval()
         self.net_eta.eval()

@@ -16,7 +16,7 @@ METADATA = {
     "builder": "build_MHTDRE",
 }
 
-N_EPOCHS = 1500
+N_EPOCHS = 2000
 
 
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:

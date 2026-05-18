@@ -64,3 +64,42 @@ def _make_report(
                     model_module.train(was_training)
 
     return do_report
+
+
+def _make_report_pair(
+    step_cb: Callable[[int, float], None] | None,
+    step_cb_interval: int,
+    eval_fn: Callable[[Any], torch.Tensor] | None,
+    modules: list[nn.Module],
+) -> Callable[[], None]:
+    """bind multi-network evaluation reporting into a 0-arg closure.
+
+    mirrors _make_report but toggles EVERY module in `modules` to eval before
+    the eval_fn call and restores each module's prior training state in a
+    finally block. used by train_interleaved, whose held-out eval needs all
+    networks (b and eta) in eval mode, not just one. eval_fn is called with
+    None: interleaved eval closures ignore the model arg and capture the
+    estimator's predict path directly.
+    """
+    if step_cb is None or eval_fn is None:
+        return _noop
+
+    step = 0
+
+    def do_report() -> None:
+        nonlocal step
+        step += 1
+
+        if step > 0 and step % step_cb_interval == 0:
+            was = [m.training for m in modules]
+            try:
+                for m in modules:
+                    m.eval()
+                with torch.no_grad():
+                    score = float(eval_fn(None).item())
+                step_cb(step, score)
+            finally:
+                for m, w in zip(modules, was):
+                    m.train(w)
+
+    return do_report

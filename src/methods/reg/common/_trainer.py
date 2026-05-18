@@ -3,6 +3,9 @@
 `train_loop` drives a single network through (sample, time, loss, step) iterations.
 `train_two_phase` orchestrates two sequential `train_loop` calls for VFM-family
 estimators that fit a velocity network then a denoiser.
+`train_interleaved` advances both networks together in one loop so the held-out
+eval (which needs both) is available throughout, making the whole trial
+prunable by hyperband rather than only its second half.
 
 also hosts `maybe_clip_grad`, a small gradient-clipping helper used by the inner
 loop and by estimators with bespoke training bodies (TriangularCTSM2D, TriangularVFM2D).
@@ -13,7 +16,7 @@ import torch
 from torch import nn, optim
 
 from ._ema import EMA
-from ...common._report import _make_report
+from ...common._report import _make_report, _make_report_pair
 
 
 def _noop() -> None:
@@ -195,24 +198,26 @@ def train_loop(
     do_ema = (lambda: ema.update(model_module)) if ema is not None else _noop
     do_report = _make_report(step_cb, step_cb_interval, eval_fn, model, model_module)
 
-    for _ in range(n_steps):
-        batch = build_batch()
-        tau, iw = time_sampler(batch_size, device)
+    try:
+        for _ in range(n_steps):
+            batch = build_batch()
+            tau, iw = time_sampler(batch_size, device)
 
-        loss = loss_fn(model, batch, tau, iw, **loss_kw)
+            loss = loss_fn(model, batch, tau, iw, **loss_kw)
 
-        optim.zero_grad()
-        loss.backward()
-        do_clip()
-        optim.step()
-        do_sched()
-        do_ema()
-        do_report()
-
-    if isinstance(model, nn.Module):
-        model.eval()
-    elif model_module is not None:
-        model_module.eval()
+            optim.zero_grad()
+            loss.backward()
+            do_clip()
+            optim.step()
+            do_sched()
+            do_ema()
+            do_report()
+    finally:
+        # restore eval mode even if do_report raises optuna.TrialPruned.
+        if isinstance(model, nn.Module):
+            model.eval()
+        elif model_module is not None:
+            model_module.eval()
 
 
 def train_two_phase(
@@ -335,3 +340,138 @@ def train_two_phase(
 
     mod_b.eval()
     mod_eta.eval()
+
+
+def train_interleaved(
+    model_b: Callable[..., torch.Tensor],
+    model_eta: Callable[..., torch.Tensor],
+    samples_p0: torch.Tensor,
+    samples_p1: torch.Tensor,
+    samples_pstar: torch.Tensor | None,
+    loss_b: Callable,
+    loss_eta: Callable,
+    optim_b: optim.Optimizer,
+    optim_eta: optim.Optimizer,
+    n_steps: int,
+    batch_size: int,
+    time_sampler: Callable[..., tuple[torch.Tensor, torch.Tensor]],
+    *,
+    scheduler_b: optim.lr_scheduler.LRScheduler | None = None,
+    scheduler_eta: optim.lr_scheduler.LRScheduler | None = None,
+    ema_b: EMA | None = None,
+    ema_eta: EMA | None = None,
+    grad_clip_norm_b: float | None = None,
+    grad_clip_norm_eta: float | None = None,
+    eps: float = 1e-3,
+    loss_kwargs_b: dict | None = None,
+    loss_kwargs_eta: dict | None = None,
+    model_module_b: nn.Module | None = None,
+    model_module_eta: nn.Module | None = None,
+    step_cb: Callable[[int, float], None] | None = None,
+    eval_fn: Callable[[Any], torch.Tensor] | None = None,
+    step_cb_interval: int = 50,
+) -> None:
+    """train velocity (b) and denoiser (eta) jointly via one interleaved loop.
+
+    loss_b and loss_eta are independent -- neither references the other network
+    -- so advancing both per step is algebraically identical to two sequential
+    train_loop calls: each net only ever sees its own loss and optimizer.
+    interleaving only changes WHEN the held-out eval (which needs both nets)
+    becomes available. with both nets advancing together it is computable from
+    the start, so do_report forwards a score to step_cb every step_cb_interval
+    steps and hyperband can prune the whole trial -- not just its second half.
+
+    each iteration: one b-update, then one eta-update, then do_report().
+
+    invariants:
+      - optim_b owns exactly model_b.parameters(); same for eta.
+      - both models on the same device.
+      - both models are left in eval() on exit, INCLUDING when step_cb raises
+        optuna.TrialPruned mid-loop (try/finally) -- callers rely on the
+        "outside fit, models in eval" invariant.
+
+    args mirror train_two_phase except n_steps replaces n_steps_b / n_steps_eta:
+    b and eta advance in lockstep, so the two counts are necessarily equal.
+    """
+    mod_b = model_module_b if model_module_b is not None else model_b
+    mod_eta = model_module_eta if model_module_eta is not None else model_eta
+
+    device_b = next(mod_b.parameters()).device
+    device_eta = next(mod_eta.parameters()).device
+    if device_b != device_eta:
+        raise ValueError(
+            f"model_b on {device_b} but model_eta on {device_eta}; must match"
+        )
+
+    b_ids = {id(p) for p in mod_b.parameters()}
+    eta_ids = {id(p) for p in mod_eta.parameters()}
+    ob_ids = {id(p) for g in optim_b.param_groups for p in g["params"]}
+    oe_ids = {id(p) for g in optim_eta.param_groups for p in g["params"]}
+    assert ob_ids == b_ids, "optim_b must own exactly model_b.parameters()"
+    assert oe_ids == eta_ids, "optim_eta must own exactly model_eta.parameters()"
+
+    for name, fn in (("loss_b", loss_b), ("loss_eta", loss_eta)):
+        if not hasattr(fn, "required_keys") or not hasattr(fn, "requires_tau_grad"):
+            raise AttributeError(
+                f"{name} must have 'required_keys' and 'requires_tau_grad'"
+            )
+        if not fn.required_keys.issubset({"x0", "x1", "xstar"}):
+            raise ValueError(
+                f"{name}.required_keys must be subset of {{'x0','x1','xstar'}}"
+            )
+
+    needs_xstar = ("xstar" in loss_b.required_keys) or ("xstar" in loss_eta.required_keys)
+    if needs_xstar and samples_pstar is None:
+        raise ValueError("a loss requires 'xstar' but samples_pstar is None")
+
+    device = device_b
+    samples_p0 = samples_p0.float().to(device)
+    samples_p1 = samples_p1.float().to(device)
+    if samples_pstar is not None:
+        samples_pstar = samples_pstar.float().to(device)
+
+    loss_kw_b = loss_kwargs_b if loss_kwargs_b is not None else {}
+    loss_kw_eta = loss_kwargs_eta if loss_kwargs_eta is not None else {}
+
+    build_batch = _make_build_batch(
+        samples_p0, samples_p1, samples_pstar, batch_size, device, needs_xstar,
+    )
+    do_clip_b = _make_clip(mod_b.parameters(), grad_clip_norm_b)
+    do_clip_eta = _make_clip(mod_eta.parameters(), grad_clip_norm_eta)
+    do_sched_b = scheduler_b.step if scheduler_b is not None else _noop
+    do_sched_eta = scheduler_eta.step if scheduler_eta is not None else _noop
+    do_ema_b = (lambda: ema_b.update(mod_b)) if ema_b is not None else _noop
+    do_ema_eta = (lambda: ema_eta.update(mod_eta)) if ema_eta is not None else _noop
+    do_report = _make_report_pair(
+        step_cb, step_cb_interval, eval_fn, [mod_b, mod_eta],
+    )
+
+    mod_b.train()
+    mod_eta.train()
+    try:
+        for _ in range(n_steps):
+            # b-update
+            batch_b = build_batch()
+            tau_b, iw_b = time_sampler(batch_size, device)
+            loss = loss_b(model_b, batch_b, tau_b, iw_b, **loss_kw_b)
+            optim_b.zero_grad()
+            loss.backward()
+            do_clip_b()
+            optim_b.step()
+            do_sched_b()
+            do_ema_b()
+            # eta-update
+            batch_eta = build_batch()
+            tau_eta, iw_eta = time_sampler(batch_size, device)
+            loss = loss_eta(model_eta, batch_eta, tau_eta, iw_eta, **loss_kw_eta)
+            optim_eta.zero_grad()
+            loss.backward()
+            do_clip_eta()
+            optim_eta.step()
+            do_sched_eta()
+            do_ema_eta()
+            # report; may raise optuna.TrialPruned, caught by the finally below.
+            do_report()
+    finally:
+        mod_b.eval()
+        mod_eta.eval()
