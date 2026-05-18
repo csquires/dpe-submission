@@ -62,7 +62,8 @@ def stratified_pick(
     return stratum[rng.randint(0, len(stratum) - 1)]
 
 
-def make_objective(adapter, method: str, builder, study_seed: int) -> Callable:
+def make_objective(adapter, method: str, builder, study_seed: int,
+                   fixed_hp: Optional[dict] = None) -> Callable:
     """build trial objective closure with stratified cell pooling and pruning.
 
     adapter: ExperimentAdapter instance with train_pool(), stratify_key, eval_cell(),
@@ -88,8 +89,10 @@ def make_objective(adapter, method: str, builder, study_seed: int) -> Callable:
     """
 
     def objective(trial: optuna.Trial) -> float:
-        # 1. suggest hyperparams
+        # 1. suggest hyperparams; overlay experiment-level fixed pins
         hp = suggest_hp(trial, method)
+        if fixed_hp:
+            hp = {**hp, **fixed_hp}
 
         # 2. fetch metadata
         metadata = get_metadata(method)

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import importlib
 import logging
 
@@ -35,6 +35,9 @@ class StudyConfig:
             string.
         cores_per_trial: per-method core count; if set, method names must be
             in registry. If None, uses cores_registry defaults.
+        fixed_hp: optional dict of hyperparameter pins overlaid onto every
+            trial's suggested hp (e.g. {"n_hidden_layers": 3}); experiment-level
+            overrides for params removed from the per-method search space.
         resume_existing: load existing study journal if present, else start
             fresh.
         include_tabular: if True, methods may include tabular; warn if True
@@ -59,6 +62,7 @@ class StudyConfig:
     walltime_margin_minutes: int = 10
     nfs_base: Optional[str] = None
     cores_per_trial: Optional[Dict[str, int]] = None
+    fixed_hp: Optional[Dict[str, Any]] = None
 
     resume_existing: bool = True
     include_tabular: bool = False
