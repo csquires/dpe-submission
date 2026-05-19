@@ -83,7 +83,8 @@ def make_objective(adapter, method: str, builder, study_seed: int,
       5. derive trial-local rng via PCG64(hash((study_seed, trial.number))).
       6. construct step_cb if uses_pruning else None.
       7. call adapter.eval_cell(..., trial_number=trial.number, step_cb_interval=50).
-      8. catch RuntimeError, ValueError, AttributeError; return float('inf') on failure.
+      8. catch RuntimeError, ValueError, AttributeError; return float('inf') on
+         a bad-hyperparameter failure, but re-raise an OOM RuntimeError (FAIL).
       9. validate metric is finite; return float('inf') if not.
       10. return metric.
     """
@@ -140,6 +141,21 @@ def make_objective(adapter, method: str, builder, study_seed: int,
                 step_cb_interval=50,
             )
         except (RuntimeError, ValueError, AttributeError) as e:
+            # an OOM or missing-device crash is an infrastructure fault, not a
+            # verdict on the hyperparameters: re-raise so optuna marks the trial
+            # FAIL (kept out of the TPE model and the target-trial count) instead
+            # of recording a COMPLETE inf that silently pollutes the study.
+            msg = str(e).lower()
+            infra = (
+                "out of memory" in msg
+                or "can't allocate" in msg
+                or "not enough memory" in msg
+                or "no cuda gpus are available" in msg
+                or "cuda error" in msg
+            )
+            if isinstance(e, RuntimeError) and infra:
+                logging.error(f"trial {trial.number} infrastructure fault: {e}")
+                raise
             logging.warning(f"trial {trial.number} eval failed: {e}")
             return float("inf")
 
