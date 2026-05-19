@@ -56,7 +56,13 @@ class OccupancyAdapter(ExperimentAdapter):
         with open(_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
 
-        self._device = cfg.get("device", "cuda")
+        # fall back to cpu when cuda is unavailable (e.g. cpu/array lanes),
+        # matching the model_selection and pendulum adapters. without this an
+        # occupancy worker on a cpu node fails every trial with "No CUDA GPUs".
+        _dev = cfg.get("device", "cuda")
+        self._device = (
+            "cpu" if _dev == "cuda" and not torch.cuda.is_available() else _dev
+        )
         self._num_waypoints = cfg.get("num_waypoints")
 
         kt = cfg["kl_targets"]
