@@ -23,6 +23,7 @@ def run_holdout(
     full_budget_steps: int = 10000,
     device: str | None = None,
     output_dir: Path | None = None,
+    fixed_hp: dict | None = None,
 ) -> pd.DataFrame:
     """
     evaluate top-K optuna study hyperparameters on adapter.holdout_pool() cells.
@@ -61,8 +62,22 @@ def run_holdout(
     if device is None:
         device = getattr(adapter, "default_device", lambda: "cpu")()
 
-    # fetch top-K HPs
-    top_k_hps = probe.best_at_budget(study, budget_step=full_budget_steps, k=top_k)
+    # fetch top-K HPs and reconstruct the FULL hp dict the way objective.py did
+    # at HPO time:
+    #   1. probe returns trial.params (the suggest_* values only -- user-facing).
+    #   2. some suggest_hp modules add constants directly (e.g. num_epochs=2000)
+    #      that are NOT in trial.params. replay each partial through suggest_hp
+    #      via FixedTrial to recover those.
+    #   3. overlay config.fixed_hp on top, same order as objective.py.
+    from optuna.trial import FixedTrial
+    from ex.utils.hpo.suggest_hp import suggest_hp as _suggest_hp
+    top_k_partials = probe.best_at_budget(study, budget_step=full_budget_steps, k=top_k)
+    top_k_hps = []
+    for partial in top_k_partials:
+        full = _suggest_hp(FixedTrial(partial), method)
+        if fixed_hp:
+            full = {**full, **fixed_hp}
+        top_k_hps.append(full)
     if len(top_k_hps) < top_k:
         logger.warning(
             f"only {len(top_k_hps)} HPs available at budget {full_budget_steps}; requested top_k={top_k}"
