@@ -1,59 +1,78 @@
-"""optuna JournalStorage wrapper for NFS-safe study lifecycle.
+"""optuna storage backed by a shared Redis journal for distributed hpo.
 
-provides canonical journal paths, idempotent study creation, and zombie trial cleanup.
+hpo workers run on many nodes. a single long-lived redis-server (launched by
+redis_server.sh) is the only process that ever writes to disk -- its own
+append-only file. workers reach it over tcp, discovering its address from an
+endpoint file the server publishes on $DPE_DATA_ROOT.
+
+this replaces the file-journal backend: concurrent cross-node appends to one
+NFS file are not torn-write safe (a killed/slow writer can poison the whole
+journal). routing every write through one atomic redis server removes that
+failure class entirely.
+
+provides redis url resolution, per-study key namespacing, idempotent study
+creation, and age-thresholded stale-trial reaping.
 """
 
-from pathlib import Path
-from os import environ
-from optuna.storages import JournalStorage
-from optuna.storages.journal import JournalFileBackend, JournalFileSymlinkLock
-from optuna.samplers import TPESampler
-from optuna.pruners import HyperbandPruner
-from optuna.trial import TrialState
-import optuna
 import datetime
+from os import environ
+from pathlib import Path
+
+import optuna
+from optuna.pruners import HyperbandPruner
+from optuna.samplers import TPESampler
+from optuna.storages import JournalStorage
+from optuna.storages.journal import JournalRedisBackend
+from optuna.trial import TrialState
 
 
-def study_path(experiment: str, method: str) -> Path:
-    """resolve canonical journal path from DPE_DATA_ROOT env var.
+def redis_url() -> str:
+    """resolve the redis url from the endpoint file the server publishes.
+
+    redis_server.sh writes ``<host>:<port>`` to
+    ``$DPE_DATA_ROOT/redis/endpoint`` on every (re)start.
+
+    returns:
+        str: ``redis://<host>:<port>``.
+
+    raises:
+        RuntimeError: if DPE_DATA_ROOT is unset or the endpoint file is
+            absent (the redis-server job is not running).
+    """
+    if "DPE_DATA_ROOT" not in environ:
+        raise RuntimeError("DPE_DATA_ROOT environment variable not set")
+    endpoint = Path(environ["DPE_DATA_ROOT"]) / "redis" / "endpoint"
+    if not endpoint.is_file():
+        raise RuntimeError(
+            f"redis endpoint file not found at {endpoint}; "
+            f"is the redis-server job running? (see redis_server.sh)"
+        )
+    return f"redis://{endpoint.read_text().strip()}"
+
+
+def study_prefix(experiment: str, method: str) -> str:
+    """redis key namespace for one (experiment, method) study's journal."""
+    return f"{experiment}:{method}"
+
+
+def _get_storage(experiment: str, method: str) -> JournalStorage:
+    """build a JournalStorage over the shared redis-server.
+
+    use_cluster=False: every append is a single atomic redis incr+set (a
+    server-side lua script), so concurrent cross-node writers stay consistent
+    with no client-side file lock.
 
     args:
         experiment: experiment identifier.
         method: method identifier.
 
     returns:
-        Path: `$DPE_DATA_ROOT / experiment / "hpo_optuna" / f"{method}.journal"`
-
-    raises:
-        RuntimeError: if DPE_DATA_ROOT environment variable is not set.
+        JournalStorage: configured with a JournalRedisBackend namespaced to
+        this study.
     """
-    if "DPE_DATA_ROOT" not in environ:
-        raise RuntimeError("DPE_DATA_ROOT environment variable not set")
-
-    root = Path(environ["DPE_DATA_ROOT"])
-    return root / experiment / "hpo_optuna" / f"{method}.journal"
-
-
-def _get_storage(path: Path) -> JournalStorage:
-    """build JournalStorage with lock.
-
-    creates parent directories if missing; avoids duplication across
-    create_or_load calls.
-
-    args:
-        path: journal file path.
-
-    returns:
-        JournalStorage: configured with JournalFileBackend and 30s lock grace period.
-
-    note:
-        uses JournalFileSymlinkLock (atomic symlink(2) on NFSv2+), not
-        JournalFileOpenLock -- the latter relies on open(O_EXCL), which is
-        unreliable across nodes on NFS and caused torn-write journal corruption.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock = JournalFileSymlinkLock(str(path) + ".lock", grace_period=30)
-    backend = JournalFileBackend(str(path), lock_obj=lock)
+    backend = JournalRedisBackend(
+        redis_url(), use_cluster=False, prefix=study_prefix(experiment, method)
+    )
     return JournalStorage(backend)
 
 
@@ -68,9 +87,9 @@ def create_or_load(
 ) -> optuna.Study:
     """create study if not exists; load if exists (idempotent).
 
-    concurrent access from multiple workers is serialized via JournalFileSymlinkLock
-    (grace_period=30s). reuses on-disk config on existing studies; passed sampler/
-    pruner args are ignored if study already exists.
+    concurrent access from multiple workers is serialized by the single redis
+    server (atomic appends). reuses on-disk config on existing studies; passed
+    sampler/pruner args are ignored if the study already exists.
 
     args:
         experiment: experiment identifier.
@@ -83,15 +102,14 @@ def create_or_load(
         n_startup_trials: warmup trials for TPESampler; default 10.
 
     returns:
-        optuna.Study: created or loaded from canonical journal path.
+        optuna.Study: created or loaded from the shared redis journal.
 
     note:
         existing study with different sampler config reuses on-disk config.
         callers cannot override config mid-stream; sampler/pruner args are
         passed only on first creation.
     """
-    path = study_path(experiment, method)
-    storage = _get_storage(path)
+    storage = _get_storage(experiment, method)
 
     if sampler is None:
         sampler = TPESampler(
@@ -126,10 +144,9 @@ def reap_stale_trials(
 ) -> int:
     """fail RUNNING trials older than max_age_seconds and re-enqueue their config.
 
-    a RUNNING trial older than (worker walltime + margin) cannot be alive —
-    its slurm job was killed at walltime/preemption — so this is safe for any
-    worker to call concurrently; it never touches a genuinely-live trial. the
-    journal storage automatically re-reads the latest state, and
+    a RUNNING trial older than (worker walltime + margin) cannot be alive --
+    its slurm job was killed at walltime/preemption -- so this is safe for any
+    worker to call concurrently; it never touches a genuinely-live trial.
     skip_if_finished=True ensures concurrent reapers idempotently skip
     already-finished trials.
 
