@@ -1,7 +1,7 @@
 """multi-lane keeper for optuna hpo -- drains all configured lanes.
 
-a long-lived cpu-partition job. each cycle it counts terminal trials
-(COMPLETE + PRUNED) in every (experiment, method) study of a StudyConfig and,
+a long-lived cpu-partition job. each cycle it counts COMPLETE
+trials in every (experiment, method) study of a StudyConfig and,
 for any study still short of `target_trials`, tops its worker population
 across all lanes in config.lanes, subject to per-lane caps and cluster safety
 limits. exits once every study has reached its target.
@@ -34,22 +34,23 @@ from ex.utils.hpo.optuna.storage import create_or_load
 
 logger = logging.getLogger(__name__)
 
-# trials that consumed budget and inform TPE; FAIL/RUNNING do not count.
-_TERMINAL = (TrialState.COMPLETE, TrialState.PRUNED)
+# states that count toward target_trials; matches the MaxTrialsCallback in
+# worker.py so the keeper and the workers agree on when a study is done.
+_BUDGET_STATES = (TrialState.COMPLETE,)
 
 
-def count_terminal(experiment: str, method: str, attempts: int = 3) -> int:
-    """count COMPLETE + PRUNED trials in a study's journal.
+def count_complete(experiment: str, method: str, attempts: int = 3) -> int:
+    """count COMPLETE trials in a study (the target_trials metric).
 
-    the whole journal is replayed on each call; a concurrent worker append can
-    momentarily tear that read (decode/parse error). the tear is transient, so
-    retry a few times before giving up.
+    PRUNED/FAIL trials do not count: target_trials is a budget of full-length
+    completions, enforced worker-side by MaxTrialsCallback. the study is loaded
+    fresh each call; a transient read error is retried a few times.
     """
     last_err: Exception | None = None
     for attempt in range(attempts):
         try:
             study = create_or_load(experiment, method)
-            return sum(1 for t in study.trials if t.state in _TERMINAL)
+            return sum(1 for t in study.trials if t.state in _BUDGET_STATES)
         except Exception as e:  # torn read; retry
             last_err = e
             if attempt < attempts - 1:
@@ -225,7 +226,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     """keeper main loop.
 
-    per cycle: (1) count terminal trials per study; if all >= target_trials,
+    per cycle: (1) count COMPLETE trials per study; if all >= target_trials,
     exit. (2) for each lane in config.lanes, split lane.max_concurrent (the
     per-lane total running cap) evenly across the studies still under target
     and top each up to its share; array lane uses one --array job per study,
@@ -279,7 +280,7 @@ def main() -> int:
         count_errors = 0
         for i, method in enumerate(config.methods):
             try:
-                n = count_terminal(config.experiment, method)
+                n = count_complete(config.experiment, method)
             except Exception as e:
                 logger.warning("cycle %d: count failed for %s: %s", cycle, method, e)
                 count_errors += 1

@@ -15,6 +15,8 @@ import optuna
 import optuna.pruners
 import optuna.samplers
 import optuna.exceptions
+from optuna.study import MaxTrialsCallback
+from optuna.trial import TrialState
 
 from pathlib import Path
 from ex.utils.hpo.optuna.storage import create_or_load
@@ -34,6 +36,7 @@ def run_worker(
     min_resource: int = 100,
     max_resource: int = 10000,
     reduction_factor: int = 3,
+    target_trials: int = 320,
     fixed_hp: dict | None = None,
 ) -> None:
     """
@@ -46,8 +49,9 @@ def run_worker(
       4. load/create study via storage.create_or_load(experiment, method)
       5. get adapter; resolve builder from METADATA['builder'] in BUILDERS_REGISTRY
       6. make_objective via objective module
-      7. instantiate callbacks = [RetryFailedTrialCallback(...)]
-      8. study.optimize(...) with timeout, gc_after_trial=True, catch=(RuntimeError, ValueError)
+      7. build callbacks = [MaxTrialsCallback(target_trials, states=COMPLETE)]
+      8. study.optimize(...) with timeout, callbacks, gc_after_trial=True,
+         catch=(RuntimeError, ValueError)
       9. log completion
 
     thread config must precede torch import (env vars only take effect on first load).
@@ -61,6 +65,8 @@ def run_worker(
       timeout_seconds: float, wall-clock timeout for this worker's optimize() call
       worker_id: int, [0, n_jobs); used to derive unique sampler seed per worker
       cores_per_trial: int, BLAS threads to allocate
+      target_trials: int, study-wide budget of COMPLETE trials; the worker
+        stops (study.stop via MaxTrialsCallback) once the shared study reaches it
 
     returns: None (logs errors and exits nonzero on failure)
     """
@@ -102,7 +108,7 @@ def run_worker(
         slurm_array_task_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
         seed_for_worker = hash((study_seed, slurm_job_id, slurm_array_task_id, worker_id)) & 0xFFFFFFFF
         sampler = optuna.samplers.TPESampler(
-            n_startup_trials=10, multivariate=True, group=True, constant_liar=True, seed=seed_for_worker
+            n_startup_trials=64, multivariate=True, group=True, constant_liar=True, seed=seed_for_worker
         )
 
         metadata = get_metadata(method)
@@ -151,6 +157,9 @@ def run_worker(
             timeout=timeout_seconds,
             gc_after_trial=True,
             catch=(RuntimeError, ValueError),
+            callbacks=[
+                MaxTrialsCallback(target_trials, states=(TrialState.COMPLETE,))
+            ],
         )
         logger.info("optimize() completed or timed out")
     except KeyboardInterrupt:

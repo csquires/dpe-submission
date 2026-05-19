@@ -73,6 +73,7 @@ def _run_parallel(
     min_resource: int = 100,
     max_resource: int = 10000,
     reduction_factor: int = 3,
+    target_trials: int = 320,
     fixed_hp: dict | None = None,
 ) -> int:
     """spawn M loky workers and consume task generator with SIGTERM protection.
@@ -112,6 +113,7 @@ def _run_parallel(
                     min_resource=min_resource,
                     max_resource=max_resource,
                     reduction_factor=reduction_factor,
+                    target_trials=target_trials,
                     fixed_hp=fixed_hp,
                 )
 
@@ -305,6 +307,7 @@ def main() -> int:
                 min_resource=config.min_resource,
                 max_resource=config.max_resource,
                 reduction_factor=config.reduction_factor,
+                target_trials=config.target_trials,
                 fixed_hp=config.fixed_hp,
             )
             logger.info("worker completed normally")
@@ -330,6 +333,7 @@ def main() -> int:
             min_resource=config.min_resource,
             max_resource=config.max_resource,
             reduction_factor=config.reduction_factor,
+            target_trials=config.target_trials,
             fixed_hp=config.fixed_hp,
         )
 

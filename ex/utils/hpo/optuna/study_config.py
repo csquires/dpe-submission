@@ -25,9 +25,9 @@ class StudyConfig:
             pruner config.
         reduction_factor: hyperband reduction factor; must > 1.
         holdout_top_k: number of trials to evaluate on holdout pool; must > 0.
-        target_trials: per-study trial-count goal for the preempt keeper; the
-            keeper stops dispatching once a study's COMPLETE+PRUNED count
-            reaches it. must > 0.
+        target_trials: per-study budget of COMPLETE (full-length) trials;
+            the keeper stops dispatching once a study's COMPLETE count reaches
+            it, and workers self-stop via MaxTrialsCallback. must > 0.
         walltime_margin_minutes: buffer before hard timeout; must <
             walltime_minutes.
         nfs_base: root for journal files; defaults to $DPE_DATA_ROOT/optuna at
@@ -57,7 +57,7 @@ class StudyConfig:
     max_resource: int = 10000
     reduction_factor: int = 3
     holdout_top_k: int = 5
-    target_trials: int = 200
+    target_trials: int = 320
 
     walltime_margin_minutes: int = 10
     nfs_base: Optional[str] = None
