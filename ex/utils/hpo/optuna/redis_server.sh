@@ -82,7 +82,18 @@ while kill -0 "$REDIS_PID" 2>/dev/null; do
 				python -m ex.utils.hpo.optuna.keeper \
 					--config "$cfg" --workdir "$WORKDIR" \
 					>> "logs/keeper_${cfg##*.}_${SLURM_JOB_ID}.out" 2>&1
-				[[ $? -eq 0 ]] && touch "$RDIR/done/$cfg"
+				if [[ $? -eq 0 ]]; then
+					# campaign hit target -> sbatch a holdout job per method,
+					# then mark done. holdout failures are logged but do not
+					# block the done-marker.
+					ms=$(python -c "from ex.utils.hpo.optuna.study_config import load_config; print(' '.join(load_config('$cfg').methods))")
+					for m in $ms; do
+						bash ex/utils/hpo/optuna/submit_holdout.sh \
+							--config "$cfg" --method "$m" \
+							>> "logs/keeper_${cfg##*.}_${SLURM_JOB_ID}.out" 2>&1 || true
+					done
+					touch "$RDIR/done/$cfg"
+				fi
 			) &
 			KPID[$cfg]=$!
 			echo "[redis] spawned keeper for ${cfg} (pid ${KPID[$cfg]})"
