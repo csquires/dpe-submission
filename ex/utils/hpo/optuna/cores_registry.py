@@ -13,7 +13,6 @@ CORES_REGISTRY: dict[str, int] = {
     "TSM": 2,
     "BDRE": 2,
     "MDRE_15": 2,
-    "MultiHeadTDRE": 2,
     # Slow continuous
     "CTSM": 4,
     "VFM": 4,
@@ -24,6 +23,7 @@ CORES_REGISTRY: dict[str, int] = {
     "TriangularFMDRE": 4,
     "TriangularMDRE": 4,
     "MultiHeadTriangularTDRE": 4,
+    "MultiHeadTDRE": 4,  # same multi-head classifier/epoch budget as the triangular variant
     "TriangularCTSM_V1": 4,
     "TriangularCTSM_V2": 4,
     "TriangularCTSM_V3": 4,
