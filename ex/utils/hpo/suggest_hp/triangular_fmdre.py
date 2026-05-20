@@ -6,7 +6,6 @@ import optuna
 
 
 METADATA = {
-    "cores_per_trial": 4,
     "uses_pruning": True,
     "requires_pstar": True,
     "builder": "build_TriangularFMDRE",

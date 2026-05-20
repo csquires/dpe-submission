@@ -12,7 +12,6 @@ N_EPOCHS = 2000
 
 
 METADATA = {
-    "cores_per_trial": 4,
     "uses_pruning": True,
     "requires_pstar": True,
     "builder": "build_MHTTDRE",

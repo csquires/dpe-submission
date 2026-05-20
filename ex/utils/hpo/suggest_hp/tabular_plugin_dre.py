@@ -6,7 +6,6 @@ import optuna
 
 
 METADATA = {
-    "cores_per_trial": 1,
     "uses_pruning": False,
     "requires_pstar": False,
     "builder": "build_TabularPluginDRE",

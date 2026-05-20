@@ -10,7 +10,6 @@ import optuna
 
 
 METADATA = {
-    "cores_per_trial": 2,
     "uses_pruning": True,
     "requires_pstar": False,
     "builder": "build_MHTDRE",
