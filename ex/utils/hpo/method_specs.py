@@ -274,7 +274,8 @@ METHOD_SPECS = {
             "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
             "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
             "apply_iw": ("choice", [True, False]),
-            # not an HPO knob: FMDRE-family div_method is deliberately pinned "exact"
+            # not an HPO knob: FMDRE-family div_method/n_hutch_samples are pinned
+            # to "hutch_rademacher"/4 (mirrors VFM/VFMOrthros)
         },
         "tabular_only": False,
     },
@@ -304,7 +305,8 @@ METHOD_SPECS = {
             "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
             "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
             "apply_iw": ("choice", [True, False]),
-            # not an HPO knob: FMDRE-family div_method is deliberately pinned "exact"
+            # not an HPO knob: FMDRE-family div_method/n_hutch_samples are pinned
+            # to "hutch_rademacher"/4 (mirrors VFM/VFMOrthros)
             # not an HPO knob: sentinel_cond is FMDRE_S2's internal CFG sentinel
         },
         "tabular_only": False,
@@ -352,7 +354,8 @@ METHOD_SPECS = {
             "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
             "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
             "apply_iw": ("choice", [True, False]),
-            # not an HPO knob: FMDRE-family div_method is deliberately pinned "exact"
+            # not an HPO knob: FMDRE-family div_method/n_hutch_samples are pinned
+            # to "hutch_rademacher"/4 (mirrors VFM/VFMOrthros)
         },
         "tabular_only": False,
     },
