@@ -238,11 +238,15 @@ def main() -> int:
         logger.error(f"failed to load lane '{args.lane}': {e}")
         return 1
 
-    # compute cores per trial
+    # compute cores per trial: lane override wins, else per-method registry.
     try:
-        cores_per_trial = get_cores_for_method(
-            method, config.cores_per_trial
-        )
+        if lane.cores_per_trial is not None:
+            cores_per_trial = lane.cores_per_trial
+            logger.info(
+                f"cores_per_trial pinned by lane '{args.lane}': {cores_per_trial}"
+            )
+        else:
+            cores_per_trial = get_cores_for_method(method, config.cores_per_trial)
     except KeyError as e:
         logger.error(f"failed to get cores for method {method}: {e}")
         return 1

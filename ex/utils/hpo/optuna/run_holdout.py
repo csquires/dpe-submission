@@ -196,17 +196,19 @@ def main() -> int:
     p.add_argument("--k-per-budget", type=int, default=POOL_K_PER_BUDGET)
     p.add_argument("--eval-interval", type=int, default=EVAL_INTERVAL)
     p.add_argument("--cores-per-trial", type=int, default=None,
-                   help="BLAS threads per loky worker; default get_cores_for_method")
+                   help="BLAS threads per loky worker. required for "
+                        "--element-idx / --chunk-idx; the launcher sets it to "
+                        "cpus_per_task // chunk_size so workers don't "
+                        "oversubscribe the slurm allocation.")
     p.add_argument("--output-root", default=None,
                    help="default $DPE_DATA_ROOT/holdout")
     args = p.parse_args()
 
-    # cheap import here: only needed to count total elements / cores_per_trial.
+    # cheap import here: only needed to count total elements.
     from ex.utils.hpo.optuna.study_config import load_config
     from ex.utils.hpo.optuna.storage import create_or_load
     from ex.utils.hpo.optuna import probe
     from ex.utils.hpo.adapters import get_adapter
-    from ex.utils.hpo.optuna.cores_registry import get_cores_for_method
 
     cfg = load_config(args.config)
     if args.method not in cfg.methods:
@@ -214,10 +216,13 @@ def main() -> int:
         return 1
 
     out_root = _resolve_output_root(args.output_root)
-    cores_per_trial = (
-        args.cores_per_trial if args.cores_per_trial is not None
-        else get_cores_for_method(args.method, cfg.cores_per_trial)
-    )
+    # the launcher owns the (cpus, chunk_size, cores) shape; we just consume it.
+    # only --list-elements may omit cores_per_trial (no training is launched).
+    if (args.element_idx is not None or args.chunk_idx is not None) \
+            and args.cores_per_trial is None:
+        logging.error("--cores-per-trial required for --element-idx / --chunk-idx")
+        return 2
+    cores_per_trial = args.cores_per_trial
 
     # count total elements without spinning up training subsystems.
     bands = [int(b) for b in args.bands.split(",")]

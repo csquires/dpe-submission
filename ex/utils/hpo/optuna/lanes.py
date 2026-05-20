@@ -16,6 +16,14 @@ Batch size semantics:
   - batch_size=None: derive at runtime as cpus_per_task // cores_per_trial(method).
   - batch_size=<int>: pin to that value, ignore per-method core allocation.
 
+Cores-per-trial semantics:
+  - cores_per_trial=None: use cores_registry.get_cores_for_method(method)
+    (per-method latency-bound default).
+  - cores_per_trial=<int>: pin to this value, ignore the registry. Use this
+    when the lane has been profiled and the throughput-optimal shape differs
+    from the per-method latency-bound default (e.g. array lane wants B=32
+    cores=1, not B=8 cores=4).
+
 QoS semantics:
   - qos="": omit --qos flag from sbatch (use partition default).
   - qos=<string>: pass --qos <string> to sbatch.
@@ -37,6 +45,9 @@ class LaneProfile:
         batch_size: number of concurrent trials per worker.
                     None = derive at runtime as cpus_per_task // cores_per_trial(method).
                     int = pin to this value.
+        cores_per_trial: BLAS threads per worker (overrides cores_registry).
+                    None = look up per-method via cores_registry.
+                    int = pin (used for throughput-bound lanes like 'array').
         worker_walltime: per-worker walltime limit, HH:MM:SS format.
         max_concurrent: per-lane TOTAL concurrent-job cap (the binding qos
                        MaxJobsPU/MaxTRESPU minus headroom). The keeper splits it
@@ -50,18 +61,25 @@ class LaneProfile:
     batch_size: int | None
     worker_walltime: str
     max_concurrent: int
+    cores_per_trial: int | None = None
 
 
 LANES: dict[str, LaneProfile] = {
+    # array: profiled-optimal throughput shape (scratch/holdout_sweep_aggregate.py
+    # + the zen 4/5 reps in scratch/holdout_profile_results_zen45/): cpus=32,
+    # B=32, cores=1 -> 13.28 elem/min on epyc 7763, 1.43x cpus=16/B=8. consumers
+    # (submit.py worker, submit_holdout.sh) read the lane to avoid duplicating
+    # the shape.
     "array": LaneProfile(
         partition="array",
         qos="",
         gpus=0,
-        cpus_per_task=16,
-        mem="64G",
-        batch_size=None,
+        cpus_per_task=32,
+        mem="128G",
+        batch_size=32,
         worker_walltime="06:00:00",
         max_concurrent=96,
+        cores_per_trial=1,
     ),
     "cpu": LaneProfile(
         partition="cpu",
