@@ -16,6 +16,7 @@ from . import mh_triangular_tdre
 from . import triangular_fmdre
 from . import triangular_mdre
 from . import tabular_plugin_dre
+from . import tsm
 from . import vfm
 from . import vfmorthros
 
@@ -31,6 +32,7 @@ SUGGEST_HP_REGISTRY: dict[str, tuple[Callable[[optuna.Trial], dict], dict]] = {
     "TriangularFMDRE": (triangular_fmdre.suggest_hp, triangular_fmdre.METADATA),
     "TriangularMDRE": (triangular_mdre.suggest_hp, triangular_mdre.METADATA),
     "TabularPluginDRE": (tabular_plugin_dre.suggest_hp, tabular_plugin_dre.METADATA),
+    "TSM": (tsm.suggest_hp, tsm.METADATA),
     "VFM": (vfm.suggest_hp, vfm.METADATA),
     "VFMOrthros": (vfmorthros.suggest_hp, vfmorthros.METADATA),
 }
