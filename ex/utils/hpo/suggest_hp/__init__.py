@@ -7,9 +7,14 @@ from collections.abc import Callable
 import optuna
 
 from . import bdre
+from . import ctsm
+from . import fmdre
+from . import fmdre_s2
+from . import mdre
 from . import mh_tdre
 from . import mh_triangular_tdre
 from . import triangular_fmdre
+from . import triangular_mdre
 from . import tabular_plugin_dre
 from . import vfm
 from . import vfmorthros
@@ -17,9 +22,14 @@ from . import vfmorthros
 
 SUGGEST_HP_REGISTRY: dict[str, tuple[Callable[[optuna.Trial], dict], dict]] = {
     "BDRE": (bdre.suggest_hp, bdre.METADATA),
+    "CTSM": (ctsm.suggest_hp, ctsm.METADATA),
+    "FMDRE": (fmdre.suggest_hp, fmdre.METADATA),
+    "FMDRE_S2": (fmdre_s2.suggest_hp, fmdre_s2.METADATA),
+    "MDRE_15": (mdre.suggest_hp, mdre.METADATA),
     "MultiHeadTDRE": (mh_tdre.suggest_hp, mh_tdre.METADATA),
     "MultiHeadTriangularTDRE": (mh_triangular_tdre.suggest_hp, mh_triangular_tdre.METADATA),
     "TriangularFMDRE": (triangular_fmdre.suggest_hp, triangular_fmdre.METADATA),
+    "TriangularMDRE": (triangular_mdre.suggest_hp, triangular_mdre.METADATA),
     "TabularPluginDRE": (tabular_plugin_dre.suggest_hp, tabular_plugin_dre.METADATA),
     "VFM": (vfm.suggest_hp, vfm.METADATA),
     "VFMOrthros": (vfmorthros.suggest_hp, vfmorthros.METADATA),

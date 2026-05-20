@@ -1,4 +1,4 @@
-"""define-by-run optuna suggest_hp for BDRE.
+"""define-by-run optuna suggest_hp for MDRE (alias MDRE_15).
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
 calls. flat parameter space; the behavioral inertness probe
@@ -20,17 +20,18 @@ METADATA = {
     "cores_per_trial": 2,
     "uses_pruning": True,
     "requires_pstar": False,
-    "builder": "build_BDRE",
+    "builder": "build_MDRE",
 }
 
 
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
-    """sample hyperparameters for BDRE.
+    """sample hyperparameters for MDRE.
 
-    emits num_epochs as the fixed constant N_EPOCHS, plus 3 tuned params:
+    emits num_epochs as the fixed constant N_EPOCHS, plus 4 tuned params:
     - learning_rate: log-uniform [1e-4, 1e-2]
     - latent_dim: categorical [64, 128, 256]
     - batch_size: categorical [None, 128, 256]
+    - num_waypoints: categorical [5, 10, 15] (= classifier num_classes)
 
     not searched -- pinned per-experiment via StudyConfig.fixed_hp:
     - n_hidden_layers (mirrors VFM's convention)
@@ -39,8 +40,9 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         trial: optuna trial object
 
     returns:
-        flat dict; builder forwards every key to DefaultBinaryClassifier
-        via make_binary_classifier.
+        flat dict; builder pops num_waypoints (= num_classes) and forwards
+        the rest to DefaultMulticlassClassifier via
+        make_multiclass_classifier.
     """
     hp = {}
 
@@ -54,6 +56,9 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     )
     hp["batch_size"] = trial.suggest_categorical(
         "batch_size", [None, 128, 256]
+    )
+    hp["num_waypoints"] = trial.suggest_categorical(
+        "num_waypoints", [5, 10, 15]
     )
 
     return hp
