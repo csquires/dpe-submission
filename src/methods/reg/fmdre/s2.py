@@ -44,6 +44,7 @@ class FMDRE_S2(DRE):
         # FMDRE_S2-specific (explicit)
         score_weight: float = 1.0,
         div_method: str = "hutch_rademacher",
+        n_hutch_samples: int = 1,
         integration_steps: int = 10000,
         p_uncond: float = 0.1,
         sentinel_cond: float = -1.0,
@@ -65,6 +66,7 @@ class FMDRE_S2(DRE):
             device: torch device string or None for auto (default None).
             score_weight: loss weight for score loss (default 1.0).
             div_method: divergence estimator for ode integration (default "hutch_rademacher").
+            n_hutch_samples: averaging count for the hutchinson estimator (default 1).
             integration_steps: ode integration steps (default 10000).
             p_uncond: cfg dropout probability in [0, 1] (default 0.1).
             sentinel_cond: sentinel value for unconditional signal (default -1.0).
@@ -82,6 +84,7 @@ class FMDRE_S2(DRE):
         self.time = time
         self.score_weight = score_weight
         self.div_method = div_method
+        self.n_hutch_samples = n_hutch_samples
         self.integration_steps = integration_steps
         self.p_uncond = p_uncond
         self.sentinel_cond = sentinel_cond
@@ -237,6 +240,7 @@ class FMDRE_S2(DRE):
             eps=self.time.eps,
             device=str(self.device),
             div_method=self.div_method,
+            n_hutch_samples=self.n_hutch_samples,
             uncond_cond=self.sentinel_cond,
             warn_uncond=False,
         )

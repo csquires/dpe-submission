@@ -34,6 +34,7 @@ def ratio_ode(
     eps: float = 0.01,
     device: str | None = None,
     div_method: str = "exact",
+    n_hutch_samples: int = 1,
 ) -> Tensor:
     """
     integrate the ratio ODE backward from t=1 to t=0 to compute log density ratios.
@@ -65,6 +66,9 @@ def ratio_ode(
                              "hutch_gaussian" (hutchinson with gaussian noise)
                              "hutch_rademacher" (hutchinson with rademacher noise)
 
+        n_hutch_samples: averaging count for the hutchinson estimator (default 1).
+                         ignored when div_method == "exact".
+
     returns:
         [B] tensor of log density ratios log(p(x|c0) / p(x|c1)) at query points.
     """
@@ -80,7 +84,7 @@ def ratio_ode(
 
     model.eval()
 
-    div_fn = build_div_fn(div_method)
+    div_fn = build_div_fn(div_method, n_samples=n_hutch_samples)
 
     with torch.no_grad():
         for i in range(steps - 1):
@@ -124,6 +128,7 @@ def ratio_ode_s2(
     eps: float = 0.01,
     device: str | None = None,
     div_method: str = "exact",
+    n_hutch_samples: int = 1,
     uncond_cond: float = -1.0,
     warn_uncond: bool = True,
 ) -> Tensor:
@@ -148,6 +153,7 @@ def ratio_ode_s2(
         eps: time boundary offset (default 0.01)
         device: optional device override
         div_method: "exact", "hutch_gaussian", or "hutch_rademacher"
+        n_hutch_samples: hutchinson averaging count (default 1; ignored for "exact")
         uncond_cond: condition value for unconditional field (default -1.0)
         warn_uncond: emit warning about CFG dropout requirement (default true)
 
@@ -168,7 +174,7 @@ def ratio_ode_s2(
 
     model.eval()
 
-    div_fn = build_div_fn(div_method)
+    div_fn = build_div_fn(div_method, n_samples=n_hutch_samples)
 
     if warn_uncond:
         warnings.warn(
@@ -222,6 +228,7 @@ def ratio_ode_triangular(
     eps: float = 0.01,
     device: str | None = None,
     div_method: str = "hutch_rademacher",
+    n_hutch_samples: int = 1,
 ) -> Tensor:
     """
     integrate the ratio ODE backward from t=1 to t=0 in the one-hot setting.
@@ -257,6 +264,8 @@ def ratio_ode_triangular(
                     note: defaults to "hutch_rademacher" (not "exact") for
                     MNIST-scale OOM safety; deviates from ratio_ode_s2 default.
 
+        n_hutch_samples: hutchinson averaging count (default 1; ignored for "exact")
+
     returns:
         [B] tensor of log density ratios at query points.
 
@@ -277,7 +286,7 @@ def ratio_ode_triangular(
 
     model.eval()
 
-    div_fn = build_div_fn(div_method)
+    div_fn = build_div_fn(div_method, n_samples=n_hutch_samples)
 
     # build one-hot conditioning tensors once; eye[k] gives k-th standard basis row
     eye3 = torch.eye(3, device=device, dtype=xs.dtype)

@@ -13,7 +13,8 @@ trigger the bernoulli-dropout path in make_fm_loss.
 
 not searched -- pinned:
   - n_hidden_layers: per-experiment via StudyConfig.fixed_hp
-  - div_method: deliberately pinned "exact" inside build_FMDRE_S2
+  - div_method/n_hutch_samples: pinned "hutch_rademacher" / 4 inside
+    build_FMDRE_S2 (mirrors the VFM/VFMOrthros pin)
   - sentinel_cond: FMDRE_S2 internal CFG sentinel (not an HPO knob)
   - activation/layernorm: CondVelScoreMLP has hardcoded GELU, no layernorm
 """

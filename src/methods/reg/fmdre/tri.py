@@ -45,6 +45,7 @@ class TriangularFMDRE(ELDR):
         # TriFMDRE-specific (explicit)
         score_weight: float = 1.0,
         div_method: str = "hutch_rademacher",
+        n_hutch_samples: int = 1,
         integration_steps: int = 10000,
         triangular_p_uncond: float = 0.0,
         layernorm: str = "off",
@@ -66,6 +67,7 @@ class TriangularFMDRE(ELDR):
             device: torch device string (default auto-detect cuda).
             score_weight: weight for score-matching loss term (default 1.0).
             div_method: divergence estimator method (default "hutch_rademacher").
+            n_hutch_samples: averaging count for the hutchinson estimator (default 1).
             integration_steps: ODE solver steps at predict time (default 10000).
             triangular_p_uncond: probability of dropping class condition (default 0.0).
             layernorm: layer norm mode in {"off", "pre", "post"} (default "off").
@@ -78,6 +80,7 @@ class TriangularFMDRE(ELDR):
         self.score_weight = score_weight
         self.integration_steps = integration_steps
         self.div_method = div_method
+        self.n_hutch_samples = n_hutch_samples
         self.n_hidden_layers = n_hidden_layers
 
         # cfg-based attributes
@@ -256,6 +259,7 @@ class TriangularFMDRE(ELDR):
             eps=self.time.eps,
             device=str(self.device),
             div_method=self.div_method,
+            n_hutch_samples=self.n_hutch_samples,
         )
 
         return ldr.detach().cpu()

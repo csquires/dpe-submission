@@ -41,10 +41,12 @@ def build_div_fn(
     """
     if method == "exact":
         return exact_div
+    # combined keys are aliases for (method="hutchinson", noise=<inferred>) so
+    # the n_samples averaging branch below handles them uniformly.
     if method == "hutch_gaussian":
-        return partial(hutch_div, noise="gaussian")
-    if method == "hutch_rademacher":
-        return partial(hutch_div, noise="rademacher")
+        method, noise = "hutchinson", "gaussian"
+    elif method == "hutch_rademacher":
+        method, noise = "hutchinson", "rademacher"
     if method == "hutchinson":
         if noise not in ("gaussian", "rademacher"):
             raise ValueError(

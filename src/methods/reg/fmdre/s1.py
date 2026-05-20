@@ -41,6 +41,7 @@ class FMDRE(DRE):
         # FMDRE-specific (explicit)
         score_weight: float = 1.0,
         div_method: str = "hutch_rademacher",
+        n_hutch_samples: int = 1,
         integration_steps: int = 10000,
         reweight: bool = False,
         precond: bool = False,
@@ -60,6 +61,7 @@ class FMDRE(DRE):
             device: torch device string or None for auto (default None).
             score_weight: loss weight for score loss (default 1.0).
             div_method: divergence estimator for ode integration (default "hutch_rademacher").
+            n_hutch_samples: averaging count for the hutchinson estimator (default 1).
             integration_steps: ode integration steps (default 10000).
             precond: optional Karras preconditioning on both heads (velocity, score).
                 If True, wraps the network with learned-parameter-free coefficients
@@ -76,6 +78,7 @@ class FMDRE(DRE):
         self.time = time
         self.score_weight = score_weight
         self.div_method = div_method
+        self.n_hutch_samples = n_hutch_samples
         self.reweight = reweight
         self.integration_steps = integration_steps
         self.precond = precond
@@ -213,6 +216,7 @@ class FMDRE(DRE):
             eps=self.time.eps,
             device=str(self.device),
             div_method=self.div_method,
+            n_hutch_samples=self.n_hutch_samples,
         )
 
         return ldr.detach().cpu()

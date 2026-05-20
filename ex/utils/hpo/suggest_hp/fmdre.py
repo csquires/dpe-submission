@@ -12,7 +12,8 @@ inertness edges (from static + scratch/fmdre_inertness_probe.py):
 
 not searched -- pinned:
   - n_hidden_layers: per-experiment via StudyConfig.fixed_hp
-  - div_method: deliberately pinned "exact" inside build_FMDRE
+  - div_method/n_hutch_samples: pinned "hutch_rademacher" / 4 inside build_FMDRE
+    (mirrors the VFM/VFMOrthros pin)
   - activation/layernorm: CondVelScoreMLP has hardcoded GELU, no layernorm
 """
 
