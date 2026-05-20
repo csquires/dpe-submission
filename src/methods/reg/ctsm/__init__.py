@@ -10,7 +10,7 @@ integrator and curve (typically identity 1D for closed-form tau integration).
 
 triangular variants (V1 barycentric, V2 piecewise-SB, V3 2D) live under `.tri`.
 """
-from typing import Optional
+from typing import Callable, Optional
 import warnings
 
 import torch
@@ -201,11 +201,30 @@ class CTSM(DRE):
             activation=self.activation,
         ).to(self.device)
 
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+    def fit(
+        self,
+        samples_p0: torch.Tensor,
+        samples_p1: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
+    ) -> None:
         """train the single score network via SB loss under direct path parameterization.
 
         build optimizer, scheduler, EMA, and loss closure; delegate to train_loop
         with paradigm-specific regression target from ctsm_regression_target_direct_1d.
+
+        Args:
+            samples_p0: [N0, input_dim] samples from p0.
+            samples_p1: [N1, input_dim] samples from p1.
+            step_cb: optional callback invoked every step_cb_interval steps with
+                (step_index: int, score: float). when None, no instrumentation.
+            eval_data: optional dict with keys "pstar" and "true_ldrs" (paired by
+                index). used to build eval_fn closure only if step_cb is not None.
+                when None, eval_fn is not constructed.
+            step_cb_interval: interval (in minibatch updates) for step_cb invocation
+                (default 50).
         """
         self.init_model()
 
@@ -255,6 +274,20 @@ class CTSM(DRE):
         loss_fn.required_keys = frozenset({"x0", "x1"})
         loss_fn.requires_tau_grad = False
 
+        # build eval_fn if both callbacks and eval data are provided.
+        # eval_data["pstar"] is the holdout eval inputs; "true_ldrs" the paired
+        # ground-truth log-density-ratios used by Hyperband's per-step pruning.
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
         # step 5d: call train_loop
         train_loop(
             model=self.model,
@@ -270,6 +303,9 @@ class CTSM(DRE):
             ema=self.ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.path.eps,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
         # step 5e: set to eval mode

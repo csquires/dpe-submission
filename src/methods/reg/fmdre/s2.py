@@ -3,7 +3,7 @@
 reference: arXiv:2602.24201 (S2 setting).
 """
 
-from typing import Optional
+from typing import Callable, Optional
 import warnings
 import torch
 
@@ -103,7 +103,15 @@ class FMDRE_S2(DRE):
         """instantiate the conditional velocity MLP on self.device."""
         self.model = CondVelScoreMLP(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
 
-    def fit(self, samples_p0: torch.Tensor, samples_p1: torch.Tensor) -> None:
+    def fit(
+        self,
+        samples_p0: torch.Tensor,
+        samples_p1: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
+    ) -> None:
         """train the velocity field on p0 -> p1 flow using fm_loss with cfg dropout.
 
         procedure:
@@ -113,6 +121,17 @@ class FMDRE_S2(DRE):
           4. optionally compute endpoint moments and preconditioning coefficients.
           5. delegate to train_loop with fm_loss and cfg guidance (p_uncond > 0).
           6. set model.eval().
+
+        Args:
+            samples_p0: [N0, input_dim] samples from p0.
+            samples_p1: [N1, input_dim] samples from p1.
+            step_cb: optional callback invoked every step_cb_interval steps with
+                (step_index: int, score: float). when None, no instrumentation.
+            eval_data: optional dict with keys "pstar" and "true_ldrs" (paired by
+                index). used to build eval_fn closure only if step_cb is not None.
+                when None, eval_fn is not constructed.
+            step_cb_interval: interval (in minibatch updates) for step_cb invocation
+                (default 50).
         """
         self.init_model()
         samples_p0 = samples_p0.float()
@@ -154,6 +173,20 @@ class FMDRE_S2(DRE):
         else:
             model_to_train = self.model
 
+        # build eval_fn if both callbacks and eval data are provided.
+        # eval_data["pstar"] is the holdout eval inputs; "true_ldrs" the paired
+        # ground-truth log-density-ratios. _model arg is ignored; closure captures self.
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
         train_loop(
             model=model_to_train,
             samples_p0=samples_p0,
@@ -169,6 +202,9 @@ class FMDRE_S2(DRE):
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.time.eps,
             model_module=self.model,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
         self.model.eval()
 

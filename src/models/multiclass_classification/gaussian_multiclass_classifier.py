@@ -1,7 +1,10 @@
+from typing import Any, Callable
+
 import torch
 import torch.nn as nn
 
 from src.models.multiclass_classification.multiclass_classifier import MulticlassClassifier
+from src.methods.common._report import _make_report
 
 
 class GaussianMulticlassClassifier(MulticlassClassifier):
@@ -28,17 +31,23 @@ class GaussianMulticlassClassifier(MulticlassClassifier):
         ys: torch.Tensor,
         learning_rate: float = 0.05,
         num_epochs: int = 1000,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_fn: Callable[[Any], torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         self._reset_parameters()
         self.train()
         loss = nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
+        do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
         for _ in range(num_epochs):
             optimizer.zero_grad()
             y_pred = self.forward(xs)
             l = loss(y_pred, ys)
             l.backward()
             optimizer.step()
+            do_report()
         if y_pred.isnan().any():
             breakpoint()
 

@@ -205,9 +205,13 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,
         "base_search_space": {
+            # tier-1 architecture scalars
             "latent_dim": ("choice", [64, 128, 256]),
+            "n_hidden_layers": ("choice", [1, 2, 3]),
+            # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
             "num_epochs": ("log_uniform_int", 100, 500),
+            "batch_size": ("choice", [None, 128, 256]),
         },
         "tabular_only": False,
     },
@@ -217,10 +221,15 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,  # HP-sampled per trial
         "base_search_space": {
+            # tier-1 architecture scalars
             "latent_dim": ("choice", [64, 128, 256]),
+            "n_hidden_layers": ("choice", [1, 2, 3]),
+            # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
             "num_epochs": ("log_uniform_int", 100, 500),
-            "num_waypoints": ("choice", [5, 10, 15, 20]),
+            "batch_size": ("choice", [None, 128, 256]),
+            # classifier output dimension (= num_classes)
+            "num_waypoints": ("choice", [5, 10, 15]),
         },
         "tabular_only": False,
     },
@@ -404,12 +413,18 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
+            # tier-1 architecture scalars
             "latent_dim": ("choice", [64, 128, 256]),
+            "n_hidden_layers": ("choice", [1, 2, 3]),
+            # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
             "num_epochs": ("log_uniform_int", 100, 500),
-            "midpoint_oversample": ("choice", [3, 5, 7]),
-            "gamma_power": ("uniform", 1.0, 5.0),
+            "batch_size": ("choice", [None, 128, 256]),
+            # classifier output dimension (= num_classes)
             "num_waypoints": ("choice", [5, 10, 15]),
+            # triangular waypoint-builder knobs
+            "midpoint_oversample": ("choice", [0, 3, 5, 7]),
+            "gamma_power": ("uniform", 1.0, 5.0),
             "vertex": ("uniform", 0.2, 0.8),
         },
         "tabular_only": False,

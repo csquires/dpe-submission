@@ -1,7 +1,10 @@
+from typing import Any, Callable
+
 import torch
 import torch.nn as nn
 
 from src.models.multiclass_classification.multiclass_classifier import MulticlassClassifier
+from src.methods.common._report import _make_report
 
 
 class DefaultMulticlassClassifier(MulticlassClassifier):
@@ -48,10 +51,17 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         self,
         xs: torch.Tensor,  # [n, dim]
         ys: torch.Tensor,  # [n], with values in {0, ..., num_classes-1}
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_fn: Callable[[Any], torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         """train via AdamW + CrossEntropyLoss.
 
         falls back to full-batch when self.batch_size is None or >= n.
+        if step_cb and eval_fn are supplied, _make_report fires the callback
+        every step_cb_interval optimizer updates -- same contract as
+        DefaultBinaryClassifier.fit.
         """
         self._reset_parameters()
         self.train()
@@ -59,6 +69,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         n = xs.shape[0]
         bs = self.batch_size if (self.batch_size and self.batch_size < n) else n
+        do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
         for epoch in range(self.num_epochs):
             if bs == n:
                 optimizer.zero_grad()
@@ -66,6 +77,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
                 l = loss(y_pred, ys)
                 l.backward()
                 optimizer.step()
+                do_report()
             else:
                 perm = torch.randperm(n, device=xs.device)
                 for start in range(0, n, bs):
@@ -75,6 +87,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
                     l = loss(y_pred, ys[idx])
                     l.backward()
                     optimizer.step()
+                    do_report()
         if y_pred.isnan().any():
             breakpoint()
 
