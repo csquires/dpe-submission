@@ -59,7 +59,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         "latent_dim", [64, 128, 256]
     )
     hp["batch_size"] = trial.suggest_categorical(
-        "batch_size", [None, 128, 256]
+        "batch_size", [None, 128, 256, 512]
     )
     hp["num_waypoints"] = trial.suggest_categorical(
         "num_waypoints", [5, 10, 15]
@@ -70,5 +70,8 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     )
     hp["gamma_power"] = trial.suggest_float("gamma_power", 1.0, 5.0)
     hp["vertex"] = trial.suggest_float("vertex", 0.2, 0.8)
+    hp["weight_decay"] = trial.suggest_categorical(
+        "weight_decay", [0.0, 1e-5, 1e-4, 1e-3]
+    )
 
     return hp

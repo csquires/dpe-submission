@@ -6,7 +6,12 @@ from ex.utils.hpo.optuna.study_config import StudyConfig
 CONFIG = StudyConfig(
     study_seed=1729,
     experiment="occupancy",
-    methods=["VFM", "VFMOrthros", "MultiHeadTriangularTDRE", "MultiHeadTDRE"],
+    methods=[
+        "VFM", "VFMOrthros",
+        "MultiHeadTriangularTDRE", "MultiHeadTDRE",
+        "CTSM", "FMDRE", "FMDRE_S2", "TSM",
+        "BDRE", "MDRE_15", "TriangularMDRE", "TriangularFMDRE",
+    ],
     min_resource=100,
     max_resource=1600,
     reduction_factor=2,
@@ -14,7 +19,7 @@ CONFIG = StudyConfig(
     walltime_minutes=120,
     walltime_margin_minutes=10,
     fixed_hp={"n_hidden_layers": 3},
-    lanes=["preempt", "array"],
+    lanes=["general", "preempt", "cpu", "array"],
     resume_existing=True,
     include_tabular=False,
 )

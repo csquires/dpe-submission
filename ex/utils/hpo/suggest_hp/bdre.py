@@ -52,7 +52,10 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         "latent_dim", [64, 128, 256]
     )
     hp["batch_size"] = trial.suggest_categorical(
-        "batch_size", [None, 128, 256]
+        "batch_size", [None, 128, 256, 512]
+    )
+    hp["weight_decay"] = trial.suggest_categorical(
+        "weight_decay", [0.0, 1e-5, 1e-4, 1e-3]
     )
 
     return hp

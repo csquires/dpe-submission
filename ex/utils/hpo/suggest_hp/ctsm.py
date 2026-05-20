@@ -52,7 +52,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # fixed constant + mandatory builder keys
     hp["n_epochs"] = N_EPOCHS
-    hp["lr"] = trial.suggest_float("lr", 3e-4, 3e-3, log=True)
+    hp["lr"] = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256])
 
     # switch params (suggest before any branch that reads them)
@@ -73,10 +73,10 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # unconditional always-active params
     hp["sigma"] = trial.suggest_float("sigma", 0.3, 3.0, log=True)
-    hp["eps"] = trial.suggest_float("eps", 1e-3, 3e-3, log=True)
+    hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
     hp["integration_steps"] = trial.suggest_int("integration_steps", 300, 2600)
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 1e-1, log=True)
-    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [128, 256, 512])
+    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
     hp["activation"] = trial.suggest_categorical("activation", ["elu", "gelu", "silu"])
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
     hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
