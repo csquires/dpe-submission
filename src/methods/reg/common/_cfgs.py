@@ -7,7 +7,10 @@ from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR
 from torch import Tensor
 
 from ._ema import EMA
-from ._time_samplers import TimeSampler, UniformSampler, BetaSampler, PathSampler, NoIWSampler, sampler_from_dist
+from ._time_samplers import (
+    TimeSampler, UniformSampler, BetaSampler, PathSampler, NoIWSampler,
+    _FuncSampler, sampler_from_dist, _BETA_DIST_PARAMS,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -117,7 +120,14 @@ class TimeCfg:
         if isinstance(s, UniformSampler):
             return "uniform"
         if isinstance(s, BetaSampler):
-            return f"beta_{int(s.a)}_{int(s.b)}"
+            # recover the canonical enum (e.g. beta_half_half) when params match;
+            # int() truncation would mislabel non-integer betas (0.5 -> "0").
+            for name, (a, b) in _BETA_DIST_PARAMS.items():
+                if (s.a, s.b) == (a, b):
+                    return name
+            return f"beta_{s.a:g}_{s.b:g}"
+        if isinstance(s, _FuncSampler):
+            return s.label or "density"
         if isinstance(s, PathSampler):
             return f"path:{type(s.path).__name__}"
         return type(s).__name__
