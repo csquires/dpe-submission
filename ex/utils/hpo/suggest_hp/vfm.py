@@ -11,7 +11,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 2000
+N_EPOCHS = 4000
 
 
 METADATA = {
@@ -47,8 +47,8 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # fixed constant + mandatory builder keys
     hp["n_epochs"] = N_EPOCHS
-    hp["lr"] = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
-    hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256])
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 
     # switch params (suggest before any branch that reads them)
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
@@ -67,25 +67,29 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # conditional params
     if sched == "stiff":
-        hp["k"] = trial.suggest_categorical("k", [10, 20, 40])
+        hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
     if inner_eps == 0.0:
         hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
     if not precond:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
-    # unconditional always-active params (17)
+    # unconditional always-active params. eps NOT widened (VFM winners mid-range);
+    # the (1e-4, 2e-1) eps widening is FMDRE-family-only.
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 300, 2600)
+    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
     hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
-    hp["sigma"] = trial.suggest_float("sigma", 0.3, 3.0, log=True)
-    hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 1e-1, log=True)
-    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
-    hp["layernorm"] = trial.suggest_categorical("layernorm", ["off", "pre", "post"])
-    hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])
-    hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3])
-    hp["cosine_min_factor"] = trial.suggest_categorical("cosine_min_factor", [0.0, 0.01, 0.1])
+    hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
+    hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)
+    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
+    hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["time_dist"] = trial.suggest_categorical("time_dist", ["uniform", "beta_2_2", "beta_5_5"])
+
+    # pinned per holdout boundary analysis (won 5/6 winners; OOR within-noise):
+    # layernorm=off, antithetic=True, cosine_min_factor=0.0.
+    hp["layernorm"] = "off"
+    hp["antithetic"] = True
+    hp["cosine_min_factor"] = 0.0
 
     # conditional: importance weighting (only meaningful under non-uniform time sampling)
     time_dist = hp["time_dist"]
