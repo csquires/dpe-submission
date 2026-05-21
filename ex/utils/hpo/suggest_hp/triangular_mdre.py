@@ -32,7 +32,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     - learning_rate: log-uniform [1e-4, 1e-2]
     - latent_dim: categorical [64, 128, 256]
     - batch_size: categorical [None, 128, 256]
-    - num_waypoints: categorical [5, 10, 15]
+    - num_waypoints: categorical [3, 5, 7, 9]
     - midpoint_oversample: categorical [0, 3, 5, 7]
     - gamma_power: uniform [1.0, 5.0]
     - vertex: uniform [0.2, 0.8]
@@ -62,7 +62,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         "batch_size", [None, 128, 256, 512]
     )
     hp["num_waypoints"] = trial.suggest_categorical(
-        "num_waypoints", [5, 10, 15]
+        "num_waypoints", [3, 5, 7, 9]
     )
 
     hp["midpoint_oversample"] = trial.suggest_categorical(
