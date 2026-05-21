@@ -17,8 +17,11 @@ inertness edges (probe + static):
   - V1 only: time_dist AND apply_iw inert when inner_eps > 0 (the builder swaps
     to make_piecewise_sb_sampler, which reads neither).
   - apply_iw inert when time_dist == "uniform".
-  - reweight searched UNCONDITIONALLY: unlike stock VFM, the probe shows it
-    stays active even under precond == True for the triangular paths.
+  - reweight gated on precond == False (mirrors stock VFM: the precond=True
+    EDM-lambda path masks it). NB the probe found reweight active even under
+    precond == True for the triangular paths, but per the user decision we
+    mirror stock VFM's structure exactly. V3 has no precond, so reweight is
+    always active there.
   - V3 (TriangularVFM2D) has no precond support and no time-sampling knobs;
     path_height is inference-only (curve used only in predict_ldr).
 
@@ -55,7 +58,6 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [128, 256, 512])
     hp["layernorm"] = trial.suggest_categorical("layernorm", ["off", "pre", "post"])
     hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])
-    hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3])
     hp["cosine_min_factor"] = trial.suggest_categorical("cosine_min_factor", [0.0, 0.01, 0.1])
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 1e-1, log=True)
@@ -90,12 +92,17 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
     inner_eps = trial.suggest_categorical("inner_eps", inner_eps_grid)
     hp["inner_eps"] = inner_eps
     hp["vertex"] = trial.suggest_float("vertex", 0.2, 0.8)
-    hp["precond"] = trial.suggest_categorical("precond", [False, True])
+    precond = trial.suggest_categorical("precond", [False, True])
+    hp["precond"] = precond
 
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40])
     if inner_eps == 0.0:
         hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    # reweight gated on not-precond (mirrors stock VFM: the precond=True path
+    # uses an EDM lambda outer-weight that masks reweight).
+    if not precond:
+        hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
     # V1 (psb): builder ignores time_dist/apply_iw when inner_eps > 0; only
     # expose them in the inner_eps == 0 branch. V2 (bary): always active.
@@ -147,6 +154,9 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     hp["t2_max"] = trial.suggest_float("t2_max", 0.6, 0.9)
     hp["path_height"] = trial.suggest_float("path_height", 1.0, 2.0)
     hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    # no precond support, so reweight is always active (the gate `not precond`
+    # is vacuously true here).
+    hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40])
