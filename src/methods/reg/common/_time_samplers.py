@@ -210,23 +210,63 @@ class NoIWSampler(TimeSampler):
         return tau, iw
 
 
+@dataclass(frozen=True)
+class _FuncSampler(TimeSampler):
+    """(internal) ABC adaptor wrapping a functional TimeSampler1D closure.
+
+    bridges the new functional builders (plain closures) with legacy code that
+    expects a TimeSampler ABC instance (TimeCfg asserts isinstance). keeps a
+    single source of truth for the math: bridge/stiff densities are defined once
+    as functional builders and merely re-exposed here, never re-implemented.
+
+    not intended for direct construction; returned by sampler_from_dist for
+    distributions that have no dedicated ABC subclass. fn is excluded from the
+    structural hash (closures are not structurally comparable); identity + eps
+    define the value, mirroring PathSampler.
+    """
+
+    fn: Any = field(hash=False, compare=False)  # TimeSampler1D callable
+    eps: float = 1e-3
+    label: str = ""  # diagnostic dist string, surfaced via TimeCfg.dist
+
+    def __post_init__(self) -> None:
+        if not callable(self.fn):
+            raise TypeError(f"fn must be callable; got {type(self.fn).__name__}")
+        if self.eps <= 0:
+            raise ValueError(f"eps must be > 0; got {self.eps}")
+
+    def sample(self, batch_size: int, device) -> tuple[Tensor, Tensor]:
+        """delegate to the wrapped functional sampler."""
+        return self.fn(batch_size, device)
+
+    def __hash__(self) -> int:
+        return hash((type(self).__name__, id(self.fn), self.eps, self.label))
+
+
 def sampler_from_dist(dist: str, eps: float = 1e-3) -> TimeSampler:
-    """DEPRECATED: legacy string -> TimeSampler factory for {uniform, beta_2_2, beta_5_5}.
+    """DEPRECATED: legacy string -> TimeSampler factory.
 
     Use time_sampler_from_legacy_cfg instead, which returns a functional
     TimeSampler1D callable instead of an ABC instance.
+
+    supports the canonical enum plus the extended set: beta_{10_10, half_half},
+    bridge (density propto sqrt(t(1-t)) == Beta(1.5, 1.5)), and the stiff
+    sigmoid-product family stiff_{10,20,40} and its reciprocal stiff_inv_{...}.
+    beta cases map to BetaSampler directly; schedule-shaped cases wrap the
+    functional density samplers in _FuncSampler so the math is not duplicated.
 
     convenience for code paths that previously used ``TimeCfg(dist=...)``;
     construct the matching sampler instance.
     """
     if dist == "uniform":
         return UniformSampler(eps=eps)
-    if dist == "beta_2_2":
-        return BetaSampler(a=2.0, b=2.0, eps=eps)
-    if dist == "beta_5_5":
-        return BetaSampler(a=5.0, b=5.0, eps=eps)
+    if dist in _BETA_DIST_PARAMS:
+        a, b = _BETA_DIST_PARAMS[dist]
+        return BetaSampler(a=a, b=b, eps=eps)
+    if dist in _DENSITY_DIST_BUILDERS:
+        return _FuncSampler(fn=_DENSITY_DIST_BUILDERS[dist](eps), eps=eps, label=dist)
     raise ValueError(
-        f"dist must be in {{'uniform', 'beta_2_2', 'beta_5_5'}} or use an explicit "
+        f"dist must be one of {sorted(TIME_DISTS)} or use an explicit "
         f"TimeSampler; got {dist!r}"
     )
 
@@ -396,6 +436,150 @@ def make_sobol(
         return tau, iw
 
     return sampler
+
+
+# ============================================================================
+# Schedule-shaped density samplers (bridge / stiff sigmoid-product)
+# ============================================================================
+# canonical schedule shapes mirrored from src/waypoints/atoms.py; kept local so
+# this module stays import-light. used as unnormalized sampling DENSITIES (not
+# path noise schedules): sampling tau propto the schedule emphasises the times
+# where it is large.
+
+
+def _g_bridge(t: Tensor) -> Tensor:
+    """bridge shape sqrt(t(1-t)); the sqrt(2) vp-amplitude cancels under
+    normalization, so propto sqrt(2 t(1-t)). equals the Beta(1.5, 1.5) density
+    up to a constant."""
+    return torch.sqrt(t * (1.0 - t))
+
+
+def _g_stiff(t: Tensor, *, k: float) -> Tensor:
+    """stiff sigmoid-product (1 - e^{-k t})(1 - e^{-k(1-t)}); flat-topped bump
+    that vanishes at the endpoints, sharper edges as k grows. expm1 for float32
+    stability near the endpoints."""
+    return (-torch.expm1(-k * t)) * (-torch.expm1(-k * (1.0 - t)))
+
+
+def _g_stiff_inv(t: Tensor, *, k: float) -> Tensor:
+    """reciprocal stiff density 1 / stiff(t; k); diverges at the endpoints, so
+    mass piles toward the boundaries. floored to stay finite on [eps, 1-eps]."""
+    return 1.0 / _g_stiff(t, k=k).clamp_min(1e-12)
+
+
+def make_density_sampler(
+    g_fn,
+    *,
+    eps: float,
+    n_grid: int = 4096,
+) -> TimeSampler1D:
+    """tabulated inverse-CDF sampler for an arbitrary unnormalized density g_fn.
+
+    Returns a callable (B, device) -> (tau [B,1], iw [B,1]).
+
+    procedure:
+      build: grid = linspace(eps, 1-eps, n_grid); g = g_fn(grid);
+             Z = trapezoid(g, grid); cdf = [0, cumulative_trapezoid(g, grid)] / Z
+             (monotone since g > 0, cdf[0]=0, cdf[-1]=1). precomputed once on cpu,
+             moved to the requested device on first use (cached per device).
+      draw:  u ~ U(0,1); idx = searchsorted(cdf, u) clamped to [1, n_grid-1];
+             tau = linear interpolation of grid between (cdf[idx-1], cdf[idx]).
+      weight: q(tau) = g(tau)/Z is the normalized proposal on [eps, 1-eps]; the
+             target is uniform there with p_uniform = 1/(1-2eps), so
+             iw = p_uniform / q(tau) = Z / ((1-2eps) g(tau)), computed from the
+             analytic g_fn at the sampled tau (not the tabulation) for accuracy.
+
+    Args:
+        g_fn: callable Tensor -> Tensor, positive unnormalized density on (0,1),
+              shape-preserving (accepts the [n_grid] grid and [B,1] tau alike).
+        eps: boundary margin in (0, 0.5). domain is [eps, 1-eps].
+        n_grid: tabulation resolution; trapezoid error ~ O(n_grid^{-2}).
+
+    note: densities that vanish at the endpoints (bridge, stiff) keep iw bounded
+    because inverse-CDF sampling rarely lands where g ~ 0; densities that diverge
+    (stiff_inv) are evaluated only on the interior [eps, 1-eps], so g stays finite.
+    """
+    if eps <= 0 or eps >= 0.5:
+        raise ValueError(f"eps must be in (0, 0.5); got {eps}")
+    if n_grid < 2:
+        raise ValueError(f"n_grid must be >= 2; got {n_grid}")
+
+    grid = torch.linspace(eps, 1.0 - eps, n_grid)  # [n_grid], cpu
+    g_vals = g_fn(grid)  # [n_grid]
+    z = float(torch.trapezoid(g_vals, grid))
+    cdf = torch.cat(
+        [torch.zeros(1), torch.cumulative_trapezoid(g_vals, grid)]
+    )  # [n_grid]
+    cdf = cdf / cdf[-1].clamp_min(1e-12)
+
+    p_uniform = 1.0 / (1.0 - 2.0 * eps)
+    cache: dict[torch.device, tuple[Tensor, Tensor]] = {}
+
+    def sampler(B: int, device: torch.device) -> tuple[Tensor, Tensor]:
+        dev = torch.device(device)
+        if dev not in cache:
+            cache[dev] = (grid.to(dev), cdf.to(dev))
+        grid_d, cdf_d = cache[dev]
+
+        u = torch.rand(B, device=dev)  # [B]
+        hi = torch.searchsorted(cdf_d, u).clamp(1, n_grid - 1)  # [B]
+        lo = hi - 1
+        c_lo, c_hi = cdf_d[lo], cdf_d[hi]
+        frac = (u - c_lo) / (c_hi - c_lo).clamp_min(1e-12)
+        tau = (grid_d[lo] + frac * (grid_d[hi] - grid_d[lo])).clamp(eps, 1.0 - eps)
+        tau = tau.unsqueeze(-1)  # [B, 1]
+
+        iw = (z * p_uniform / g_fn(tau).clamp_min(1e-12))  # [B, 1]
+        return tau, iw
+
+    return sampler
+
+
+def make_bridge(*, eps: float, n_grid: int = 4096) -> TimeSampler1D:
+    """density propto sqrt(t(1-t)) (== Beta(1.5, 1.5)); concentrates near 0.5."""
+    return make_density_sampler(_g_bridge, eps=eps, n_grid=n_grid)
+
+
+def make_stiff(*, k: float, eps: float, n_grid: int = 4096) -> TimeSampler1D:
+    """density propto the stiff sigmoid-product; flat-topped, edges sharpen with k."""
+    return make_density_sampler(lambda t: _g_stiff(t, k=k), eps=eps, n_grid=n_grid)
+
+
+def make_stiff_inv(*, k: float, eps: float, n_grid: int = 4096) -> TimeSampler1D:
+    """density propto 1 / stiff sigmoid-product; concentrates toward the boundaries."""
+    return make_density_sampler(lambda t: _g_stiff_inv(t, k=k), eps=eps, n_grid=n_grid)
+
+
+# ============================================================================
+# shared dist-string registry (single source of truth for both factories)
+# ============================================================================
+# beta cases have a dedicated ABC subclass (BetaSampler); schedule-shaped cases
+# are functional and wrapped in _FuncSampler for the legacy ABC factory.
+
+_BETA_DIST_PARAMS: dict[str, tuple[float, float]] = {
+    "beta_2_2": (2.0, 2.0),
+    "beta_5_5": (5.0, 5.0),
+    "beta_10_10": (10.0, 10.0),
+    "beta_half_half": (0.5, 0.5),
+}
+
+_DENSITY_DIST_BUILDERS: dict[str, "Callable[[float], TimeSampler1D]"] = {
+    "bridge": lambda e: make_bridge(eps=e),
+    "stiff_10": lambda e: make_stiff(k=10.0, eps=e),
+    "stiff_20": lambda e: make_stiff(k=20.0, eps=e),
+    "stiff_40": lambda e: make_stiff(k=40.0, eps=e),
+    "stiff_inv_10": lambda e: make_stiff_inv(k=10.0, eps=e),
+    "stiff_inv_20": lambda e: make_stiff_inv(k=20.0, eps=e),
+    "stiff_inv_40": lambda e: make_stiff_inv(k=40.0, eps=e),
+}
+
+# every dist string accepted by the time_dist hparam (HPO categorical choices
+# should mirror this set).
+TIME_DISTS: tuple[str, ...] = (
+    "uniform",
+    *_BETA_DIST_PARAMS,
+    *_DENSITY_DIST_BUILDERS,
+)
 
 
 # ============================================================================
@@ -683,11 +867,14 @@ def time_sampler_from_legacy_cfg(
 ) -> TimeSampler1D:
     """legacy string-driven (tau, iw) sampler factory.
 
-    Maps TimeCfg.from_dist enumerated strings to the new functional builders.
-    Wraps with make_no_iw if apply_iw=False.
+    Maps the time_dist enumerated strings (TIME_DISTS) to the functional
+    builders, dispatching via the shared _BETA_DIST_PARAMS / _DENSITY_DIST_BUILDERS
+    registry so this stays in lockstep with sampler_from_dist. Wraps with
+    make_no_iw if apply_iw=False.
 
     Args:
-        dist: one of {"uniform", "beta_2_2", "beta_5_5"}.
+        dist: one of TIME_DISTS (uniform, the beta family, bridge, and the
+              stiff / stiff_inv sigmoid-product family).
         eps: boundary margin.
         apply_iw: if False, wraps the sampler with make_no_iw (iw=1).
 
@@ -695,33 +882,20 @@ def time_sampler_from_legacy_cfg(
         A TimeSampler1D callable.
 
     Raises:
-        ValueError: if dist is not in the enumerated set.
-
-    Body: base_builders = {
-              "uniform":  lambda eps: make_uniform(eps=eps),
-              "beta_2_2": lambda eps: make_beta(a=2.0, b=2.0, eps=eps),
-              "beta_5_5": lambda eps: make_beta(a=5.0, b=5.0, eps=eps),
-          }
-          if dist not in base_builders:
-              raise ValueError(f"unknown legacy dist {dist!r}; expected one of {list(base_builders)}")
-
-          sampler = base_builders[dist](eps)
-          if not apply_iw:
-              sampler = make_no_iw(sampler)
-          return sampler
+        ValueError: if dist is not in TIME_DISTS.
     """
-    base_builders = {
-        "uniform": lambda e: make_uniform(eps=e),
-        "beta_2_2": lambda e: make_beta(a=2.0, b=2.0, eps=e),
-        "beta_5_5": lambda e: make_beta(a=5.0, b=5.0, eps=e),
-    }
-
-    if dist not in base_builders:
+    if dist == "uniform":
+        sampler = make_uniform(eps=eps)
+    elif dist in _BETA_DIST_PARAMS:
+        a, b = _BETA_DIST_PARAMS[dist]
+        sampler = make_beta(a=a, b=b, eps=eps)
+    elif dist in _DENSITY_DIST_BUILDERS:
+        sampler = _DENSITY_DIST_BUILDERS[dist](eps)
+    else:
         raise ValueError(
-            f"unknown legacy dist {dist!r}; expected one of {list(base_builders)}"
+            f"unknown legacy dist {dist!r}; expected one of {sorted(TIME_DISTS)}"
         )
 
-    sampler = base_builders[dist](eps)
     if not apply_iw:
         sampler = make_no_iw(sampler)
     return sampler
