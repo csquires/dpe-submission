@@ -8,7 +8,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 2000
+N_EPOCHS = 4000
 
 
 METADATA = {
