@@ -16,6 +16,7 @@ not searched -- pinned:
 from typing import Any
 
 import optuna
+from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
 N_EPOCHS = 4000
@@ -50,7 +51,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 
     # switch param (suggest before its dependent branch)
-    time_dist = trial.suggest_categorical("time_dist", ["uniform", "beta_2_2", "beta_5_5"])
+    time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
     hp["time_dist"] = time_dist
 
     # conditional: importance weighting is no-op under uniform sampling

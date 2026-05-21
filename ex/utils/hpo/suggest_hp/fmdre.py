@@ -20,6 +20,7 @@ not searched -- pinned:
 from typing import Any
 
 import optuna
+from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
 N_EPOCHS = 4000
@@ -56,7 +57,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # switch params (suggest before any branch that reads them)
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
-    time_dist = trial.suggest_categorical("time_dist", ["uniform", "beta_2_2", "beta_5_5"])
+    time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
     hp["time_dist"] = time_dist
 
     # conditional params

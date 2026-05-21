@@ -9,6 +9,7 @@ uniform multi-fidelity resource axis).
 from typing import Any
 
 import optuna
+from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
 N_EPOCHS = 4000
@@ -83,7 +84,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
-    hp["time_dist"] = trial.suggest_categorical("time_dist", ["uniform", "beta_2_2", "beta_5_5"])
+    hp["time_dist"] = trial.suggest_categorical("time_dist", list(TIME_DISTS))
 
     # pinned per holdout boundary analysis (won 5/6 winners; OOR within-noise):
     # layernorm=off, antithetic=True, cosine_min_factor=0.0.
