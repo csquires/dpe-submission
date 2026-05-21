@@ -557,7 +557,6 @@ def make_stiff_inv(*, k: float, eps: float, n_grid: int = 4096) -> TimeSampler1D
 # are functional and wrapped in _FuncSampler for the legacy ABC factory.
 
 _BETA_DIST_PARAMS: dict[str, tuple[float, float]] = {
-    "beta_2_2": (2.0, 2.0),
     "beta_5_5": (5.0, 5.0),
     "beta_10_10": (10.0, 10.0),
     "beta_half_half": (0.5, 0.5),
@@ -567,9 +566,6 @@ _DENSITY_DIST_BUILDERS: dict[str, "Callable[[float], TimeSampler1D]"] = {
     "bridge": lambda e: make_bridge(eps=e),
     "stiff_10": lambda e: make_stiff(k=10.0, eps=e),
     "stiff_20": lambda e: make_stiff(k=20.0, eps=e),
-    "stiff_40": lambda e: make_stiff(k=40.0, eps=e),
-    "stiff_inv_10": lambda e: make_stiff_inv(k=10.0, eps=e),
-    "stiff_inv_20": lambda e: make_stiff_inv(k=20.0, eps=e),
     "stiff_inv_40": lambda e: make_stiff_inv(k=40.0, eps=e),
 }
 
