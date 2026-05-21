@@ -14,8 +14,10 @@ inertness edges (probe + static):
   - k inert when sched == "bridge".
   - gamma_min inert when inner_eps > 0 (V1/V2). V3 searches gamma_min
     unconditionally (probe gates it on sched, a fragile edge we decline).
-  - V1 only: time_dist AND apply_iw inert when inner_eps > 0 (the builder swaps
-    to make_piecewise_sb_sampler, which reads neither).
+  - V1 always samples time per-leg via a width-proportional two-leg mixture
+    sampler (any inner_eps; every TIME_DISTS value applied per leg), so time_dist is
+    unconditional -- same treatment as V2, only the sampler differs
+    (see notes/triangular_v1_time_dist_coupling.md).
   - apply_iw inert when time_dist == "uniform".
   - reweight gated on precond == False (mirrors stock VFM: the precond=True
     EDM-lambda path masks it). NB the probe found reweight active even under
@@ -104,14 +106,13 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
     if not precond:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
-    # V1 (psb): builder ignores time_dist/apply_iw when inner_eps > 0; only
-    # expose them in the inner_eps == 0 branch. V2 (bary): always active.
-    expose_time = (not psb) or inner_eps == 0.0
-    if expose_time:
-        time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
-        hp["time_dist"] = time_dist
-        if time_dist != "uniform":
-            hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])
+    # time_dist/apply_iw always active for V1 and V2. V1 samples time per-leg
+    # via the two-leg mixture sampler (any inner_eps; every TIME_DISTS value per
+    # leg); V2 uses the global sampler. same suggester treatment.
+    time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
+    hp["time_dist"] = time_dist
+    if time_dist != "uniform":
+        hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])
 
     _derive_test(hp)
     return hp
@@ -123,7 +124,7 @@ def suggest_hp_v1(trial: optuna.Trial) -> dict[str, Any]:
     note: the stiff-schedule `k` IS live for V1 (it parameterises stiff_noise);
     the old "k vestigial" spec comment confused it with the barycentric
     constructor scalar. conditional: k (stiff), gamma_min (inner_eps==0),
-    time_dist (inner_eps==0), apply_iw (inner_eps==0 and time_dist != uniform).
+    apply_iw (time_dist != uniform). time_dist always active.
     """
     return _suggest_1d(trial, inner_eps_grid=[0.0, 0.05, 0.1, 0.2], psb=True)
 

@@ -895,3 +895,123 @@ def time_sampler_from_legacy_cfg(
     if not apply_iw:
         sampler = make_no_iw(sampler)
     return sampler
+
+
+def make_psb_mixture_sampler(
+    *,
+    time_dist: str,
+    apply_iw: bool,
+    vertex: float,
+    inner_eps: float,
+    eps: float,
+) -> TimeSampler1D:
+    """two-leg mixture time sampler for piecewise-Schroedinger-bridge paths.
+
+    samples tau in the allowed region [eps, vertex - inner_eps] U [vertex + inner_eps, 1 - eps],
+    excising the forbidden band of half-width inner_eps around the vertex. leg selection is
+    width-proportional; the chosen time_dist density is applied PER LEG (its local "piecewise"
+    form), as opposed to the global default. any value in TIME_DISTS
+    is supported -- uniform, the beta family, and the schedule-shaped density-builders
+    (bridge, stiff_*, stiff_inv_*) -- with no collapse to uniform.
+
+    Returns a callable (B, device) -> (tau [B,1], iw [B,1]).
+
+    Args:
+        time_dist: density applied per leg; any value in TIME_DISTS (uniform, the beta family,
+                   bridge, stiff_*, stiff_inv_*). a uniform time_dist recovers uniform over the
+                   allowed region; a schedule-shaped density is applied per-leg (piecewise).
+        apply_iw: if False, wraps the returned sampler with make_no_iw (iw=1).
+        vertex: forbidden-zone center (typically 0.5).
+        inner_eps: half-width of excised band around vertex; >= 0. at inner_eps == 0
+                   the two legs meet at the vertex (zero-width band) and the mixture
+                   is still per-leg.
+        eps: outer boundary margin in (0, 0.5).
+
+    Validation:
+        - eps must be in (0, 0.5).
+        - require eps < vertex - inner_eps (leg 1 width > 0).
+        - require vertex + inner_eps < 1 - eps (leg 2 width > 0).
+        raises ValueError with a clear message naming the offending quantities if any
+        constraint is violated.
+
+    Body pseudocode:
+        leg1 = [eps, vertex - inner_eps], width w1
+        leg2 = [vertex + inner_eps, 1 - eps], width w2
+        allowed_width = w1 + w2
+        p1 = w1 / allowed_width
+
+        leg1_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
+        leg2_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
+
+        def sampler(B, device):
+            pick = rand(B, 1) < p1
+            u1, iw1 = leg1_base(B, device)
+            u2, iw2 = leg2_base(B, device)
+            tau1 = eps + u1 * w1
+            tau2 = (vertex + inner_eps) + u2 * w2
+            tau = where(pick, tau1, tau2)
+            iw = where(pick, iw1, iw2)
+            return tau, iw
+
+    math justification:
+        because leg-selection is width-proportional, the global proposal density is
+        q(tau) = d_local((tau - a_leg)/w_leg) / |A| (leg width cancels in the jacobian),
+        so a uniform time_dist recovers uniform-over-allowed-region exactly. the per-leg
+        base iw = p_uniform/d differs from the exact global iw only by the constant factor |A|
+        (the allowed-region mass), which is immaterial because every loss applies iw as
+        (...*iw).mean() under adamw (a constant loss scale does not move the optimum).
+        hence reusing the per-leg iw is correct up to an immaterial constant;
+        apply_iw=False yields iw=1 (the base make_no_iw wrapper handles this).
+    """
+    # validate eps
+    if eps <= 0 or eps >= 0.5:
+        raise ValueError(f"eps must be in (0, 0.5); got {eps}")
+
+    # compute leg boundaries and widths
+    a1 = eps
+    b1 = vertex - inner_eps
+    w1 = b1 - a1
+
+    a2 = vertex + inner_eps
+    b2 = 1.0 - eps
+    w2 = b2 - a2
+
+    # validate leg widths
+    if w1 <= 0:
+        raise ValueError(
+            f"forbidden band too wide: w1={w1} must be > 0 (require eps < vertex - inner_eps); "
+            f"got vertex={vertex}, inner_eps={inner_eps}, eps={eps}"
+        )
+    if w2 <= 0:
+        raise ValueError(
+            f"forbidden band too wide: w2={w2} must be > 0 (require vertex + inner_eps < 1 - eps); "
+            f"got vertex={vertex}, inner_eps={inner_eps}, eps={eps}"
+        )
+
+    # build per-leg base samplers
+    leg1_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
+    leg2_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
+
+    # precompute leg selection probability
+    allowed_width = (1.0 - 2.0 * eps) - 2.0 * inner_eps  # |A|
+    p1 = w1 / allowed_width
+
+    def sampler(B: int, device: torch.device) -> tuple[Tensor, Tensor]:
+        # draw leg selection [B, 1], boolean
+        pick = torch.rand(B, 1, device=device) < p1
+
+        # sample from per-leg bases on their local [eps, 1-eps] domain [B, 1] each
+        u1, iw1 = leg1_base(B, device)
+        u2, iw2 = leg2_base(B, device)
+
+        # affine-map to global leg ranges [B, 1] each
+        tau1 = a1 + u1 * w1
+        tau2 = a2 + u2 * w2
+
+        # select per pick [B, 1] each
+        tau = torch.where(pick, tau1, tau2)
+        iw = torch.where(pick, iw1, iw2)
+
+        return tau, iw
+
+    return sampler

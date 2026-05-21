@@ -12,7 +12,7 @@ import torch
 
 from src.methods.reg.common._time_samplers import (
     make_uniform, make_uniform_scaled, make_product,
-    make_piecewise_sb_sampler, time_sampler_from_legacy_cfg,
+    time_sampler_from_legacy_cfg, make_psb_mixture_sampler,
 )
 from src.methods.reg.common._cfgs import OptimCfg, SchedCfg, EmaCfg, TimeCfg
 from src.methods.reg.tsm import TSM
@@ -459,14 +459,15 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
         gamma_min=flat_hp.get("test_gamma_min", 0.0),
         eps=flat_hp.get("test_eps", eps),
     )
-    # psb default sampler: avoid the forbidden band when inner_eps > 0; else uniform.
-    if inner_eps > 0:
-        time = make_piecewise_sb_sampler(vertex=vertex, inner_eps=inner_eps, eps=path.eps)
-    else:
-        time = time_sampler_from_legacy_cfg(
-            flat_hp.get("time_dist", "uniform"), eps=path.eps,
-            apply_iw=flat_hp.get("apply_iw", True),
-        )
+    # two-legged psb path: always sample time per-leg via the width-proportional
+    # mixture (any time_dist applied per leg). inner_eps only sets the excised
+    # band; at inner_eps == 0 the legs meet at the vertex. uniform time_dist is
+    # identical to the old global-uniform behavior.
+    time = make_psb_mixture_sampler(
+        time_dist=flat_hp.get("time_dist", "uniform"),
+        apply_iw=flat_hp.get("apply_iw", True),
+        vertex=vertex, inner_eps=inner_eps, eps=path.eps,
+    )
     return TriangularCTSM(
         input_dim=input_dim,
         path=path,
@@ -600,13 +601,14 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         inner_eps=flat_hp.get("test_inner_eps", 0.0),
         eps=flat_hp.get("test_eps", eps),
     )
-    if inner_eps > 0:
-        time = make_piecewise_sb_sampler(vertex=vertex, inner_eps=inner_eps, eps=path.eps)
-    else:
-        time = time_sampler_from_legacy_cfg(
-            flat_hp.get("time_dist", "uniform"), eps=path.eps,
-            apply_iw=flat_hp.get("apply_iw", True),
-        )
+    # two-legged psb path: always sample time per-leg via the width-proportional
+    # mixture (any time_dist applied per leg). inner_eps only sets the excised
+    # band; at inner_eps == 0 the legs meet at the vertex.
+    time = make_psb_mixture_sampler(
+        time_dist=flat_hp.get("time_dist", "uniform"),
+        apply_iw=flat_hp.get("apply_iw", True),
+        vertex=vertex, inner_eps=inner_eps, eps=path.eps,
+    )
     return TriangularVFM(
         input_dim=input_dim,
         path=path,

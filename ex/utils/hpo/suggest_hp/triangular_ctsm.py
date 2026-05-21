@@ -16,9 +16,11 @@ inertness edges (probe + static):
   - k inert when sched == "bridge" (bridge_noise ignores k).
   - gamma_min inert when inner_eps > 0 (non-zero band clamps gamma above the
     floor and masks it) -- V1/V2 only.
-  - V1 only: time_dist AND apply_iw inert when inner_eps > 0, because the
-    builder swaps to make_piecewise_sb_sampler, which reads neither.
   - apply_iw inert when time_dist == "uniform" (iw == 1).
+  - V1 always samples time per-leg via a width-proportional two-leg mixture
+    sampler (any inner_eps; every TIME_DISTS value applied per leg), so time_dist
+    is unconditional -- same treatment as V2, only the sampler differs
+    (see notes/triangular_v1_time_dist_coupling.md).
   - V3 path_height is inference-only (curve used only in predict_ldr); searched
     unconditionally, probe blind. V3 gamma_min searched unconditionally (probe
     gates it on sched, a fragile edge we decline to encode).
@@ -76,8 +78,10 @@ def _derive_test(hp: dict) -> None:
 def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict[str, Any]:
     """shared body for the two 1d-time versions (V1 psb, V2 bary).
 
-    psb=True selects the V1 piecewise-SB branch where inner_eps > 0 swaps the
-    sampler and masks both time_dist and apply_iw.
+    psb=True selects the V1 piecewise-SB branch (vertex searched); psb=False
+    selects V2 barycentric (vertex pinned in builder). time_dist and apply_iw
+    are always live for both. (V1 differs only in the builder: it samples time
+    per-leg via the two-leg mixture sampler; V2 uses the global sampler.)
     """
     hp: dict[str, Any] = {}
     _common_optim(trial, hp)
@@ -96,15 +100,14 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
     if inner_eps == 0.0:
         hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
 
-    # time sampling. V1 (psb): builder ignores time_dist/apply_iw when inner_eps
-    # > 0, so only expose them in the inner_eps == 0 branch. V2 (bary): always
-    # active.
-    expose_time = (not psb) or inner_eps == 0.0
-    if expose_time:
-        time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
-        hp["time_dist"] = time_dist
-        if time_dist != "uniform":
-            hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])
+    # time sampling. time_dist/apply_iw are always live for V1 and V2 -- V1
+    # samples time per-leg via the two-leg mixture sampler (any inner_eps; every
+    # TIME_DISTS value per leg), V2 uses the global sampler. same suggester
+    # treatment either way.
+    time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
+    hp["time_dist"] = time_dist
+    if time_dist != "uniform":
+        hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])
 
     _derive_test(hp)
     return hp
@@ -113,9 +116,8 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
 def suggest_hp_v1(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularCTSM V1 (piecewise-SB path, searched vertex).
 
-    switches: sched, inner_eps, time_dist (the last gated by inner_eps == 0).
-    conditional: k (stiff), gamma_min (inner_eps==0), time_dist (inner_eps==0),
-    apply_iw (inner_eps==0 and time_dist != uniform).
+    switches: sched, inner_eps, time_dist. conditional: k (stiff), gamma_min
+    (inner_eps==0), apply_iw (time_dist != uniform).
     """
     return _suggest_1d(trial, inner_eps_grid=[0.0, 0.02, 0.05], psb=True)
 
@@ -124,7 +126,7 @@ def suggest_hp_v2(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularCTSM V2 (barycentric path, vertex pinned 0.5 in the builder).
 
     switches: sched, inner_eps, time_dist. conditional: k (stiff), gamma_min
-    (inner_eps==0), apply_iw (time_dist != uniform). time_dist always active.
+    (inner_eps==0), apply_iw (time_dist != uniform).
     """
     return _suggest_1d(trial, inner_eps_grid=[0.0, 0.05, 0.1], psb=False)
 
