@@ -19,6 +19,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         learning_rate: float = 0.05,
         num_epochs: int = 1000,
         batch_size: int | None = None,
+        weight_decay: float = 0.0,
     ):
         super().__init__()
         if n_hidden_layers < 1:
@@ -35,6 +36,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
         self.batch_size = batch_size
+        self.weight_decay = weight_decay
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -66,7 +68,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         self._reset_parameters()
         self.train()
         loss = nn.CrossEntropyLoss()
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         n = xs.shape[0]
         bs = self.batch_size if (self.batch_size and self.batch_size < n) else n
         do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
