@@ -33,6 +33,7 @@ from ex.utils.hpo.builders import (
     build_TabularPluginDRE,
     build_SmoothedTabularPluginDRE,
 )
+from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
 METHOD_SPECS = {
@@ -53,7 +54,7 @@ METHOD_SPECS = {
             "activation": ("choice", ["elu", "gelu", "silu"]),
             "reweight": ("choice", [False, True]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             # ema / grad-clip pilot knobs
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
@@ -82,7 +83,7 @@ METHOD_SPECS = {
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             # activation knob for score network
             "activation": ("choice", ["elu", "gelu", "silu"]),
             # noise schedule: type + amplitude, train + test path
@@ -266,7 +267,7 @@ METHOD_SPECS = {
             # EDM preconditioning toggle
             "precond": ("choice", [False, True]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             # ema / grad-clip pilot knobs
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
@@ -298,7 +299,7 @@ METHOD_SPECS = {
             # EDM preconditioning toggle
             "precond": ("choice", [False, True]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
             # tier-3 cfg fields
@@ -347,7 +348,7 @@ METHOD_SPECS = {
             # EDM preconditioning toggle
             "precond": ("choice", [False, True]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
             # tier-3 cfg fields
@@ -383,7 +384,7 @@ METHOD_SPECS = {
             "activation": ("choice", ["elu", "gelu", "silu"]),
             "reweight": ("choice", [False, True]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             # ema / grad-clip pilot knobs
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
@@ -452,7 +453,7 @@ METHOD_SPECS = {
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             # activation knob for score network
             "activation": ("choice", ["elu", "gelu", "silu"]),
             # noise schedule: type, train + test path
@@ -490,7 +491,7 @@ METHOD_SPECS = {
             "ema_decay": ("choice", [None, 0.999, 0.9999]),
             "grad_clip_norm": ("choice", [None, 1.0, 5.0]),
             # importance sampling time distribution knob
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             # activation knob for score network
             "activation": ("choice", ["elu", "gelu", "silu"]),
             # noise schedule: type, train + test path
@@ -578,15 +579,20 @@ METHOD_SPECS = {
             # values can help on harder problems. wider grid than CTSM V1
             # because A/B sweep showed sweet-spot dataset-dependent.
             "inner_eps": ("choice", [0.0, 0.05, 0.1, 0.2]),
-            # noise schedule: type, train + test path
+            # noise schedule: type + stiff sharpness, train + test path. k
+            # parameterises stiff_noise(k, sigma) and is read by _sched_1d
+            # whenever sched == "stiff" (inert under bridge). it is distinct
+            # from the barycentric `k` constructor scalar -- which the psb path
+            # genuinely ignores because the path is passed in directly.
             "sched": ("choice", ["stiff", "bridge"]),
+            "k": ("choice", [10, 20, 40]),
             "test_eps": ("log_uniform", 1e-3, 1e-1),
             "test_sched": ("choice", ["stiff", "bridge"]),
             "test_sigma": ("log_uniform", 0.3, 3.0),
             "test_gamma_min": ("log_uniform", 1e-2, 1e-1),
             "test_inner_eps": ("choice", [0.0, 0.05, 0.1, 0.2]),
             # importance sampling time distribution knob (builder-consumed)
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             "apply_iw": ("choice", [True, False]),
             # tier-1 estimator scalars
             "hidden_dim": ("choice", [128, 256, 512]),
@@ -601,8 +607,6 @@ METHOD_SPECS = {
             # tier-3 cfg fields
             "weight_decay": ("choice", [0.0, 1e-5, 1e-4, 1e-3]),
             "cosine_min_factor": ("choice", [0.0, 0.01, 0.1]),
-            # not an HPO knob: k is vestigial for V1 -- the psb path passed to
-            # the estimator ignores the barycentric k constructor scalar.
         },
         "tabular_only": False,
     },
@@ -635,7 +639,7 @@ METHOD_SPECS = {
             "test_gamma_min": ("log_uniform", 1e-2, 2e-1),
             "test_inner_eps": ("choice", [0.0, 0.05, 0.1]),
             # importance sampling time distribution knob (builder-consumed)
-            "time_dist": ("choice", ["uniform", "beta_2_2", "beta_5_5"]),
+            "time_dist": ("choice", list(TIME_DISTS)),
             "apply_iw": ("choice", [True, False]),
             # tier-1 estimator scalars
             "hidden_dim": ("choice", [128, 256, 512]),

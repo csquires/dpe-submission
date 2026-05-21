@@ -586,7 +586,10 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
     inner_eps = flat_hp.get("inner_eps", 0.0)
     vertex = flat_hp["vertex"]
     eps = flat_hp["eps"]
-    gamma_min = flat_hp["gamma_min"]
+    # gamma_min is conditionally inert (masked when inner_eps > 0), so the
+    # suggester omits it on that branch; default to 0.0 like build_VFM / the
+    # CTSM-V1 builder. when inner_eps == 0 the key is always present.
+    gamma_min = flat_hp.get("gamma_min", 0.0)
     path = psb_1d(
         sched=_sched_1d(flat_hp), vertex=vertex,
         gamma_min=gamma_min, inner_eps=inner_eps, eps=eps,
