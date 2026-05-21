@@ -12,14 +12,18 @@ CONFIG = StudyConfig(
     study_seed=1729,
     experiment="eig",
     methods=[
-        "VFM", "VFMOrthros",
-        "MultiHeadTriangularTDRE", "MultiHeadTDRE",
-        "CTSM", "FMDRE", "FMDRE_S2", "TSM",
-        "BDRE", "MDRE_15", "TriangularMDRE", "TriangularFMDRE",
+        # cls-based (src.methods.cls). triangular re-done with nwp={3,5,7,9};
+        # BDRE/MDRE_15 fresh (weight_decay-ctor bug fixed). non-triangular
+        # MultiHeadTDRE FROZEN at its done state -- excluded from this campaign.
+        "MultiHeadTriangularTDRE",
+        "BDRE", "MDRE_15", "TriangularMDRE",
+        # reg-based (src.methods.reg) -- fresh studies, new search space, n_epochs=4000.
+        "VFM", "VFMOrthros", "CTSM", "FMDRE", "FMDRE_S2", "TSM", "TriangularFMDRE",
     ],
+    target_trials=512,
     walltime_minutes=120,
     min_resource=100,
-    max_resource=1600,
+    max_resource=3200,
     reduction_factor=2,
     holdout_top_k=5,
     walltime_margin_minutes=10,

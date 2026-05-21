@@ -18,7 +18,7 @@
 #SBATCH --qos=cpu_qos
 #SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=24G
+#SBATCH --mem=96G
 #SBATCH --requeue
 #SBATCH --output=logs/optredis_%j.out
 source ~/.bashrc
