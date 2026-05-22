@@ -49,18 +49,18 @@ METADATA_V3 = {"uses_pruning": True, "requires_pstar": True, "builder": "build_T
 def _common_optim(trial: optuna.Trial, hp: dict) -> None:
     """suggest the optimizer + regulariser knobs shared by all three versions."""
     hp["n_epochs"] = N_EPOCHS
-    hp["lr"] = trial.suggest_float("lr", 3e-4, 3e-3, log=True)
-    hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256])
-    hp["sigma"] = trial.suggest_float("sigma", 0.3, 3.0, log=True)
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 300, 2600)
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
+    hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
+    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
     hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["activation"] = trial.suggest_categorical("activation", ["elu", "gelu", "silu"])
-    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [128, 256, 512])
+    hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
-    hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3])
+    hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["cosine_min_factor"] = trial.suggest_categorical("cosine_min_factor", [0.0, 0.01, 0.1])
-    hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 1e-1, log=True)
+    hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)
 
 
 def _derive_test(hp: dict) -> None:
@@ -85,7 +85,7 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
     """
     hp: dict[str, Any] = {}
     _common_optim(trial, hp)
-    hp["eps"] = trial.suggest_float("eps", 1e-3, 3e-3, log=True)
+    hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
 
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
@@ -96,7 +96,7 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
         hp["vertex"] = trial.suggest_float("vertex", 0.2, 0.8)
 
     if sched == "stiff":
-        hp["k"] = trial.suggest_categorical("k", [10, 20, 40])
+        hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
     if inner_eps == 0.0:
         hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
 
@@ -119,7 +119,7 @@ def suggest_hp_v1(trial: optuna.Trial) -> dict[str, Any]:
     switches: sched, inner_eps, time_dist. conditional: k (stiff), gamma_min
     (inner_eps==0), apply_iw (time_dist != uniform).
     """
-    return _suggest_1d(trial, inner_eps_grid=[0.0, 0.02, 0.05], psb=True)
+    return _suggest_1d(trial, inner_eps_grid=[0.0, 0.05, 0.1], psb=True)
 
 
 def suggest_hp_v2(trial: optuna.Trial) -> dict[str, Any]:
@@ -142,7 +142,7 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     """
     hp: dict[str, Any] = {}
     _common_optim(trial, hp)
-    hp["eps"] = trial.suggest_float("eps", 1e-3, 3e-3, log=True)
+    hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
 
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
@@ -152,7 +152,7 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
 
     if sched == "stiff":
-        hp["k"] = trial.suggest_categorical("k", [12, 24, 48])
+        hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
 
     _derive_test(hp)
     return hp
