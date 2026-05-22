@@ -81,15 +81,21 @@ LANES: dict[str, LaneProfile] = {
         max_concurrent=96,
         cores_per_trial=1,
     ),
+    # cpu: fat loky-fanout, throughput-shaped to cores=1 like the array lane.
+    # blas over-threading makes cores>1 ~10x worse total throughput (VFM profile:
+    # c32/b32/cores1 = 425 elem/min vs c32/b8/cores4 = 39). cpus=48 fits the cpu
+    # partition's largest single-node hole; mem scaled to the array lane's proven
+    # ~4G/trial envelope at b48.
     "cpu": LaneProfile(
         partition="cpu",
         qos="cpu_qos",
         gpus=0,
-        cpus_per_task=64,
-        mem="32G",
+        cpus_per_task=48,
+        mem="128G",
         batch_size=None,
         worker_walltime="06:00:00",
         max_concurrent=9,
+        cores_per_trial=1,
     ),
     "general": LaneProfile(
         partition="general",
