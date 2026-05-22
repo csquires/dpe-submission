@@ -3,7 +3,7 @@
 Trains a 2-vector score network on the closed-form regression target;
 predicts log(p0/p1) by integrating -score along a 1D curve in the (t1, t2) square.
 """
-from typing import Optional
+from typing import Optional, Callable
 import warnings
 
 import torch
@@ -17,6 +17,7 @@ from ...common._estimator_helpers import _validate_and_store_slots
 from ...common._weighting import resolve_outer_lambda
 from ...common._paradigm_funcs import ctsm_regression_target_2d
 from ...common._predict_ldr import predict_ldr_via_curve
+from ....common._report import _make_report
 from src.models.time_score_matching.score_network_2d import ScoreNetwork2D
 from src.waypoints.dataclass_paths import TriangularPath2D
 from src.methods.reg.common._curves import Curve
@@ -161,6 +162,10 @@ class TriangularCTSM2D(ELDR):
         samples_p0: torch.Tensor,  # [N0, D]
         samples_p1: torch.Tensor,  # [N1, D]
         samples_pstar: torch.Tensor,  # [Nstar, D]
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         """Train single score network via importance-weighted CTSM regression.
 
@@ -168,6 +173,11 @@ class TriangularCTSM2D(ELDR):
             samples_p0: [N0, D] samples from p_0.
             samples_p1: [N1, D] samples from p_1.
             samples_pstar: [Nstar, D] samples from p_*.
+            step_cb: optional callback Callable[[int, float], None] invoked at intervals.
+                Receives (step_number, eval_mae) during training for pruning/monitoring.
+            eval_data: optional dict with keys "pstar" and "true_ldrs" (both torch.Tensor).
+                If provided along with step_cb, enables held-out evaluation.
+            step_cb_interval: frequency (in steps) at which to invoke step_cb; default 50.
         """
         # move to device and cast to float
         samples_p0 = samples_p0.to(self.device).float()  # [N0, D]
@@ -192,6 +202,20 @@ class TriangularCTSM2D(ELDR):
         ema_obj = make_ema(self.model, self.ema)
 
         self.model.train()
+
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs; _model ignored."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
+        do_report = _make_report(step_cb, step_cb_interval, eval_fn, self.model, self.model)
 
         # extract references for closure
         device = self.device
@@ -250,6 +274,7 @@ class TriangularCTSM2D(ELDR):
             optimizer.step()
             do_sched()
             do_ema()
+            do_report()
 
         self.model.eval()
         self.ema_obj = ema_obj

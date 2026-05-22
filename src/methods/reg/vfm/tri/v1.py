@@ -2,7 +2,7 @@
 
 no inheritance from base; uses free functions + explicit path/time/curve/integrator slots.
 """
-from typing import Optional, Literal
+from typing import Optional, Literal, Callable
 import warnings
 
 import torch
@@ -12,7 +12,7 @@ from ...common._cfgs import (
     OptimCfg, SchedCfg, EmaCfg,
     make_optim, make_sched, make_ema,
 )
-from ...common._trainer import train_two_phase
+from ...common._trainer import train_interleaved
 from ...common._losses import make_velo_loss, make_denoiser_loss
 from src.waypoints.dataclass_paths import TriangularPath1D
 from src.waypoints.path_builders import bary_vfm
@@ -187,6 +187,10 @@ class TriangularVFMV1(ELDR):
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         """two-phase training; loss closures built once via factories."""
         n_star = samples_pstar.shape[0]
@@ -251,7 +255,7 @@ class TriangularVFMV1(ELDR):
             loss_eta = make_denoiser_loss(path=self.path, reweight=self.reweight)
 
         # wrap networks once at fit time if preconditioning; pass wrapped model
-        # and raw module to train_two_phase (trainer applies EMA to module only).
+        # and raw module to train_interleaved (trainer applies EMA to module only).
         if self.precond:
             model_b_to_train = wrap(self.net_b, coeff_b)
             model_eta_to_train = wrap(self.net_eta, coeff_eta)
@@ -259,10 +263,22 @@ class TriangularVFMV1(ELDR):
             model_b_to_train = self.net_b
             model_eta_to_train = self.net_eta
 
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs; _model ignored."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
         # call shared training orchestrator. wrapped callables are model_b/model_eta;
         # raw nets are model_module_b/model_module_eta (params, device, EMA, train/eval).
-        # train_two_phase gains model_module_b/eta per spec_trainer.md.
-        train_two_phase(
+        # train_interleaved gains model_module_b/eta per spec_trainer.md.
+        train_interleaved(
             model_b=model_b_to_train,
             model_eta=model_eta_to_train,
             model_module_b=self.net_b,
@@ -274,8 +290,7 @@ class TriangularVFMV1(ELDR):
             loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
-            n_steps_b=self.n_epochs,
-            n_steps_eta=self.n_epochs,
+            n_steps=self.n_epochs,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler_b=sched_b,
@@ -285,6 +300,9 @@ class TriangularVFMV1(ELDR):
             grad_clip_norm_b=self.optim.grad_clip_norm,
             grad_clip_norm_eta=self.optim.grad_clip_norm,
             eps=self.path.eps,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
         # finalize networks to eval mode

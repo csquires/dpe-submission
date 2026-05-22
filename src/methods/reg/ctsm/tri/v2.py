@@ -8,7 +8,7 @@ path-aware (make_piecewise_sb_sampler), automatically excluding the forbidden ba
 Explicit time sampler can be provided; users accepting the default assume the time sampler
 avoids the forbidden band.
 """
-from typing import Optional
+from typing import Optional, Callable
 import warnings
 
 import torch
@@ -193,6 +193,10 @@ class TriangularCTSMV2(ELDR):
         samples_p0: Tensor,
         samples_p1: Tensor,
         samples_pstar: Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> "TriangularCTSMV2":
         """fit the CTSM model via one-phase continuous-time score matching.
 
@@ -228,6 +232,18 @@ class TriangularCTSMV2(ELDR):
         sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
         self.ema_obj = make_ema(self.model, self.ema)
 
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs; _model ignored."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
         # run training loop
         train_loop(
             model=self.model,
@@ -243,6 +259,9 @@ class TriangularCTSMV2(ELDR):
             ema=self.ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.path.eps,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
         return self

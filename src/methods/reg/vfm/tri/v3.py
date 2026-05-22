@@ -3,7 +3,7 @@
 trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially on a
 2D-time stacked interpolant; integrates the time-score along a curve at inference.
 """
-from typing import Optional, Literal
+from typing import Optional, Literal, Callable
 import warnings
 
 import torch
@@ -19,6 +19,7 @@ from ...common._paradigm_funcs import vfm_velocity_target_2d, vfm_time_score_2d
 from ...common._predict_ldr import predict_ldr_via_curve
 from ...common._curves import Curve, LowArcCurve2D
 from ...common._integrators import Integrator, integrator_trapezoid
+from ...common._trainer import train_interleaved_3
 from src.waypoints.dataclass_paths import TriangularPath2D
 from src.waypoints.path_builders import rect_vfm
 from src.methods.reg.common._time_samplers import TimeSampler2D, make_uniform, make_uniform_scaled, make_product
@@ -248,15 +249,24 @@ class TriangularVFM2D(ELDR):
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
-        """init networks; train b1/b2 and eta sequentially via two-phase optimization.
+        """init networks; train b1/b2 and eta via interleaved optimization.
 
         uses self.path, self.time, self.optim, self.sched, self.ema configs
         to build optimizers, schedulers, and ema wrappers per network.
         self.time(B, device) -> (t1, t2, iw) replaces hardcoded torch.rand.
+        velocity group {b1,b2} and eta advance together each step (interleaved),
+        with optional optuna pruning via step_cb/eval_data.
 
         args:
             samples_p0, samples_p1, samples_pstar: [n, d] sample tensors.
+            step_cb: optional callback(step, metric) for optuna pruning.
+            eval_data: optional dict with "pstar" and "true_ldrs" for eval_fn.
+            step_cb_interval: call step_cb every n steps (default 50).
         """
         n_star = samples_pstar.shape[0]
 
@@ -296,49 +306,26 @@ class TriangularVFM2D(ELDR):
         self.ema_b2 = ema_b2
         self.ema_eta = ema_eta
 
-        # train phases with factory-built objects
-        self._train_b_phase(samples_p0, samples_p1, samples_pstar, optim_b, sched_b, ema_b1, ema_b2)
-        self._train_eta_phase(samples_p0, samples_p1, samples_pstar, optim_eta, sched_eta, ema_eta)
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
 
-        # post-training cleanup
-        self.net_b1.eval()
-        self.net_b2.eval()
-        self.net_eta.eval()
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs; _model ignored."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
 
-    def _train_b_phase(
-        self,
-        samples_p0: torch.Tensor,
-        samples_p1: torch.Tensor,
-        samples_pstar: torch.Tensor,
-        optimizer_b: torch.optim.Optimizer,
-        scheduler_b: object,
-        ema_b1: object,
-        ema_b2: object,
-    ) -> None:
-        """train b1 and b2 jointly; eta frozen.
-
-        samples (t1, t2, iw) via self.time (replaces hardcoded torch.rand).
-        computes velocity targets for both t1 and t2 directions via
-        vfm_velocity_target_2d; builds per-direction losses (one for b1, one for b2).
-        antithetic variance reduction applied per-direction if self.antithetic=true.
-        iw and outer_lambda reweighting applied before mean reduction.
-        """
-        n0 = samples_p0.shape[0]
-        n1 = samples_p1.shape[0]
-        n_star = samples_pstar.shape[0]
-
-        self.net_b1.train()
-        self.net_b2.train()
-        self.net_eta.eval()
-
+        # build loss_b thunk: joint velocity loss from both net_b1 and net_b2
+        n0, n1, n_star = samples_p0.shape[0], samples_p1.shape[0], samples_pstar.shape[0]
         path = self.path
-        net_b1 = self.net_b1
-        net_b2 = self.net_b2
+        net_b1, net_b2, net_eta = self.net_b1, self.net_b2, self.net_eta
         reweight = self.reweight
 
-        # bind antithetic vs non-antithetic body once
         if self.antithetic:
-            def compute_losses(x0, x1, xstar):
+            def _compute_b(x0, x1, xstar):
                 # sample 2D time via self.time (replaces hardcoded torch.rand)
                 t1, t2, iw = self.time(self.batch_size, self.device)  # [B, 1] each
                 z = torch.randn_like(x0)  # [B, D]
@@ -379,7 +366,7 @@ class TriangularVFM2D(ELDR):
 
                 return per_b1.mean() + per_b2.mean()
         else:
-            def compute_losses(x0, x1, xstar):
+            def _compute_b(x0, x1, xstar):
                 t1, t2, iw = self.time(self.batch_size, self.device)
                 z = torch.randn_like(x0)
                 outer = resolve_outer_lambda(reweight, t1)
@@ -403,105 +390,59 @@ class TriangularVFM2D(ELDR):
 
                 return per_b1.mean() + per_b2.mean()
 
-        # bind post-step callbacks once.
-        grad_clip = self.optim.grad_clip_norm
-        if grad_clip is not None and grad_clip > 0:
-            b_params = list(net_b1.parameters()) + list(net_b2.parameters())
-
-            def do_clip():
-                torch.nn.utils.clip_grad_norm_(b_params, max_norm=grad_clip)
-        else:
-            def do_clip():
-                return None
-        do_sched = scheduler_b.step if scheduler_b is not None else (lambda: None)
-        do_ema_b1 = (lambda: ema_b1.update(net_b1)) if ema_b1 is not None else (lambda: None)
-        do_ema_b2 = (lambda: ema_b2.update(net_b2)) if ema_b2 is not None else (lambda: None)
-
-        for epoch in range(self.n_epochs):
+        def loss_b():
             idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
             idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
             idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
-            loss = compute_losses(samples_p0[idx0], samples_p1[idx1], samples_pstar[idx_star])
-            optimizer_b.zero_grad()
-            loss.backward()
-            do_clip()
-            optimizer_b.step()
-            do_sched()
-            do_ema_b1()
-            do_ema_b2()
+            return _compute_b(samples_p0[idx0], samples_p1[idx1], samples_pstar[idx_star])
 
-    def _train_eta_phase(
-        self,
-        samples_p0: torch.Tensor,
-        samples_p1: torch.Tensor,
-        samples_pstar: torch.Tensor,
-        optimizer_eta: torch.optim.Optimizer,
-        scheduler_eta: object,
-        ema_eta: object,
-    ) -> None:
-        """train eta with b1 and b2 frozen.
-
-        samples (t1, t2, iw) via self.time (replaces hardcoded torch.rand).
-        denoising loss: 0.5 * ||eta - z||^2 (half-norm minus dot).
-        iw and outer_lambda reweighting applied before mean reduction.
-        """
-        n0 = samples_p0.shape[0]
-        n1 = samples_p1.shape[0]
-        n_star = samples_pstar.shape[0]
-
-        self.net_b1.eval()
-        self.net_b2.eval()
-        self.net_eta.train()
-
-        path = self.path
-        net_eta = self.net_eta
-        reweight = self.reweight
-
-        # bind post-step callbacks once
-        grad_clip = self.optim.grad_clip_norm
-        if grad_clip is not None and grad_clip > 0:
-            eta_params = list(net_eta.parameters())
-
-            def do_clip():
-                torch.nn.utils.clip_grad_norm_(eta_params, max_norm=grad_clip)
-        else:
-            def do_clip():
-                pass
-        do_sched = scheduler_eta.step if scheduler_eta is not None else (lambda: None)
-        do_ema = (lambda: ema_eta.update(net_eta)) if ema_eta is not None else (lambda: None)
-
-        for epoch in range(self.n_epochs):
+        # build loss_eta thunk: denoiser loss
+        def loss_eta():
             idx0 = torch.randint(0, n0, (self.batch_size,), device=self.device)
             idx1 = torch.randint(0, n1, (self.batch_size,), device=self.device)
             idx_star = torch.randint(0, n_star, (self.batch_size,), device=self.device)
-            x0 = samples_p0[idx0]
-            x1 = samples_p1[idx1]
-            xstar = samples_pstar[idx_star]
-
-            # sample 2D time (replaces hardcoded torch.rand)
+            x0, x1, xstar = samples_p0[idx0], samples_p1[idx1], samples_pstar[idx_star]
             t1, t2, iw = self.time(self.batch_size, self.device)
-
             z = torch.randn_like(x0)
-
-            # compute interpolated samples via path
             w = path.weights(t1, t2)
             mu = w.alpha * x0 + w.beta * x1 + w.w_star * xstar
             gamma_t = path.gamma(t1, t2)
             x_t = (mu + gamma_t * z).detach()
-
             outer = resolve_outer_lambda(reweight, t1)
             eta_pred = net_eta(x_t, t1, t2)
             per_sample = (
                 0.5 * (eta_pred ** 2).sum(dim=-1) - (z * eta_pred).sum(dim=-1)
             ) * outer.squeeze(-1)
-            loss_eta = per_sample.mean()
+            return per_sample.mean()
 
-            optimizer_eta.zero_grad()
-            loss_eta.backward()
-            do_clip()
-            optimizer_eta.step()
-            do_sched()
-            do_ema()
+        # build grad-clip param lists
+        grad_clip = self.optim.grad_clip_norm
+        b_params = list(net_b1.parameters()) + list(net_b2.parameters())
+        eta_params = list(net_eta.parameters())
+
+        # train with interleaved optimization
+        train_interleaved_3(
+            net_b1, net_b2, net_eta,
+            loss_b, loss_eta,
+            optim_b, optim_eta,
+            n_steps=self.n_epochs,
+            scheduler_b=sched_b,
+            scheduler_eta=sched_eta,
+            ema_b1=ema_b1,
+            ema_b2=ema_b2,
+            ema_eta=ema_eta,
+            b_params=b_params,
+            eta_params=eta_params,
+            grad_clip_norm=grad_clip,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
+        )
+
+        # post-training cleanup
+        self.net_b1.eval()
+        self.net_b2.eval()
+        self.net_eta.eval()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """estimate log p_0(x) / p_1(x) via time-score line integral.

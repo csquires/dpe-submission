@@ -182,6 +182,10 @@ class TriangularCTSMV1(ELDR):
         samples_p0: Tensor,
         samples_p1: Tensor,
         samples_pstar: Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         """train the network via continuous-time score matching regression."""
         # step 1: initialize network
@@ -197,7 +201,19 @@ class TriangularCTSMV1(ELDR):
         # step 4: create loss function
         loss_fn = make_sb_loss(path=self.path, reweight=self.reweight)
 
-        # step 5: call unified training loop
+        # step 5: build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs; _model ignored."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
+        # step 6: call unified training loop
         train_loop(
             model=self.model,
             samples_p0=samples_p0,
@@ -212,6 +228,9 @@ class TriangularCTSMV1(ELDR):
             ema=self.ema_obj,
             grad_clip_norm=self.optim.grad_clip_norm,
             eps=self.path.eps,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
     def predict_ldr(self, xs: Tensor) -> Tensor:

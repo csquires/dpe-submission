@@ -9,7 +9,7 @@ dual-path mode: train path (self.path) uses (gamma_min, inner_eps);
 test path (self.test_path) uses (test_gamma_min, test_inner_eps).
 inference uses test path; training uses train path.
 """
-from typing import Optional, Literal
+from typing import Optional, Literal, Callable
 import warnings
 
 import torch
@@ -20,7 +20,7 @@ from ...common._estimator_helpers import _validate_and_store_slots
 from ...common._paradigm_funcs import vfm_time_score_1d
 from ...common._predict_ldr import predict_ldr_via_curve
 from ...common._losses import make_velo_loss, make_denoiser_loss
-from ...common._trainer import train_two_phase
+from ...common._trainer import train_interleaved
 from ...common._time_samplers import (
     TimeSampler1D, make_uniform, make_piecewise_sb_sampler,
 )
@@ -271,6 +271,10 @@ class TriangularVFMV2(ELDR):
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
         """train velocity field and denoiser via two-phase loss.
 
@@ -341,7 +345,19 @@ class TriangularVFMV2(ELDR):
             wrapped_net_b = self.net_b
             wrapped_net_eta = self.net_eta
 
-        train_two_phase(
+        # build eval_fn if both callbacks and eval data are provided
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs; _model ignored."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
+
+        train_interleaved(
             model_b=wrapped_net_b,
             model_eta=wrapped_net_eta,
             model_module_b=self.net_b,
@@ -353,8 +369,7 @@ class TriangularVFMV2(ELDR):
             loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
-            n_steps_b=self.n_epochs,
-            n_steps_eta=self.n_epochs,
+            n_steps=self.n_epochs,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler_b=sched_b,
@@ -364,6 +379,9 @@ class TriangularVFMV2(ELDR):
             grad_clip_norm_b=self.optim.grad_clip_norm,
             grad_clip_norm_eta=self.optim.grad_clip_norm,
             eps=self.path.eps,
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
         self.net_b.eval()
