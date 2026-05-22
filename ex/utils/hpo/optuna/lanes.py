@@ -81,6 +81,23 @@ LANES: dict[str, LaneProfile] = {
         max_concurrent=96,
         cores_per_trial=1,
     ),
+    # holdout: same array partition + cores=1 shape as "array", but a smaller
+    # 8-cpu/8-trial footprint so each slurm element backfills into scattered
+    # idle cores and the array_qos MaxTRESPU=cpu=256 cap admits 32 concurrent
+    # elements (256/8) instead of 8 (256/32). mem scaled to the proven ~4G/trial
+    # envelope (8*4=32G). only submit_holdout.sh reads this; the optuna worker
+    # stays on "array".
+    "holdout": LaneProfile(
+        partition="array",
+        qos="",
+        gpus=0,
+        cpus_per_task=8,
+        mem="32G",
+        batch_size=8,
+        worker_walltime="06:00:00",
+        max_concurrent=96,
+        cores_per_trial=1,
+    ),
     # cpu: fat loky-fanout, throughput-shaped to cores=1 like the array lane.
     # blas over-threading makes cores>1 ~10x worse total throughput (VFM profile:
     # c32/b32/cores1 = 425 elem/min vs c32/b8/cores4 = 39). cpus=48 fits the cpu
