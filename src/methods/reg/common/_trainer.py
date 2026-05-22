@@ -475,3 +475,102 @@ def train_interleaved(
     finally:
         mod_b.eval()
         mod_eta.eval()
+
+
+def train_interleaved_3(
+    net_b1: nn.Module,
+    net_b2: nn.Module,
+    net_eta: nn.Module,
+    loss_b: Callable[[], torch.Tensor],
+    loss_eta: Callable[[], torch.Tensor],
+    optim_b: optim.Optimizer,
+    optim_eta: optim.Optimizer,
+    n_steps: int,
+    *,
+    scheduler_b: optim.lr_scheduler.LRScheduler | None = None,
+    scheduler_eta: optim.lr_scheduler.LRScheduler | None = None,
+    ema_b1: EMA | None = None,
+    ema_b2: EMA | None = None,
+    ema_eta: EMA | None = None,
+    b_params: Iterable[torch.nn.Parameter] | None = None,
+    eta_params: Iterable[torch.nn.Parameter] | None = None,
+    grad_clip_norm: float | None = None,
+    step_cb: Callable[[int, float], None] | None = None,
+    eval_fn: Callable[[Any], torch.Tensor] | None = None,
+    step_cb_interval: int = 50,
+) -> None:
+    """train velocity (b1+b2 joint) and denoiser (eta) via interleaved 2-group updates.
+
+    unlike train_interleaved, this advances TWO networks (b1, b2) as ONE group via
+    a shared optimizer and loss. the denoiser (eta) forms a second group with its
+    own optimizer. the two groups alternate per step, keeping fair hyperband step
+    counts. this is for TriangularVFM2D v3, where loss_b and loss_eta are zero-arg
+    thunks that sample minibatches and time (2D) internally.
+
+    procedure (per step):
+      1. zero_grad(optim_b); loss_b() -> scalar; backward(); clip_grad(b_params);
+         step(optim_b); scheduler_b.step(); ema_b1.update(); ema_b2.update().
+      2. zero_grad(optim_eta); loss_eta() -> scalar; backward(); clip_grad(eta_params);
+         step(optim_eta); scheduler_eta.step(); ema_eta.update().
+      3. do_report() (toggles all three modules to eval, calls eval_fn(None), restores).
+
+    exit invariant: all three modules are set to eval(), INCLUDING on exception
+    (try/finally), so callers see "outside fit, eval mode" guarantee.
+
+    args:
+      net_b1, net_b2, net_eta: nn.Module instances; used only for train()/eval()
+        toggling and report-module list. params owned by optimizers below.
+      loss_b: zero-arg callable -> scalar tensor. computes joint velocity loss
+        (b1 + b2 contributions summed). backward() produces grads for both nets.
+      loss_eta: zero-arg callable -> scalar tensor. denoiser loss.
+      optim_b: owns net_b1.parameters() + net_b2.parameters().
+      optim_eta: owns net_eta.parameters().
+      n_steps: number of interleaved steps (caller passes self.n_epochs).
+      scheduler_b, scheduler_eta: optional, stepped once per group update.
+      ema_b1, ema_b2, ema_eta: optional EMA wrappers, updated after their group's step.
+      b_params, eta_params: pre-built param lists for grad clipping (None -> skip).
+      grad_clip_norm: max-norm applied after backward, before step. None or <=0 -> skip.
+      step_cb, eval_fn, step_cb_interval: optuna pruning hooks (match train_interleaved).
+    """
+    do_report = _make_report_pair(
+        step_cb, step_cb_interval, eval_fn, [net_b1, net_b2, net_eta],
+    )
+
+    net_b1.train()
+    net_b2.train()
+    net_eta.train()
+
+    try:
+        for _ in range(n_steps):
+            # velocity group update (b1 + b2 joint)
+            optim_b.zero_grad()
+            lb = loss_b()
+            lb.backward()
+            if grad_clip_norm is not None and grad_clip_norm > 0 and b_params is not None:
+                torch.nn.utils.clip_grad_norm_(b_params, max_norm=grad_clip_norm)
+            optim_b.step()
+            if scheduler_b is not None:
+                scheduler_b.step()
+            if ema_b1 is not None:
+                ema_b1.update(net_b1)
+            if ema_b2 is not None:
+                ema_b2.update(net_b2)
+
+            # denoiser group update (eta)
+            optim_eta.zero_grad()
+            le = loss_eta()
+            le.backward()
+            if grad_clip_norm is not None and grad_clip_norm > 0 and eta_params is not None:
+                torch.nn.utils.clip_grad_norm_(eta_params, max_norm=grad_clip_norm)
+            optim_eta.step()
+            if scheduler_eta is not None:
+                scheduler_eta.step()
+            if ema_eta is not None:
+                ema_eta.update(net_eta)
+
+            # report after both group updates
+            do_report()
+    finally:
+        net_b1.eval()
+        net_b2.eval()
+        net_eta.eval()
