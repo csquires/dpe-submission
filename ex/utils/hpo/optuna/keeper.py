@@ -80,6 +80,49 @@ def job_name(experiment: str, method: str, lane_name: str) -> str:
     return f"optk_{experiment}_{method}_{lane_name}"
 
 
+def cull_study_jobs(experiment: str, method: str, lanes: list[str],
+                    user: str | None, dry_run: bool) -> int:
+    """scancel all in-flight worker jobs for an at-target study, across lanes.
+
+    once a study reaches target_trials the keeper stops dispatching to it, but
+    its already-dispatched workers run their in-flight trials to completion --
+    overshooting the target and holding lane slots the still-pending studies
+    need. cancelling by job-name frees those slots immediately. cancelled
+    in-flight trials land as orphaned RUNNING entries (reap_stale_trials cleans
+    them) and do not count toward target, so accounting is unaffected.
+
+    stateless and idempotent: gated on a live-job squeue check, so once a
+    study's jobs are gone subsequent cycles are no-ops. returns the number of
+    lanes for which a scancel was issued.
+    """
+    n = 0
+    for lane_name in lanes:
+        name = job_name(experiment, method, lane_name)
+        try:
+            partition = get_lane(lane_name).partition
+            live = squeue_count(partition, user=user, name=name)
+        except Exception as e:
+            logger.warning("cull: squeue/lane lookup failed for %s: %s", name, e)
+            continue
+        if live == 0:
+            continue
+        cmd = ["scancel", "-n", name]
+        if user:
+            cmd += ["-u", user]
+        if dry_run:
+            logger.info("cull (dry-run): %s (%d live)", " ".join(cmd), live)
+            n += 1
+            continue
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.info("cull: scancel %s (%d in-flight job(s); study at target)",
+                        name, live)
+            n += 1
+        except subprocess.CalledProcessError as e:
+            logger.warning("cull: scancel failed for %s: %s", name, e.stderr.strip())
+    return n
+
+
 def dispatch(config_module: str, combo_index: int, experiment: str,
              method: str, lane_name: str, lane: LaneProfile, workdir: str,
              log_dir: str, dry_run: bool) -> str:
@@ -220,6 +263,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--log-dir", default="logs")
     p.add_argument("--dry-run", action="store_true",
                    help="print sbatch lines instead of submitting")
+    p.add_argument("--cull-on-target", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="scancel a study's in-flight workers once it reaches "
+                        "target_trials, freeing lane slots for pending studies "
+                        "(default: on; --no-cull-on-target to disable)")
     return p.parse_args()
 
 
@@ -303,6 +351,21 @@ def main() -> int:
             )
             time.sleep(args.poll_interval)
             continue
+
+        # (1b) cull in-flight workers for studies already at target. they are
+        # not in `pending` (so never re-dispatched); cancelling their leftover
+        # workers caps overshoot and returns lane slots to the pending studies.
+        if args.cull_on_target:
+            pending_methods = {m for (_, m, _) in pending}
+            for method in config.methods:
+                if method not in pending_methods:
+                    try:
+                        cull_study_jobs(
+                            config.experiment, method, config.lanes, user,
+                            args.dry_run,
+                        )
+                    except Exception as e:
+                        logger.warning("cull failed for %s: %s", method, e)
 
         # (2) for each lane: split lane.max_concurrent (the per-lane total
         # running cap) evenly across the studies still under target.
