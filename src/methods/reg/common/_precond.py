@@ -327,7 +327,7 @@ def wrap_2head(net: Callable, coeff_fn0: Callable, coeff_fn1: Callable) -> Calla
 
     space-first: the wrapped callable has signature (x, tau) -- a drop-in
     replacement for the raw OrthrosNet, called net(x, tau) by the loss closure
-    and by vfm_orthros_time_score_1d. the inner net call is space-first:
+    and by inference code. the inner net call is space-first:
     net(c_in*x, c_noise).
 
     Args:

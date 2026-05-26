@@ -18,7 +18,6 @@ from ..common._estimator_helpers import _validate_and_store_slots
 from ..common._paradigm_funcs import (
     vfm_velocity_target_direct_1d,
     vfm_time_score_1d,
-    vfm_orthros_time_score_1d,
 )
 from ..common._time_samplers import make_uniform, TimeSampler1D
 from ..common._curves import IdentityCurve1D, Curve
@@ -447,30 +446,20 @@ class VFMOrthros(DRE):
     """VFMOrthros: single-network orthros-variant velocity flow matching.
 
     single-phase training on OrthrosNet (unified 2-head architecture). head 0
-    predicts the endpoint posterior E[x0|x_t]; head 1 predicts the denoiser
-    E[z|x_t]. at inference the x1 endpoint is derived from the interpolant
-    constraint and the velocity is reconstructed; the orthros time-score is
-    integrated via predict_ldr_via_curve with IdentityCurve1D to predict
-    log(p0/p1).
+    predicts the velocity v*; head 1 predicts the denoiser E[z|x_t].
+    at inference, the time-score is computed via vfm_time_score_1d (the standard
+    VFM formula) and integrated via predict_ldr_via_curve with IdentityCurve1D
+    to predict log(p0/p1).
 
     uses DirectPath1D (no xstar), TimeSampler1D, IdentityCurve1D, and Integrator
     (Pillar E: four-slot surface). inherits legacy k parameter from VFM for path
     construction; n_t is not supported (not preserved).
 
-    parameterization note: predicting the denoiser directly (rather than
-    reconstructing it from two endpoint heads) keeps eta_hat O(1), so the score
-    -eta_hat/gamma carries only the unavoidable 1/gamma of any interpolant
-    marginal score -- VFM-level stability, no 1/gamma^2 blow-up. gamma_min
-    defaults to 0.1 (tunable) as a conservative noise floor; see
-    vfm_orthros_time_score_1d.
-
-    the one residual cost of the 2-head form is the derived x1 endpoint's 1/beta
-    factor at the tau->0 corner. clip it by passing a `test_path` whose eps
-    excludes that corner (inference integrates over [eps, 1-eps]); ~0.05 recovers
-    VFM-parity MAE empirically, and `test_eps` in the HPO search space tunes it.
-    the bare default test_path (eps=1e-3, symmetric with VFM) is *not* clipped;
-    callers configure test_path. a 3-head variant predicting {x0, x1, eta} would
-    remove the corner outright.
+    parameterization note: head 0 directly predicts the velocity target (not
+    reconstructed); head 1 predicts the denoiser. this makes VFMOrthros
+    mathematically identical to VFM, differing only in the shared-trunk
+    architecture of OrthrosNet. there is no 1/beta singularity or boundary
+    blowup since no endpoint reconstruction occurs.
     """
     def __init__(
         self,
@@ -659,10 +648,10 @@ class VFMOrthros(DRE):
         # resolve loss-weight function and wrappers
         if self.precond:
             from ..common._precond import make_coeffs, make_lambda, wrap_2head
-            coeff_x0 = make_coeffs(path, self._moments, "x0")
+            coeff_b = make_coeffs(path, self._moments, "velocity")
             coeff_eta = make_coeffs(path, self._moments, "noise")
             lambda_fn = make_lambda(coeff_eta)  # both heads share the denoiser lambda
-            net_callable = wrap_2head(self.net, coeff_x0, coeff_eta)
+            net_callable = wrap_2head(self.net, coeff_b, coeff_eta)
             if reweight:
                 warnings.warn(
                     "precond=True ignores reweight=True; EDM lambda replaces reweight. "
@@ -678,15 +667,16 @@ class VFMOrthros(DRE):
                 x0, x1 = batch["x0"], batch["x1"]
                 z = torch.randn_like(x0)
 
-                # positive noise: head 0 -> x0 endpoint, head 1 -> denoiser z
-                x_t_p, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                x0_hat_p, eta_hat_p = model(x_t_p, tau)
-                l_p = ((x0_hat_p - x0)**2 + (eta_hat_p - z)**2).sum(-1)
+                # positive noise: head 0 -> velocity b*, head 1 -> denoiser z
+                x_t_p, v_star_p = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
+                b_hat_p, eta_hat_p = model(x_t_p, tau)
+                l_p = ((b_hat_p - v_star_p)**2 + (eta_hat_p - z)**2).sum(-1)
 
-                # negative noise: the denoiser target flips with the noise
-                x_t_m, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
-                x0_hat_m, eta_hat_m = model(x_t_m, tau)
-                l_m = ((x0_hat_m - x0)**2 + (eta_hat_m + z)**2).sum(-1)
+                # negative noise: BOTH velocity AND denoiser targets flip with -z.
+                # v* under -z: d_alpha*x0 + d_beta*x1 + d_gamma*(-z), so:
+                x_t_m, v_star_m = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
+                b_hat_m, eta_hat_m = model(x_t_m, tau)
+                l_m = ((b_hat_m - v_star_m)**2 + (eta_hat_m + z)**2).sum(-1)
 
                 outer = lambda_fn(tau) if self.precond else resolve_outer_lambda(reweight, tau)
                 return (0.5 * (l_p + l_m) * outer * iw.squeeze(-1)).mean()
@@ -695,11 +685,10 @@ class VFMOrthros(DRE):
             def loss_orthros_naive(model, batch, tau, iw):
                 x0, x1 = batch["x0"], batch["x1"]
                 z = torch.randn_like(x0)
-                x_t, _ = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                # head 0 regresses the x0 endpoint posterior E[x0|x_t];
-                # head 1 regresses the denoiser E[z|x_t]
-                x0_hat, eta_hat = model(x_t, tau)
-                mse = ((x0_hat - x0)**2 + (eta_hat - z)**2).sum(-1)
+                x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
+                # head 0 regresses the velocity target v*, head 1 regresses the denoiser z
+                b_hat, eta_hat = model(x_t, tau)
+                mse = ((b_hat - v_star)**2 + (eta_hat - z)**2).sum(-1)
                 outer = lambda_fn(tau) if self.precond else resolve_outer_lambda(reweight, tau)
                 return (mse * outer * iw.squeeze(-1)).mean()
             loss_orthros = loss_orthros_naive
@@ -757,15 +746,23 @@ class VFMOrthros(DRE):
         self.net.eval()
         samples = xs.float().to(self.device)
 
+        # split orthros net's tuple output into two callables expected by vfm_time_score_1d.
+        # net_eval(x, tau) -> (b, eta); wrap so net_b_cb(x, tau) -> b and net_eta_cb(x, tau) -> eta.
+        def net_b_cb(x, tau):
+            b, _ = net_eval(x, tau)
+            return b
+
+        def net_eta_cb(x, tau):
+            _, eta = net_eval(x, tau)
+            return eta
+
         def time_score_fn(path, ts, xs):
-            """loop per curve point; vfm_orthros_time_score_1d expects tau:[B,1] matching xs:[B,D]."""
+            """loop per curve point; vfm_time_score_1d expects tau:[B,1] matching xs:[B,D]."""
             n = xs.shape[0]
             out = []
             for i in range(ts.shape[0]):
                 tau_i = ts[i:i+1].expand(n, 1)
-                out.append(
-                    vfm_orthros_time_score_1d(net_eval, path, xs, tau_i, self._div_fn)
-                )
+                out.append(vfm_time_score_1d(net_b_cb, net_eta_cb, path, xs, tau_i, self._div_fn))
             return torch.stack(out, dim=0)
 
         if self.ema_net is not None:
@@ -774,9 +771,9 @@ class VFMOrthros(DRE):
         # rebuild wrapper around EMA-applied net (wrapper is parameter-free)
         if self.precond:
             from ..common._precond import make_coeffs, wrap_2head
-            coeff_x0 = make_coeffs(self.path, self._moments, "x0")
+            coeff_b = make_coeffs(self.path, self._moments, "velocity")
             coeff_eta = make_coeffs(self.path, self._moments, "noise")
-            net_eval = wrap_2head(self.net, coeff_x0, coeff_eta)
+            net_eval = wrap_2head(self.net, coeff_b, coeff_eta)
         else:
             net_eval = self.net
 
