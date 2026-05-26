@@ -153,9 +153,15 @@ def ctsm_regression_target_1d(
     delta_dot_epsilon = (Delta * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
     dim = epsilon.shape[-1]
 
-    # chord-norm normalization (endpoint-based, not path-velocity-based)
-    delta_endpoint_sq = ((x1 - x0) ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
-    temp = torch.sqrt(2 * delta_endpoint_sq + 1e-8)                 # [B, 1]
+    # factor-aware temp from dre-prob-paths reference (see
+    # notes/dre_prob_paths_audit.md). factor=2 -> temp == 1 uniformly,
+    # removing the close-pair outlier-spike (lambda_t.max/median ~ 532 -> ~1)
+    # without changing the bayes-optimal target (per-sample identity
+    # target/lambda_t = d_tau log p_tau is invariant under temp choice).
+    factor = 2.0
+    one_minus_tau = 1.0 - tau
+    temp = torch.sqrt(1.0 - 4.0 * tau + 4.0 * tau * tau
+                      + 2.0 * factor * tau * one_minus_tau)         # [B, 1]
 
     target = (d_var_t * (epsilon_sq - dim) / 2.0
               + std_t * delta_dot_epsilon) / temp
@@ -202,9 +208,15 @@ def ctsm_regression_target_direct_1d(
     delta_dot_epsilon = (Delta * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
     dim = epsilon.shape[-1]
 
-    # chord-norm normalization
-    delta_endpoint_sq = ((x1 - x0) ** 2).sum(dim=-1, keepdim=True)  # [B, 1]
-    temp = torch.sqrt(2 * delta_endpoint_sq + 1e-8)                 # [B, 1]
+    # factor-aware temp from dre-prob-paths reference (see
+    # notes/dre_prob_paths_audit.md). factor=2 -> temp == 1 uniformly,
+    # removing the close-pair outlier-spike (lambda_t.max/median ~ 532 -> ~1)
+    # without changing the bayes-optimal target (per-sample identity
+    # target/lambda_t = d_tau log p_tau is invariant under temp choice).
+    factor = 2.0
+    one_minus_tau = 1.0 - tau
+    temp = torch.sqrt(1.0 - 4.0 * tau + 4.0 * tau * tau
+                      + 2.0 * factor * tau * one_minus_tau)         # [B, 1]
 
     target = (d_var_t * (epsilon_sq - dim) / 2.0
               + std_t * delta_dot_epsilon) / temp
