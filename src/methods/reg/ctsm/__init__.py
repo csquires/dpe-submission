@@ -359,7 +359,10 @@ class CTSM(DRE):
                 # reshape back and squeeze spatial dim
                 score = score_flat.reshape(n_chunk, n_samps, 1)             # [chunk_len, n_samples, 1]
                 score_agg = score.squeeze(-1)                               # [chunk_len, n_samples]
-                return -score_agg
+                # model converges to +d_tau log p_tau; predict_ldr_via_curve
+                # does -integral, yielding log(p_0/p_1). TriCTSM V1/V2/V3 and
+                # VFM already follow this convention; this matches them.
+                return score_agg
 
             # step 6c: call unified inference function
             ldr = predict_ldr_via_curve(
