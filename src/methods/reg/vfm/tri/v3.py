@@ -331,38 +331,32 @@ class TriangularVFM2D(ELDR):
                 z = torch.randn_like(x0)  # [B, D]
                 outer = resolve_outer_lambda(reweight, t1)  # [B, 1]
 
-                # velocity targets for both directions
-                x_t, v1_star, v2_star = vfm_velocity_target_2d(
+                # antithetic: build BOTH branches end-to-end via the helper.
+                # x_t_minus = mu - gamma*z, with v*_minus = dmu + dgamma*(-z).
+                # reusing the +z velocities for the minus branch would bias b.
+                x_t_p, v1_star_p, v2_star_p = vfm_velocity_target_2d(
                     path, x0, x1, xstar, t1, t2, z
                 )
-
-                # positive and negative perturbations
-                x_t_plus = x_t
-                x_t_minus = x_t - 2 * torch.sqrt(path.gamma(t1, t2)) * z
+                x_t_m, v1_star_m, v2_star_m = vfm_velocity_target_2d(
+                    path, x0, x1, xstar, t1, t2, -z
+                )
 
                 # b1 predictions
-                b1_plus = net_b1(x_t_plus, t1, t2)    # [B, D]
-                b1_minus = net_b1(x_t_minus, t1, t2)  # [B, D]
-
+                b1_p = net_b1(x_t_p, t1, t2)  # [B, D]
+                b1_m = net_b1(x_t_m, t1, t2)
                 # b2 predictions
-                b2_plus = net_b2(x_t_plus, t1, t2)    # [B, D]
-                b2_minus = net_b2(x_t_minus, t1, t2)  # [B, D]
+                b2_p = net_b2(x_t_p, t1, t2)
+                b2_m = net_b2(x_t_m, t1, t2)
 
-                # per-sample b1 loss (antithetic)
-                per_b1 = (
-                    0.25 * (b1_plus ** 2).sum(dim=-1)
-                    - 0.5 * (v1_star * b1_plus).sum(dim=-1)
-                    + 0.25 * (b1_minus ** 2).sum(dim=-1)
-                    - 0.5 * (v1_star * b1_minus).sum(dim=-1)
-                ) * outer.squeeze(-1)  # [B]
+                # per-sample b1 loss, 0.5 * (lp + lm) per V1/V2 convention
+                lp_b1 = 0.5 * (b1_p ** 2).sum(dim=-1) - (v1_star_p * b1_p).sum(dim=-1)
+                lm_b1 = 0.5 * (b1_m ** 2).sum(dim=-1) - (v1_star_m * b1_m).sum(dim=-1)
+                per_b1 = 0.5 * (lp_b1 + lm_b1) * outer.squeeze(-1)  # [B]
 
-                # per-sample b2 loss (antithetic)
-                per_b2 = (
-                    0.25 * (b2_plus ** 2).sum(dim=-1)
-                    - 0.5 * (v2_star * b2_plus).sum(dim=-1)
-                    + 0.25 * (b2_minus ** 2).sum(dim=-1)
-                    - 0.5 * (v2_star * b2_minus).sum(dim=-1)
-                ) * outer.squeeze(-1)  # [B]
+                # per-sample b2 loss
+                lp_b2 = 0.5 * (b2_p ** 2).sum(dim=-1) - (v2_star_p * b2_p).sum(dim=-1)
+                lm_b2 = 0.5 * (b2_m ** 2).sum(dim=-1) - (v2_star_m * b2_m).sum(dim=-1)
+                per_b2 = 0.5 * (lp_b2 + lm_b2) * outer.squeeze(-1)
 
                 return per_b1.mean() + per_b2.mean()
         else:
