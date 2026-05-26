@@ -47,22 +47,24 @@ def default_hp(method: str, **overrides) -> dict:
     Returns:
         dict with all base keys, method-specific deltas, and overrides applied.
     """
+    # sized so a correct method on a tractable closed-form LDR (gaussian-gaussian)
+    # actually converges. tests are method-correctness checks, not HPO-speed checks.
     base = {
-        "n_epochs": 200,
-        "batch_size": 128,
-        "hidden_dim": 32,
-        "n_hidden_layers": 2,
+        "n_epochs": 2000,
+        "batch_size": 256,
+        "hidden_dim": 128,
+        "n_hidden_layers": 3,
         "lr": 1e-3,
         "sigma": 1.0,
-        "integration_steps": 200,
+        "integration_steps": 500,
         "eps": 1e-3,
         "test_eps": 1e-3,
         "sched": "stiff",
         "inner_eps": 0.0,
         "gamma_min": 0.05,
         "k": 20,
-        "ema_decay": None,
-        "grad_clip_norm": None,
+        "ema_decay": 0.999,
+        "grad_clip_norm": 1.0,
         "weight_decay": 0.0,
         "activation": "silu",
         "time_dist": "uniform",
