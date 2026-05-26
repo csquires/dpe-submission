@@ -650,7 +650,11 @@ class VFMOrthros(DRE):
             from ..common._precond import make_coeffs, make_lambda, wrap_2head
             coeff_b = make_coeffs(path, self._moments, "velocity")
             coeff_eta = make_coeffs(path, self._moments, "noise")
-            lambda_fn = make_lambda(coeff_eta)  # both heads share the denoiser lambda
+            # per-head EDM lambdas: each head gets uniform-in-tau pressure on its own residual.
+            # using a single shared lambda would weight one head's residual by (c_out_other/c_out_self)^2,
+            # which diverges at boundaries and biases the shared trunk asymmetrically.
+            lambda_b_fn = make_lambda(coeff_b)
+            lambda_eta_fn = make_lambda(coeff_eta)
             net_callable = wrap_2head(self.net, coeff_b, coeff_eta)
             if reweight:
                 warnings.warn(
@@ -660,6 +664,8 @@ class VFMOrthros(DRE):
                     stacklevel=2,
                 )
         else:
+            lambda_b_fn = None
+            lambda_eta_fn = None
             net_callable = self.net
 
         if antithetic:
@@ -668,32 +674,50 @@ class VFMOrthros(DRE):
                 z = torch.randn_like(x0)
 
                 # positive noise: head 0 -> velocity b*, head 1 -> denoiser z.
-                # stein form per VFM: 0.5||b||^2 - <v*,b> and 0.5||eta||^2 - <z,eta>.
+                # stein form: 0.5||b||^2 - <v*,b> and 0.5||eta||^2 - <z,eta>; split per head.
                 x_t_p, v_star_p = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
                 b_hat_p, eta_hat_p = model(x_t_p, tau)
-                l_p = (0.5 * (b_hat_p ** 2).sum(-1) - (v_star_p * b_hat_p).sum(-1)
-                       + 0.5 * (eta_hat_p ** 2).sum(-1) - (z * eta_hat_p).sum(-1))
+                stein_b_p = 0.5 * (b_hat_p ** 2).sum(-1) - (v_star_p * b_hat_p).sum(-1)
+                stein_eta_p = 0.5 * (eta_hat_p ** 2).sum(-1) - (z * eta_hat_p).sum(-1)
 
                 # negative noise: both v* and the denoiser target flip with -z.
                 x_t_m, v_star_m = vfm_velocity_target_direct_1d(path, x0, x1, tau, -z)
                 b_hat_m, eta_hat_m = model(x_t_m, tau)
-                l_m = (0.5 * (b_hat_m ** 2).sum(-1) - (v_star_m * b_hat_m).sum(-1)
-                       + 0.5 * (eta_hat_m ** 2).sum(-1) + (z * eta_hat_m).sum(-1))
+                stein_b_m = 0.5 * (b_hat_m ** 2).sum(-1) - (v_star_m * b_hat_m).sum(-1)
+                stein_eta_m = 0.5 * (eta_hat_m ** 2).sum(-1) + (z * eta_hat_m).sum(-1)
 
-                outer = lambda_fn(tau) if self.precond else resolve_outer_lambda(reweight, tau)
-                return (0.5 * (l_p + l_m) * outer * iw.squeeze(-1)).mean()
+                # per-head outer weights: precond -> each head's EDM lambda; else shared reweight.
+                if self.precond:
+                    w_b = lambda_b_fn(tau)
+                    w_eta = lambda_eta_fn(tau)
+                else:
+                    outer = resolve_outer_lambda(reweight, tau)
+                    w_b = w_eta = outer
+
+                stein_b = 0.5 * (stein_b_p + stein_b_m)
+                stein_eta = 0.5 * (stein_eta_p + stein_eta_m)
+                total = stein_b * w_b + stein_eta * w_eta
+                return (total * iw.squeeze(-1)).mean()
             loss_orthros = loss_orthros_antithetic
         else:
             def loss_orthros_naive(model, batch, tau, iw):
                 x0, x1 = batch["x0"], batch["x1"]
                 z = torch.randn_like(x0)
                 x_t, v_star = vfm_velocity_target_direct_1d(path, x0, x1, tau, z)
-                # stein form per VFM for both heads (b against v*, eta against z).
+                # stein form per head; per-head outer weights when precond.
                 b_hat, eta_hat = model(x_t, tau)
-                stein = (0.5 * (b_hat ** 2).sum(-1) - (v_star * b_hat).sum(-1)
-                         + 0.5 * (eta_hat ** 2).sum(-1) - (z * eta_hat).sum(-1))
-                outer = lambda_fn(tau) if self.precond else resolve_outer_lambda(reweight, tau)
-                return (stein * outer * iw.squeeze(-1)).mean()
+                stein_b = 0.5 * (b_hat ** 2).sum(-1) - (v_star * b_hat).sum(-1)
+                stein_eta = 0.5 * (eta_hat ** 2).sum(-1) - (z * eta_hat).sum(-1)
+
+                if self.precond:
+                    w_b = lambda_b_fn(tau)
+                    w_eta = lambda_eta_fn(tau)
+                else:
+                    outer = resolve_outer_lambda(reweight, tau)
+                    w_b = w_eta = outer
+
+                total = stein_b * w_b + stein_eta * w_eta
+                return (total * iw.squeeze(-1)).mean()
             loss_orthros = loss_orthros_naive
 
         loss_orthros.required_keys = frozenset({"x0", "x1"})
