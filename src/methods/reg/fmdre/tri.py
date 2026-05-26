@@ -34,6 +34,7 @@ class TriangularFMDRE(ELDR):
         input_dim: int,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
+        n_shared_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
         *,
@@ -57,7 +58,12 @@ class TriangularFMDRE(ELDR):
         Args:
             input_dim: data feature dimension.
             hidden_dim: MLP hidden dimension (default 256).
-            n_hidden_layers: number of hidden layers (default 3).
+            n_hidden_layers: number of hidden layers (default 3); see
+                MultiClassVelScoreMLP for exact accounting (output projection
+                not counted).
+            n_shared_layers: hidden rounds in the shared backbone (default 3 =
+                fully shared, same as pre-split TriangularFMDRE). must satisfy
+                1 <= n_shared_layers <= n_hidden_layers.
             n_epochs: training steps (default 1000).
             batch_size: mini-batch size (default 512).
             optim: optimizer config (required, no default).
@@ -82,6 +88,7 @@ class TriangularFMDRE(ELDR):
         self.div_method = div_method
         self.n_hutch_samples = n_hutch_samples
         self.n_hidden_layers = n_hidden_layers
+        self.n_shared_layers = n_shared_layers
 
         # cfg-based attributes
         self.optim = optim
@@ -118,6 +125,7 @@ class TriangularFMDRE(ELDR):
             hidden_dim=self.hidden_dim,
             n_hidden_layers=self.n_hidden_layers,
             layernorm=self.layernorm,
+            n_shared_layers=self.n_shared_layers,
         ).to(self.device)
 
     def fit(

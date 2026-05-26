@@ -30,6 +30,7 @@ class FMDRE(DRE):
         input_dim: int,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
+        n_shared_layers: int = 3,
         n_epochs: int = 1000,
         batch_size: int = 512,
         *,
@@ -51,7 +52,11 @@ class FMDRE(DRE):
         Args:
             input_dim: feature dimension.
             hidden_dim: hidden-layer width (default 256).
-            n_hidden_layers: MLP depth (default 3).
+            n_hidden_layers: MLP depth (default 3); see CondVelScoreMLP for
+                exact accounting (output projection not counted).
+            n_shared_layers: hidden rounds in the shared backbone (default 3 =
+                fully shared, same as pre-split FMDRE). must satisfy
+                1 <= n_shared_layers <= n_hidden_layers.
             n_epochs: training steps (default 1000).
             batch_size: mini-batch size (default 512).
             optim: optimizer config (required, no default).
@@ -70,6 +75,7 @@ class FMDRE(DRE):
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
+        self.n_shared_layers = n_shared_layers
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.optim = optim
@@ -93,7 +99,12 @@ class FMDRE(DRE):
 
     def init_model(self) -> None:
         """instantiate the conditional velocity MLP on self.device."""
-        self.model = CondVelScoreMLP(self.input_dim, self.hidden_dim, n_hidden_layers=self.n_hidden_layers).to(self.device)
+        self.model = CondVelScoreMLP(
+            self.input_dim,
+            self.hidden_dim,
+            n_hidden_layers=self.n_hidden_layers,
+            n_shared_layers=self.n_shared_layers,
+        ).to(self.device)
 
     def fit(
         self,

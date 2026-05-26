@@ -8,13 +8,18 @@ class MultiClassVelScoreMLP(nn.Module):
     """
     multi-class conditional velocity and score MLP.
 
-    architecture:
+    architecture (n_shared_layers of n_hidden_layers in the shared trunk):
       one-hot labels [B] -> [B, num_classes]
       input concatenation [t, x, y_onehot] -> [B, D + 1 + K]
-        -> backbone: 3 hidden layers with GELU
-        -> v_head: Linear(hidden_dim, D) [velocity]
-        -> s_head: Linear(hidden_dim, D) [score]
+        -> backbone: n_shared_layers x [Linear, (opt LN), GELU, (opt LN)]
+        -> v_head / s_head: each
+              (n_hidden_layers - n_shared_layers) x [Linear, (opt LN), GELU, (opt LN)]
+              + Linear(hidden_dim, D)
       output: tuple (velocity [B, D], score [B, D])
+
+    when n_shared_layers == n_hidden_layers the head reduces to a single
+    Linear projection (byte-identical to the pre-split MultiClassVelScoreMLP,
+    same self.v_head / self.s_head module names and parameter init order).
 
     two entry points:
       - forward: dispatches from class indices (long) to forward_from_onehot.
@@ -25,7 +30,15 @@ class MultiClassVelScoreMLP(nn.Module):
       this MLP is K-general; convention is external.
     """
 
-    def __init__(self, input_dim: int, num_classes: int, hidden_dim: int = 256, n_hidden_layers: int = 3, layernorm: str = "off") -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        num_classes: int,
+        hidden_dim: int = 256,
+        n_hidden_layers: int = 3,
+        layernorm: str = "off",
+        n_shared_layers: int = 3,
+    ) -> None:
         """
         initialize MultiClassVelScoreMLP.
 
@@ -33,38 +46,49 @@ class MultiClassVelScoreMLP(nn.Module):
             input_dim: dimensionality D of data samples.
             num_classes: number of classes K (labels in 0..K-1).
             hidden_dim: width of hidden layers (default 256).
-            n_hidden_layers: number of hidden layers in backbone (default 3, must be >= 1).
-
-        behavior:
-          1. validate n_hidden_layers >= 1.
-          2. store input_dim, num_classes, hidden_dim, n_hidden_layers as instance attributes.
-          3. build shared backbone as nn.Sequential with n_hidden_layers hidden layers.
-             first layer: Linear(D+1+K, hidden_dim) + GELU.
-             remaining layers: (n_hidden_layers-1) * [Linear(hidden_dim, hidden_dim) + GELU].
-          4. build velocity head: Linear(hidden_dim, D).
-          5. build score head: Linear(hidden_dim, D).
+            n_hidden_layers: total hidden Linear+GELU rounds across backbone +
+                each head (default 3). final Linear output projection is not
+                counted.
+            layernorm: layernorm mode in {"off", "pre", "post"}; "pre"/"post"
+                insert LayerNorm before/after each hidden GELU in both
+                backbone and head hidden rounds (default "off",
+                byte-identical to pre-S7).
+            n_shared_layers: hidden rounds in the shared backbone; the remaining
+                n_hidden_layers - n_shared_layers rounds live in each head
+                before the output projection. must satisfy
+                1 <= n_shared_layers <= n_hidden_layers (default 3 = fully
+                shared, matches the pre-split architecture).
         """
         super().__init__()
         if n_hidden_layers < 1:
             raise ValueError(f"n_hidden_layers must be >= 1, got {n_hidden_layers}")
         if layernorm not in ("off", "pre", "post"):
             raise ValueError(f"layernorm must be in {{'off', 'pre', 'post'}}; got {layernorm!r}")
+        if not (1 <= n_shared_layers <= n_hidden_layers):
+            raise ValueError(
+                f"n_shared_layers must satisfy 1 <= n_shared_layers <= n_hidden_layers "
+                f"({n_hidden_layers}); got {n_shared_layers}"
+            )
 
         self.input_dim = input_dim
         self.num_classes = num_classes
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.layernorm = layernorm
+        self.n_shared_layers = n_shared_layers
 
-        # backbone: layernorm "off" preserves byte-identical pre-S7 behavior.
-        # "pre" inserts a LayerNorm BEFORE each hidden activation, "post" AFTER.
+        # shared backbone: n_shared_layers Linear+GELU rounds (with optional
+        # LayerNorm pre/post each activation). first layer absorbs the
+        # [t, x, y_onehot] concatenation. layernorm "off" preserves byte-
+        # identical pre-S7 behavior; the bare-Linear-heads branch below preserves
+        # byte-identity for the fully-shared default.
         layers = [nn.Linear(input_dim + 1 + num_classes, hidden_dim)]
         if layernorm == "pre":
             layers.append(nn.LayerNorm(hidden_dim))
         layers.append(nn.GELU())
         if layernorm == "post":
             layers.append(nn.LayerNorm(hidden_dim))
-        for _ in range(n_hidden_layers - 1):
+        for _ in range(n_shared_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
             if layernorm == "pre":
                 layers.append(nn.LayerNorm(hidden_dim))
@@ -74,8 +98,29 @@ class MultiClassVelScoreMLP(nn.Module):
 
         self.backbone = nn.Sequential(*layers)
 
-        self.v_head = nn.Linear(hidden_dim, input_dim)
-        self.s_head = nn.Linear(hidden_dim, input_dim)
+        n_head_hidden = n_hidden_layers - n_shared_layers
+        if n_head_hidden == 0:
+            self.v_head = nn.Linear(hidden_dim, input_dim)
+            self.s_head = nn.Linear(hidden_dim, input_dim)
+        else:
+            self.v_head = self._build_head(hidden_dim, input_dim, n_head_hidden, layernorm)
+            self.s_head = self._build_head(hidden_dim, input_dim, n_head_hidden, layernorm)
+
+    @staticmethod
+    def _build_head(hidden_dim: int, output_dim: int, n_head_hidden: int, layernorm: str) -> nn.Sequential:
+        """build a per-head Sequential of n_head_hidden Linear+GELU rounds (with
+        optional LayerNorm pre/post each activation) plus a final
+        Linear(hidden_dim, output_dim) projection."""
+        layers: list[nn.Module] = []
+        for _ in range(n_head_hidden):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            if layernorm == "pre":
+                layers.append(nn.LayerNorm(hidden_dim))
+            layers.append(nn.GELU())
+            if layernorm == "post":
+                layers.append(nn.LayerNorm(hidden_dim))
+        layers.append(nn.Linear(hidden_dim, output_dim))
+        return nn.Sequential(*layers)
 
     def forward(self, t: Tensor, x: Tensor, y: Tensor) -> tuple[Tensor, Tensor]:
         """

@@ -290,11 +290,14 @@ def build_FMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, 
     explicitly. div_method is deliberately pinned to "exact".
     """
     eps = flat_hp.get("eps", 1e-3)
+    n_hidden_layers = flat_hp.get("n_hidden_layers", 3)
     return FMDRE(
         input_dim=input_dim,
         device=device,
         hidden_dim=flat_hp.get("hidden_dim", 256),
-        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        n_hidden_layers=n_hidden_layers,
+        # missing key -> fall back to fully-shared (matches pre-split FMDRE).
+        n_shared_layers=flat_hp.get("n_shared_layers", n_hidden_layers),
         n_epochs=flat_hp["n_epochs"],
         batch_size=flat_hp["batch_size"],
         optim=_optim_from_hp(flat_hp),
@@ -319,11 +322,14 @@ def build_FMDRE_S2(input_dim: int, device: str | torch.device, num_waypoints: in
     translated explicitly. div_method is deliberately pinned to "exact".
     """
     eps = flat_hp.get("eps", 1e-3)
+    n_hidden_layers = flat_hp.get("n_hidden_layers", 3)
     return FMDRE_S2(
         input_dim=input_dim,
         device=device,
         hidden_dim=flat_hp.get("hidden_dim", 256),
-        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        n_hidden_layers=n_hidden_layers,
+        # missing key -> fall back to fully-shared (matches pre-split FMDRE_S2).
+        n_shared_layers=flat_hp.get("n_shared_layers", n_hidden_layers),
         n_epochs=flat_hp["n_epochs"],
         batch_size=flat_hp["batch_size"],
         optim=_optim_from_hp(flat_hp),
@@ -350,11 +356,14 @@ def build_TriangularFMDRE(input_dim: int, device: str | torch.device, num_waypoi
     translated explicitly. div_method is deliberately pinned to "exact".
     """
     eps = flat_hp.get("eps", 1e-3)
+    n_hidden_layers = flat_hp.get("n_hidden_layers", 3)
     return TriangularFMDRE(
         input_dim=input_dim,
         device=device,
         hidden_dim=flat_hp.get("hidden_dim", 256),
-        n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
+        n_hidden_layers=n_hidden_layers,
+        # missing key -> fall back to fully-shared (matches pre-split TriangularFMDRE).
+        n_shared_layers=flat_hp.get("n_shared_layers", n_hidden_layers),
         n_epochs=flat_hp["n_epochs"],
         batch_size=flat_hp["batch_size"],
         optim=_optim_from_hp(flat_hp),

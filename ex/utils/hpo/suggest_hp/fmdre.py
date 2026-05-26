@@ -71,6 +71,8 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["eps"] = trial.suggest_float("eps", 1e-4, 2e-1, log=True)
     hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
+    # n_shared_layers in [1, n_hidden_layers]; 5 == fully shared (pre-split FMDRE).
+    hp["n_shared_layers"] = trial.suggest_categorical("n_shared_layers", [1, 2, 3, 4, 5])
     hp["score_weight"] = trial.suggest_float("score_weight", 1e-3, 3.0, log=True)
     hp["ema_decay"] = 0.999
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
