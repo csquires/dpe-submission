@@ -1,0 +1,22 @@
+{
+  "method": "VFM",
+  "fixture_key": "heteroscedastic",
+  "D": 2,
+  "mae": 2.904038906097412,
+  "threshold": 7.574138045310974,
+  "runtime_s": 2.3085331269539893,
+  "eval_grid_size": 484,
+  "meta": {
+    "method": "VFM",
+    "D": 2,
+    "fixture_meta": {
+      "kind": "heteroscedastic",
+      "D": 2,
+      "var_ratio": 4.0,
+      "seed": 1374669014,
+      "n": 1024
+    },
+    "n_epochs": 800,
+    "hp_override": {}
+  }
+}

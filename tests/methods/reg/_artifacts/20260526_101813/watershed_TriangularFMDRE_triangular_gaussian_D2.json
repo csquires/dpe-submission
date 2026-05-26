@@ -1,0 +1,29 @@
+{
+  "method": "TriangularFMDRE",
+  "fixture_key": "triangular_gaussian",
+  "D": 2,
+  "mae": 4.061040878295898,
+  "threshold": 999.0,
+  "runtime_s": 2.6120109097100794,
+  "eval_grid_size": 484,
+  "meta": {
+    "method": "TriangularFMDRE",
+    "D": 2,
+    "fixture_meta": {
+      "kind": "triangular_gaussian",
+      "D": 2,
+      "mu": [
+        1.5,
+        0.0
+      ],
+      "mu_star": [
+        0.0,
+        1.5
+      ],
+      "seed": 1532358420,
+      "n": 1024
+    },
+    "n_epochs": 800,
+    "hp_override": {}
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "method": "TSM",
+  "fixture_key": "gaussian_gaussian",
+  "D": 2,
+  "mae": 4.785562992095947,
+  "threshold": 13.817363977432251,
+  "runtime_s": 1.4173589115962386,
+  "eval_grid_size": 484,
+  "meta": {
+    "method": "TSM",
+    "D": 2,
+    "fixture_meta": {
+      "kind": "gaussian_gaussian",
+      "D": 2,
+      "mu": [
+        1.5,
+        0.0
+      ],
+      "sigma_data": 1.0,
+      "seed": 1118819249,
+      "n": 1024
+    },
+    "n_epochs": 800,
+    "hp_override": {}
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "fixture_key": "gaussian_gaussian",
+  "D": 10,
+  "null_baseline_mae": 4.5,
+  "mean_abs_ldr": 4.5,
+  "grid_size": 1024
+}

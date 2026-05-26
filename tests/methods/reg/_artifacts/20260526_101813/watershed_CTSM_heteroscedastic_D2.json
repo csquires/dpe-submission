@@ -1,0 +1,22 @@
+{
+  "method": "CTSM",
+  "fixture_key": "heteroscedastic",
+  "D": 2,
+  "mae": 0.737572431564331,
+  "threshold": 7.574138045310974,
+  "runtime_s": 0.680373874027282,
+  "eval_grid_size": 484,
+  "meta": {
+    "method": "CTSM",
+    "D": 2,
+    "fixture_meta": {
+      "kind": "heteroscedastic",
+      "D": 2,
+      "var_ratio": 4.0,
+      "seed": 2027550868,
+      "n": 1024
+    },
+    "n_epochs": 800,
+    "hp_override": {}
+  }
+}

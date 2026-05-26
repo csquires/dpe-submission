@@ -1,0 +1,7 @@
+{
+  "fixture_key": "heteroscedastic",
+  "D": 2,
+  "null_baseline_mae": 1.485345482826233,
+  "mean_abs_ldr": 1.485345482826233,
+  "grid_size": 484
+}

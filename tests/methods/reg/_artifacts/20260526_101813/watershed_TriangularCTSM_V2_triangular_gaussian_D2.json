@@ -1,0 +1,29 @@
+{
+  "method": "TriangularCTSM_V2",
+  "fixture_key": "triangular_gaussian",
+  "D": 2,
+  "mae": 4.158103942871094,
+  "threshold": 999.0,
+  "runtime_s": 0.6934388340450823,
+  "eval_grid_size": 484,
+  "meta": {
+    "method": "TriangularCTSM_V2",
+    "D": 2,
+    "fixture_meta": {
+      "kind": "triangular_gaussian",
+      "D": 2,
+      "mu": [
+        1.5,
+        0.0
+      ],
+      "mu_star": [
+        0.0,
+        1.5
+      ],
+      "seed": 952586585,
+      "n": 1024
+    },
+    "n_epochs": 800,
+    "hp_override": {}
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "fixture_key": "triangular_gaussian",
+  "D": 2,
+  "null_baseline_mae": 2.4886367321014404,
+  "mean_abs_ldr": 2.4886367321014404,
+  "grid_size": 484
+}
