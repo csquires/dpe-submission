@@ -8,10 +8,10 @@ CONFIG = StudyConfig(
     experiment="occupancy",
     methods=[
         # cls-based (src.methods.cls). triangular re-done with nwp={3,5,7,9};
-        # BDRE/MDRE_15 fresh (weight_decay-ctor bug fixed). non-triangular
+        # BDRE/MDRE fresh (weight_decay-ctor bug fixed). non-triangular
         # MultiHeadTDRE FROZEN at its done state -- excluded from this campaign.
         "MultiHeadTriangularTDRE",
-        "BDRE", "MDRE_15", "TriangularMDRE",
+        "BDRE", "MDRE", "TriangularMDRE",
         # reg-based (src.methods.reg) -- fresh studies, new search space, n_epochs=4000.
         "VFM", "VFMOrthros", "CTSM", "FMDRE", "FMDRE_S2", "TSM", "TriangularFMDRE",
     ],

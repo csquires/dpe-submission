@@ -28,7 +28,7 @@ SUGGEST_HP_REGISTRY: dict[str, tuple[Callable[[optuna.Trial], dict], dict]] = {
     "CTSM": (ctsm.suggest_hp, ctsm.METADATA),
     "FMDRE": (fmdre.suggest_hp, fmdre.METADATA),
     "FMDRE_S2": (fmdre_s2.suggest_hp, fmdre_s2.METADATA),
-    "MDRE_15": (mdre.suggest_hp, mdre.METADATA),
+    "MDRE": (mdre.suggest_hp, mdre.METADATA),
     "MultiHeadTDRE": (mh_tdre.suggest_hp, mh_tdre.METADATA),
     "MultiHeadTriangularTDRE": (mh_triangular_tdre.suggest_hp, mh_triangular_tdre.METADATA),
     "TriangularFMDRE": (triangular_fmdre.suggest_hp, triangular_fmdre.METADATA),

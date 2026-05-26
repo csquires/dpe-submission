@@ -1,10 +1,10 @@
-"""define-by-run optuna suggest_hp for MDRE (alias MDRE_15).
+"""define-by-run optuna suggest_hp for MDRE.
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
 calls. flat parameter space; the behavioral inertness probe
 (scratch/bdre_mdre_inertness_probe.py + bdre_mdre_inertness_results.txt)
 confirmed all parameters active in every training context, so no conditional
-branching. fixes num_epochs at N_EPOCHS = 2000 (HPO decision: uniform
+branching. fixes num_epochs at N_EPOCHS = 4000 (HPO decision: uniform
 multi-fidelity resource axis, mirroring VFM / MultiHeadTDRE).
 """
 
@@ -30,7 +30,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     - learning_rate: log-uniform [1e-4, 1e-2]
     - latent_dim: categorical [64, 128, 256]
     - batch_size: categorical [None, 128, 256]
-    - num_waypoints: categorical [5, 10, 15] (= classifier num_classes)
+    - num_waypoints: categorical [3, 5, 7, 9] (= classifier num_classes)
 
     not searched -- pinned per-experiment via StudyConfig.fixed_hp:
     - n_hidden_layers (mirrors VFM's convention)
@@ -57,7 +57,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         "batch_size", [None, 128, 256, 512]
     )
     hp["num_waypoints"] = trial.suggest_categorical(
-        "num_waypoints", [5, 10, 15]
+        "num_waypoints", [3, 5, 7, 9]
     )
     hp["weight_decay"] = trial.suggest_categorical(
         "weight_decay", [0.0, 1e-5, 1e-4, 1e-3]

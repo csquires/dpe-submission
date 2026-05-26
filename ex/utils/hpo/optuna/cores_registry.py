@@ -12,7 +12,7 @@ CORES_REGISTRY: dict[str, int] = {
     # Fast continuous
     "TSM": 2,
     "BDRE": 2,
-    "MDRE_15": 2,
+    "MDRE": 2,
     # Slow continuous
     "CTSM": 4,
     "VFM": 4,
