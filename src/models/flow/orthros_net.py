@@ -29,7 +29,7 @@ class OrthrosNet(nn.Module):
 
     Returns:
         tuple of (head0_out, head1_out), each [B, output_dim]; semantics are
-        caller-defined (VFMOrthros: head 0 = x0 endpoint, head 1 = denoiser).
+        caller-defined (VFMOrthros: head 0 = velocity b, head 1 = denoiser eta).
     """
 
     def __init__(
