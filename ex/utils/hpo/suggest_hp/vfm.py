@@ -12,7 +12,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 4000
+N_EPOCHS = 6400
 
 
 METADATA = {
@@ -59,9 +59,10 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 
-    # provisionally pinned, not searched (a dedicated study is deferred):
-    # divergence estimator -> hutchinson/rademacher/4; activation -> VFM default.
-    hp["div_method"] = "hutchinson"
+    # divergence estimator pinned to exact (closed-form trace); div_noise /
+    # n_hutch_samples are inert under method=="exact" but kept set so downstream
+    # build_div_fn / estimator validation stays happy. activation -> VFM default.
+    hp["div_method"] = "exact"
     hp["div_noise"] = "rademacher"
     hp["n_hutch_samples"] = 4
     hp["activation"] = "silu"
@@ -78,7 +79,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # the (1e-4, 2e-1) eps widening is FMDRE-family-only.
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
     hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
-    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
+    hp["ema_decay"] = 0.999
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)

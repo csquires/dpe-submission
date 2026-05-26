@@ -20,7 +20,7 @@ def run_holdout(
     method: str,
     builder: Callable,
     top_k: int = 5,
-    full_budget_steps: int = 10000,
+    full_budget_steps: int = 6400,
     device: str | None = None,
     output_dir: Path | None = None,
     fixed_hp: dict | None = None,
@@ -34,7 +34,7 @@ def run_holdout(
         method: method name in SUGGEST_HP_REGISTRY (e.g., 'BDRE').
         builder: callable[hp_dict, ...] from builders.py; indexed via METADATA['builder'].
         top_k: number of best HPs (by study best value at full_budget_steps) to re-evaluate. default 5.
-        full_budget_steps: step budget for each holdout trial; must match study max_resource. default 10000.
+        full_budget_steps: step budget for each holdout trial; must match study max_resource. default 6400.
         device: torch device (None -> infer from adapter.default_device() or 'cpu'). optional.
         output_dir: if provided, write JSON per (hp, cell) and CSV summary. path created if missing.
 

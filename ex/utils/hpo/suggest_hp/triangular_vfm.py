@@ -38,7 +38,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 4000
+N_EPOCHS = 6400
 
 
 METADATA_V1 = {"uses_pruning": True, "requires_pstar": True, "builder": "build_TriangularVFM_V1"}
@@ -55,18 +55,19 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
     hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
     hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
-    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
+    hp["ema_decay"] = 0.999
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
-    hp["layernorm"] = trial.suggest_categorical("layernorm", ["off", "pre", "post"])
+    hp["layernorm"] = "off"
     hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
-    hp["cosine_min_factor"] = trial.suggest_categorical("cosine_min_factor", [0.0, 0.01, 0.1])
+    hp["cosine_min_factor"] = 0.0
     hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)
 
-    # provisionally pinned, not searched (a dedicated study is deferred):
-    # divergence estimator -> hutchinson/rademacher/4; activation -> VFM default.
-    hp["div_method"] = "hutchinson"
+    # divergence estimator pinned to exact; div_noise / n_hutch_samples inert
+    # under method=="exact" but kept set for downstream validation. activation
+    # -> VFM default.
+    hp["div_method"] = "exact"
     hp["div_noise"] = "rademacher"
     hp["n_hutch_samples"] = 4
     hp["activation"] = "silu"

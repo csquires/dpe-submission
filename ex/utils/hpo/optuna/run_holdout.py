@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 
-HYPERBAND_BANDS = [100, 200, 400, 800, 1600, 3200]   # 6-band Hyperband (rf=2, max_resource=3200)
+HYPERBAND_BANDS = [400, 800, 1600, 3200, 6400]       # 5-band Hyperband (rf=2, max_resource=6400)
 POOL_K_PER_BUDGET = 10                          # top-K per band before dedup
 EVAL_INTERVAL = 50                              # holdout eval frequency (steps)
 DEFAULT_CHUNK_SIZE = 4                          # matches HPO B = 16 // 4 cores_per_trial

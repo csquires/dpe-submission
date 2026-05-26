@@ -12,17 +12,17 @@ CONFIG = StudyConfig(
         # MultiHeadTDRE FROZEN at its done state -- excluded from this campaign.
         "MultiHeadTriangularTDRE",
         "BDRE", "MDRE", "TriangularMDRE",
-        # reg-based (src.methods.reg) -- fresh studies, new search space, n_epochs=4000.
+        # reg-based (src.methods.reg) -- fresh studies, new search space, n_epochs=6400.
         "VFM", "VFMOrthros", "CTSM", "FMDRE", "FMDRE_S2", "TSM", "TriangularFMDRE",
     ],
     target_trials=512,
-    min_resource=100,
-    max_resource=3200,
+    min_resource=400,
+    max_resource=6400,
     reduction_factor=2,
     holdout_top_k=5,
     walltime_minutes=120,
     walltime_margin_minutes=10,
-    fixed_hp={"n_hidden_layers": 3},
+    fixed_hp={"n_hidden_layers": 5},
     lanes=["general", "preempt", "cpu", "array"],
     resume_existing=True,
     include_tabular=False,

@@ -19,7 +19,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 4000
+N_EPOCHS = 6400
 
 
 METADATA = {
@@ -65,7 +65,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["activation"] = trial.suggest_categorical("activation", ["elu", "gelu", "silu"])
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
-    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
+    hp["ema_decay"] = 0.999
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
 

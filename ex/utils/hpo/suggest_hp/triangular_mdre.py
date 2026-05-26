@@ -6,7 +6,7 @@ calls. flat parameter space; the behavioral inertness probe
 confirmed all parameters active in every training context (including the
 waypoint-builder knobs midpoint_oversample / gamma_power / vertex, which
 flow through the training data via TriangularWaypointBuilder1D). no
-conditional branching. fixes num_epochs at N_EPOCHS = 4000 (HPO decision:
+conditional branching. fixes num_epochs at N_EPOCHS = 6400 (HPO decision:
 uniform multi-fidelity resource axis, mirroring VFM / MultiHeadTDRE).
 """
 
@@ -15,7 +15,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 4000
+N_EPOCHS = 6400
 
 
 METADATA = {

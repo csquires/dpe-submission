@@ -302,9 +302,9 @@ def build_FMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, 
         ema=_ema_from_hp(flat_hp),
         time=_time_from_hp(flat_hp, eps=eps),
         score_weight=flat_hp.get("score_weight", 1.0),
-        # FMDRE-family div_method is pinned "hutch_rademacher" with 4-sample
-        # averaging, mirroring the VFM/VFMOrthros pin (not an HPO knob).
-        div_method="hutch_rademacher",
+        # div_method pinned to "exact" (closed-form trace); mirrors the
+        # VFM-family pin. n_hutch_samples kept set as inert input.
+        div_method="exact",
         n_hutch_samples=4,
         integration_steps=flat_hp.get("integration_steps", 10000),
         reweight=flat_hp.get("reweight", False),
@@ -331,9 +331,9 @@ def build_FMDRE_S2(input_dim: int, device: str | torch.device, num_waypoints: in
         ema=_ema_from_hp(flat_hp),
         time=_time_from_hp(flat_hp, eps=eps),
         score_weight=flat_hp.get("score_weight", 1.0),
-        # FMDRE-family div_method is pinned "hutch_rademacher" with 4-sample
-        # averaging, mirroring the VFM/VFMOrthros pin (not an HPO knob).
-        div_method="hutch_rademacher",
+        # div_method pinned to "exact" (closed-form trace); mirrors the
+        # VFM-family pin. n_hutch_samples kept set as inert input.
+        div_method="exact",
         n_hutch_samples=4,
         integration_steps=flat_hp.get("integration_steps", 10000),
         p_uncond=flat_hp.get("p_uncond", 0.1),
@@ -362,9 +362,9 @@ def build_TriangularFMDRE(input_dim: int, device: str | torch.device, num_waypoi
         ema=_ema_from_hp(flat_hp),
         time=_time_from_hp(flat_hp, eps=eps),
         score_weight=flat_hp.get("score_weight", 1.0),
-        # FMDRE-family div_method is pinned "hutch_rademacher" with 4-sample
-        # averaging, mirroring the VFM/VFMOrthros pin (not an HPO knob).
-        div_method="hutch_rademacher",
+        # div_method pinned to "exact" (closed-form trace); mirrors the
+        # VFM-family pin. n_hutch_samples kept set as inert input.
+        div_method="exact",
         n_hutch_samples=4,
         integration_steps=flat_hp.get("integration_steps", 10000),
         triangular_p_uncond=flat_hp.get("triangular_p_uncond", 0.0),

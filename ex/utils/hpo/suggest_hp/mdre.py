@@ -4,7 +4,7 @@ translates tuple-format search space from method_specs.py to trial.suggest_*
 calls. flat parameter space; the behavioral inertness probe
 (scratch/bdre_mdre_inertness_probe.py + bdre_mdre_inertness_results.txt)
 confirmed all parameters active in every training context, so no conditional
-branching. fixes num_epochs at N_EPOCHS = 4000 (HPO decision: uniform
+branching. fixes num_epochs at N_EPOCHS = 6400 (HPO decision: uniform
 multi-fidelity resource axis, mirroring VFM / MultiHeadTDRE).
 """
 
@@ -13,7 +13,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 4000
+N_EPOCHS = 6400
 
 
 METADATA = {

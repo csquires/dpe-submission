@@ -25,7 +25,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 4000
+N_EPOCHS = 6400
 
 
 METADATA = {
@@ -73,9 +73,9 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["eps"] = trial.suggest_float("eps", 1e-4, 2e-1, log=True)
     hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
-    hp["score_weight"] = trial.suggest_float("score_weight", 1e-3, 10.0, log=True)
+    hp["score_weight"] = trial.suggest_float("score_weight", 1e-3, 3.0, log=True)
     hp["p_uncond"] = trial.suggest_float("p_uncond", 0.1, 0.9)
-    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
+    hp["ema_decay"] = 0.999
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
 
