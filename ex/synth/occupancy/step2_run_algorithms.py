@@ -38,20 +38,20 @@ TRIANGULAR_METHODS = {"TriangularMDRE", "MultiHeadTriangularTDRE", "TriangularCT
 
 HPO_PARAMS = {
     "TSM": {
-        "n_epochs": 1300,
+        "n_steps": 1300,
         "lr": 1.27e-3,
         "batch_size": 128,
         "eps": 5.06e-6,
     },
     "CTSM": {
-        "n_epochs": 1030,
+        "n_steps": 1030,
         "lr": 1.51e-3,
         "batch_size": 128,
         "sigma": 0.518,
         "eps": 1.82e-3,
     },
     "VFM": {
-        "n_epochs": 1057,
+        "n_steps": 1057,
         "lr": 7.74e-4,
         "batch_size": 256,
         "k": 40,
@@ -59,7 +59,7 @@ HPO_PARAMS = {
         "integration_steps": 1373,
     },
     "VFMOrthros": {
-        "n_epochs": 1057,
+        "n_steps": 1057,
         "lr": 7.74e-4,
         "batch_size": 256,
         "k": 40,
@@ -207,7 +207,7 @@ def create_estimator(method, config, encoding_cfg, n_states, n_actions, device):
         hp = HPO_PARAMS["TSM"]
         return TSM(
             input_dim=input_dim, device=device,
-            n_epochs=hp["n_epochs"], batch_size=hp["batch_size"],
+            n_steps=hp["n_steps"], batch_size=hp["batch_size"],
             optim=OptimCfg(lr=hp["lr"]),
         )
 
@@ -215,7 +215,7 @@ def create_estimator(method, config, encoding_cfg, n_states, n_actions, device):
         hp = HPO_PARAMS["CTSM"]
         return CTSM(
             input_dim=input_dim, device=device,
-            n_epochs=hp["n_epochs"], batch_size=hp["batch_size"],
+            n_steps=hp["n_steps"], batch_size=hp["batch_size"],
             sigma=hp["sigma"],
             optim=OptimCfg(lr=hp["lr"]),
         )
@@ -226,7 +226,7 @@ def create_estimator(method, config, encoding_cfg, n_states, n_actions, device):
         return TriangularCTSM(
             input_dim=input_dim,
             path=path,
-            n_epochs=hp["n_epochs"],
+            n_steps=hp["n_steps"],
             optim=OptimCfg(lr=hp["lr"]),
             batch_size=hp["batch_size"],
             device=device,
@@ -239,7 +239,7 @@ def create_estimator(method, config, encoding_cfg, n_states, n_actions, device):
         return TriangularVFM(
             input_dim=input_dim,
             path=path,
-            n_epochs=hp["n_epochs"],
+            n_steps=hp["n_steps"],
             optim=OptimCfg(lr=hp["lr"]),
             batch_size=hp["batch_size"],
             integration_steps=hp["integration_steps"],
@@ -254,7 +254,7 @@ def create_estimator(method, config, encoding_cfg, n_states, n_actions, device):
             input_dim=input_dim,
             path=path,
             test_gamma_min=hp["gamma_min"],
-            n_epochs=hp["n_epochs"],
+            n_steps=hp["n_steps"],
             optim=OptimCfg(lr=hp["lr"]),
             batch_size=hp["batch_size"],
             integration_steps=hp["integration_steps"],

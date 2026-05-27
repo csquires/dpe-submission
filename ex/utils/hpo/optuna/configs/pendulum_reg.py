@@ -12,7 +12,7 @@ CONFIG = StudyConfig(
         # MultiHeadTDRE FROZEN at its done state -- excluded from this campaign.
         "MultiHeadTriangularTDRE",
         "BDRE", "MDRE", "TriangularMDRE",
-        # reg-based (src.methods.reg) -- fresh studies, new search space, n_epochs=6400.
+        # reg-based (src.methods.reg) -- fresh studies, new search space, n_steps=6400.
         "VFM", "VFMOrthros", "CTSM", "FMDRE", "FMDRE_S2", "TSM", "TriangularFMDRE",
     ],
     target_trials=512,

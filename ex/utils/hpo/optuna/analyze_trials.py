@@ -7,7 +7,7 @@ trajectory:
 
   best        = argmin over reported intermediate values (the trial's actual peak)
   best_step   = step at which `best` occurred
-  conv_step   = earliest step within (1 + conv_tol) * best (the "effective n_epochs"
+  conv_step   = earliest step within (1 + conv_tol) * best (the "effective n_steps"
                 a follow-up training could stop at without losing quality)
   final       = trial.value (the value at the last reported step)
   Delta       = final - best  (positive Delta => the trial peaked earlier than the
@@ -31,7 +31,7 @@ def _summarize(trial, conv_tol: float) -> dict | None:
 
     returns dict with trial number, state, final value, best intermediate value,
     step at best, convergence step within conv_tol of best, and the last step
-    reached (the trial's effective n_epochs).
+    reached (the trial's effective n_steps).
     """
     iv = trial.intermediate_values
     if not iv:
@@ -50,7 +50,7 @@ def _summarize(trial, conv_tol: float) -> dict | None:
         "best": best_val,
         "best_step": best_step,
         "conv_step": conv_step,
-        "n_epochs_used": steps[-1],
+        "n_steps_used": steps[-1],
     }
 
 
@@ -97,7 +97,7 @@ def main() -> int:
             delta_s = f"{delta:+.5f}"
         else:
             delta_s = "  n/a   "
-        print(f"  {r['trial']:>4d} {r['state']:<8} {final_s:>10} {r['best']:10.5f} {r['best_step']:9d} {r['conv_step']:9d} {r['n_epochs_used']:9d}  {delta_s}")
+        print(f"  {r['trial']:>4d} {r['state']:<8} {final_s:>10} {r['best']:10.5f} {r['best_step']:9d} {r['conv_step']:9d} {r['n_steps_used']:9d}  {delta_s}")
 
     final_set = {r["trial"] for r in by_final}
     overlooked = [r for r in by_best if r["trial"] not in final_set]

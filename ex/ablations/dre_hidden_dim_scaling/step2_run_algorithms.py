@@ -101,7 +101,7 @@ def main():
     RAW_RESULTS_DIR = config['raw_results_dir']
 
     # TSM hyperparameters with defaults if not in config
-    TSM_N_EPOCHS = config.get('tsm_n_epochs', 1000)
+    TSM_N_STEPS = config.get('tsm_n_steps', 1000)
     TSM_BATCH_SIZE = config.get('tsm_batch_size', 512)
     TSM_LR = config.get('tsm_lr', 1e-3)
 
@@ -116,7 +116,7 @@ def main():
     assert isinstance(HIDDEN_DIMS, list) and len(HIDDEN_DIMS) > 0, "hidden_dims must be non-empty list"
     assert NUM_WAYPOINTS > 0, "num_waypoints must be > 0"
     assert NUM_LAYERS > 0, "num_layers must be > 0"
-    assert TSM_N_EPOCHS > 0, "tsm_n_epochs must be > 0"
+    assert TSM_N_STEPS > 0, "tsm_n_steps must be > 0"
     assert TSM_BATCH_SIZE > 0, "tsm_batch_size must be > 0"
     if DEVICE == "cuda":
         assert torch.cuda.is_available(), "CUDA device requested but not available"
@@ -158,7 +158,7 @@ def main():
 
             # 5.1.5 COMPUTE EPOCH MULTIPLIER
             epochs_multiplier = int(math.log2(hidden_dim // 16)) + 1
-            tsm_epochs = TSM_N_EPOCHS * epochs_multiplier
+            tsm_epochs = TSM_N_STEPS * epochs_multiplier
             mdre_epochs = 1000 * epochs_multiplier
             tdre_epochs = 1000 * epochs_multiplier
             print(f"  epochs_multiplier={epochs_multiplier} (tsm={tsm_epochs}, mdre={mdre_epochs}, tdre={tdre_epochs})")
@@ -171,7 +171,7 @@ def main():
                 num_classes=NUM_WAYPOINTS,
                 latent_dim=hidden_dim,
                 num_layers=NUM_LAYERS,
-                num_epochs=mdre_epochs,
+                n_steps=mdre_epochs,
                 **lr_kwargs_mdre,
             )
             triangular_mdre = TriangularMDRE(mdre_classifier, device=DEVICE)
@@ -184,7 +184,7 @@ def main():
                     input_dim=DATA_DIM,
                     latent_dim=hidden_dim,
                     num_layers=NUM_LAYERS,
-                    num_epochs=tdre_epochs,
+                    n_steps=tdre_epochs,
                     **lr_kwargs_tdre,
                 ).to(DEVICE)
                 for _ in range(NUM_WAYPOINTS - 1)
@@ -208,7 +208,7 @@ def main():
                 hidden_dim=hidden_dim,
                 head_dim=hidden_dim,
                 num_shared_layers=NUM_LAYERS - 2,
-                num_epochs=tdre_epochs,
+                n_steps=tdre_epochs,
                 epoch_scale=1,  # not NUM_WAYPOINTS-1: multi-head already processes all heads per epoch
                 lr_hidden_dim_scale=True,
                 lr_base_dim=16,
@@ -226,7 +226,7 @@ def main():
             tsm = TSM(
                 input_dim=DATA_DIM,
                 hidden_dim=hidden_dim,
-                n_epochs=tsm_epochs,
+                n_steps=tsm_epochs,
                 batch_size=TSM_BATCH_SIZE,
                 **lr_kwargs_tsm,
                 device=DEVICE,

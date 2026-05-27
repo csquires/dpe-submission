@@ -65,7 +65,7 @@ def run_holdout(
     # fetch top-K HPs and reconstruct the FULL hp dict the way objective.py did
     # at HPO time:
     #   1. probe returns trial.params (the suggest_* values only -- user-facing).
-    #   2. some suggest_hp modules add constants directly (e.g. num_epochs=2000)
+    #   2. some suggest_hp modules add constants directly (e.g. n_steps=6400)
     #      that are NOT in trial.params. replay each partial through suggest_hp
     #      via FixedTrial to recover those.
     #   3. overlay config.fixed_hp on top, same order as objective.py.
