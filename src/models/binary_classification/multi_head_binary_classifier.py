@@ -28,9 +28,9 @@ class MultiHeadBinaryClassifier(nn.Module):
     fit(xs_per_head, ys_per_head) -> trains with batched backbone pass
     predict_logits(xs) -> [batch, num_heads] logits in eval mode
 
-    training budget scaling:
-    - epoch_scale: multiplies num_epochs to match separate-classifier budget
-      (typically set to num_heads to match TriangularTDRE optimization steps)
+    training budget:
+    - n_steps: literal optimizer-step count; each step builds one minibatch
+      per head and does one combined backward + optimizer.step.
     - lr_scale: scales learning_rate by 1/sqrt(hidden_dim/base_dim) for stability
     """
 
@@ -43,8 +43,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         num_shared_layers: int = 2,
         n_hidden_layers: int = 3,
         learning_rate: float = 0.005,
-        num_epochs: int = 300,
-        epoch_scale: int = 1,
+        n_steps: int = 300,
         lr_hidden_dim_scale: bool = False,
         lr_base_dim: int = 16,
         batch_size: int | None = None,
@@ -98,8 +97,7 @@ class MultiHeadBinaryClassifier(nn.Module):
         self.weight_decay = weight_decay
         self._h = h  # head-specific hidden layers
 
-        # apply epoch scaling
-        self.num_epochs = num_epochs * epoch_scale
+        self.n_steps = n_steps
 
         # apply learning rate scaling for larger models
         if lr_hidden_dim_scale:
@@ -215,27 +213,20 @@ class MultiHeadBinaryClassifier(nn.Module):
             optimizer.step()
 
         if bs == max_n:
-            for _ in range(self.num_epochs):
+            for _ in range(self.n_steps):
                 _step(xs_per_head, ys_per_head, n_per_head)
                 do_report()
         else:
-            for _ in range(self.num_epochs):
-                perms = [
-                    torch.randperm(n_per_head[i], device=xs_per_head[i].device)
-                    for i in range(num_heads)
-                ]
-                for start in range(0, max_n, bs):
-                    xs_batch, ys_batch = [], []
-                    for i in range(num_heads):
-                        n_i = n_per_head[i]
-                        # cyclic wrap so each head sees bs samples per step even
-                        # when start+bs exceeds n_i (preserves per-head loss balance).
-                        idx = torch.arange(start, start + bs, device=perms[i].device) % n_i
-                        idx = perms[i][idx]
-                        xs_batch.append(xs_per_head[i][idx])
-                        ys_batch.append(ys_per_head[i][idx])
-                    _step(xs_batch, ys_batch, [bs] * num_heads)
-                    do_report()
+            for _ in range(self.n_steps):
+                xs_batch, ys_batch = [], []
+                for i in range(num_heads):
+                    idx = torch.randint(
+                        0, n_per_head[i], (bs,), device=xs_per_head[i].device
+                    )
+                    xs_batch.append(xs_per_head[i][idx])
+                    ys_batch.append(ys_per_head[i][idx])
+                _step(xs_batch, ys_batch, [bs] * num_heads)
+                do_report()
 
         self.eval()
 

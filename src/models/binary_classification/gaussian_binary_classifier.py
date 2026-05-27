@@ -32,7 +32,7 @@ class GaussianBinaryClassifier(BinaryClassifier):
         xs: torch.Tensor,
         ys: torch.Tensor,
         learning_rate: float = 0.05,
-        num_epochs: int = 1000,
+        n_steps: int = 1000,
         *,
         step_cb: Callable[[int, float], None] | None = None,
         eval_fn: Callable[[Any], torch.Tensor] | None = None,
@@ -43,7 +43,7 @@ class GaussianBinaryClassifier(BinaryClassifier):
         loss = nn.BCEWithLogitsLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
         do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
-        for epoch in range(num_epochs):
+        for _ in range(n_steps):
             optimizer.zero_grad()
             y_pred = self.forward(xs)
             l = loss(y_pred, ys)

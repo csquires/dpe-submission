@@ -1,6 +1,5 @@
 """TriangularTSM: time-score matching DRE on a bell-shaped path."""
 from typing import Callable, Optional, Tuple
-from math import ceil
 
 import torch
 
@@ -32,7 +31,7 @@ class TriangularTSM(ELDR):
         input_dim: int,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         *,
         optim: OptimCfg,
@@ -52,7 +51,7 @@ class TriangularTSM(ELDR):
             input_dim: feature dimension.
             hidden_dim: width of hidden layers. default 256.
             n_hidden_layers: depth. default 3.
-            n_epochs: training epochs. default 1000.
+            n_steps: optimizer-step budget. default 1000.
             batch_size: batch size. default 512.
             optim: optimizer config (lr, weight_decay, grad_clip_norm, etc).
             sched: scheduler config (name, cosine_min_factor, etc). default SchedCfg().
@@ -77,7 +76,7 @@ class TriangularTSM(ELDR):
         # store hyperparameters
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.reweight = reweight
         self.vertex = vertex
@@ -143,13 +142,9 @@ class TriangularTSM(ELDR):
         self._init_model()
         self.model.train()
 
-        # TriTSM-specific n_steps formula: based on smallest sample set
-        min_size = min(samples_p0.shape[0], samples_p1.shape[0], samples_pstar.shape[0])
-        n_steps = self.n_epochs * ceil(min_size / self.batch_size)
-
         # build optimizer, scheduler, ema, time_sampler from cfg
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, n_steps, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
 
@@ -172,7 +167,7 @@ class TriangularTSM(ELDR):
             samples_pstar=samples_pstar,
             loss_fn=tri_tsm_loss,
             optim=optim_obj,
-            n_steps=n_steps,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
             scheduler=sched_obj,

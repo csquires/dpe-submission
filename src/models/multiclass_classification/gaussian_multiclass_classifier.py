@@ -30,7 +30,7 @@ class GaussianMulticlassClassifier(MulticlassClassifier):
         xs: torch.Tensor,
         ys: torch.Tensor,
         learning_rate: float = 0.05,
-        num_epochs: int = 1000,
+        n_steps: int = 1000,
         *,
         step_cb: Callable[[int, float], None] | None = None,
         eval_fn: Callable[[Any], torch.Tensor] | None = None,
@@ -41,15 +41,13 @@ class GaussianMulticlassClassifier(MulticlassClassifier):
         loss = nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
         do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
-        for _ in range(num_epochs):
+        for _ in range(n_steps):
             optimizer.zero_grad()
             y_pred = self.forward(xs)
             l = loss(y_pred, ys)
             l.backward()
             optimizer.step()
             do_report()
-        if y_pred.isnan().any():
-            breakpoint()
 
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
         self.eval()

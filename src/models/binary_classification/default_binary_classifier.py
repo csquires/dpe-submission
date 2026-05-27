@@ -12,13 +12,11 @@ class DefaultBinaryClassifier(BinaryClassifier):
         self,
         input_dim: int,
         # model hyperparameters
-        # latent_dim: int = 10,
         latent_dim: int = 10,
         n_hidden_layers: int = 1,
         # training hyperparameters
         learning_rate: float = 0.005,
-        # num_epochs: int = 100,
-        num_epochs: int = 300,
+        n_steps: int = 300,
         batch_size: int | None = None,
         weight_decay: float = 0.0,
     ):
@@ -34,7 +32,7 @@ class DefaultBinaryClassifier(BinaryClassifier):
         layers.append(nn.Linear(latent_dim, 1))
         self.model = nn.Sequential(*layers)
         self.learning_rate = learning_rate
-        self.num_epochs = num_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.weight_decay = weight_decay
 
@@ -58,12 +56,13 @@ class DefaultBinaryClassifier(BinaryClassifier):
         eval_fn: Callable[[Any], torch.Tensor] | None = None,
         step_cb_interval: int = 50,
     ) -> None:
-        """train via AdamW + BCEWithLogitsLoss.
+        """train via AdamW + BCEWithLogitsLoss for self.n_steps optimizer updates.
 
-        if self.batch_size is None or >= n, runs full-batch (legacy default).
-        otherwise: per epoch, shuffle indices and step through mini-batches of
-        size self.batch_size. mini-batch path enables training on datasets
-        whose forward pass on the full tensor would dominate wallclock.
+        each step draws bs samples uniformly with replacement (matches the reg
+        trainer in src/methods/reg/common/_trainer.py). full-batch when
+        self.batch_size is None or >= n. step_cb / eval_fn / step_cb_interval
+        wire into _make_report for hyperband pruning at multiples of
+        step_cb_interval.
         """
         self._reset_parameters()
         self.train()
@@ -71,26 +70,19 @@ class DefaultBinaryClassifier(BinaryClassifier):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         n = xs.shape[0]
         bs = self.batch_size if (self.batch_size and self.batch_size < n) else n
-        # bind reporting closure; returns _noop when step_cb is None
         do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
-        for epoch in range(self.num_epochs):
+        for _ in range(self.n_steps):
             if bs == n:
-                optimizer.zero_grad()
-                y_pred = self.forward(xs)
-                l = loss(y_pred, ys)
-                l.backward()
-                optimizer.step()
-                do_report()
+                xb, yb = xs, ys
             else:
-                perm = torch.randperm(n, device=xs.device)
-                for start in range(0, n, bs):
-                    idx = perm[start:start + bs]
-                    optimizer.zero_grad()
-                    y_pred = self.forward(xs[idx])
-                    l = loss(y_pred, ys[idx])
-                    l.backward()
-                    optimizer.step()
-                    do_report()
+                idx = torch.randint(0, n, (bs,), device=xs.device)
+                xb, yb = xs[idx], ys[idx]
+            optimizer.zero_grad()
+            y_pred = self.forward(xb)
+            l = loss(y_pred, yb)
+            l.backward()
+            optimizer.step()
+            do_report()
 
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
         self.eval()

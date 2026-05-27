@@ -17,7 +17,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         n_hidden_layers: int = 2,
         # training hyperparameters
         learning_rate: float = 0.05,
-        num_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int | None = None,
         weight_decay: float = 0.0,
     ):
@@ -34,7 +34,7 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         self.model = nn.Sequential(*layers)
         self.num_classes = num_classes
         self.learning_rate = learning_rate
-        self.num_epochs = num_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.weight_decay = weight_decay
 
@@ -58,12 +58,12 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         eval_fn: Callable[[Any], torch.Tensor] | None = None,
         step_cb_interval: int = 50,
     ) -> None:
-        """train via AdamW + CrossEntropyLoss.
+        """train via AdamW + CrossEntropyLoss for self.n_steps optimizer updates.
 
-        falls back to full-batch when self.batch_size is None or >= n.
-        if step_cb and eval_fn are supplied, _make_report fires the callback
-        every step_cb_interval optimizer updates -- same contract as
-        DefaultBinaryClassifier.fit.
+        each step draws bs samples uniformly with replacement (matches the reg
+        trainer). full-batch when self.batch_size is None or >= n. step_cb /
+        eval_fn / step_cb_interval wire into _make_report for hyperband pruning
+        at multiples of step_cb_interval.
         """
         self._reset_parameters()
         self.train()
@@ -72,26 +72,18 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         n = xs.shape[0]
         bs = self.batch_size if (self.batch_size and self.batch_size < n) else n
         do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
-        for epoch in range(self.num_epochs):
+        for _ in range(self.n_steps):
             if bs == n:
-                optimizer.zero_grad()
-                y_pred = self.forward(xs)
-                l = loss(y_pred, ys)
-                l.backward()
-                optimizer.step()
-                do_report()
+                xb, yb = xs, ys
             else:
-                perm = torch.randperm(n, device=xs.device)
-                for start in range(0, n, bs):
-                    idx = perm[start:start + bs]
-                    optimizer.zero_grad()
-                    y_pred = self.forward(xs[idx])
-                    l = loss(y_pred, ys[idx])
-                    l.backward()
-                    optimizer.step()
-                    do_report()
-        if y_pred.isnan().any():
-            breakpoint()
+                idx = torch.randint(0, n, (bs,), device=xs.device)
+                xb, yb = xs[idx], ys[idx]
+            optimizer.zero_grad()
+            y_pred = self.forward(xb)
+            l = loss(y_pred, yb)
+            l.backward()
+            optimizer.step()
+            do_report()
 
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
         self.eval()
