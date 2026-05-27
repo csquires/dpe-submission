@@ -336,6 +336,24 @@ def main() -> int:
             if n < config.target_trials:
                 pending.append((i, method, n))
 
+        # (1b) cull in-flight workers for studies already at target -- BEFORE
+        # the done-check break, so the final cycle (where pending transitions
+        # to empty) still scancels every method's leftover array tasks. without
+        # this, the last methods to reach target leave a long tail of slurm
+        # array spawns that mint orphan RUNNING trial records for hours after
+        # the keeper exits.
+        if args.cull_on_target:
+            pending_methods = {m for (_, m, _) in pending}
+            for method in config.methods:
+                if method not in pending_methods:
+                    try:
+                        cull_study_jobs(
+                            config.experiment, method, config.lanes, user,
+                            args.dry_run,
+                        )
+                    except Exception as e:
+                        logger.warning("cull failed for %s: %s", method, e)
+
         # only conclude "done" when every count SUCCEEDED and all are at target.
         # an empty `pending` caused by count failures is NOT done -- retry.
         if not pending and count_errors == 0:
@@ -351,21 +369,6 @@ def main() -> int:
             )
             time.sleep(args.poll_interval)
             continue
-
-        # (1b) cull in-flight workers for studies already at target. they are
-        # not in `pending` (so never re-dispatched); cancelling their leftover
-        # workers caps overshoot and returns lane slots to the pending studies.
-        if args.cull_on_target:
-            pending_methods = {m for (_, m, _) in pending}
-            for method in config.methods:
-                if method not in pending_methods:
-                    try:
-                        cull_study_jobs(
-                            config.experiment, method, config.lanes, user,
-                            args.dry_run,
-                        )
-                    except Exception as e:
-                        logger.warning("cull failed for %s: %s", method, e)
 
         # (2) for each lane: split lane.max_concurrent (the per-lane total
         # running cap) evenly across the studies still under target.
