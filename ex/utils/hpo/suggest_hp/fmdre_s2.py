@@ -25,7 +25,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 6400
+N_STEPS = 6400
 
 
 METADATA = {
@@ -38,7 +38,7 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the FMDRE_S2 search space.
 
-    emits n_epochs as the fixed constant N_EPOCHS, plus 2 switch (precond,
+    emits n_steps as the fixed constant N_STEPS, plus 2 switch (precond,
     time_dist), 2 conditional (reweight, apply_iw), and 13 unconditional
     (p_uncond included).
 
@@ -52,7 +52,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp = {}
 
     # fixed constant + mandatory builder keys
-    hp["n_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
     hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 

@@ -2,7 +2,7 @@
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
 calls. implements conditional suggestion of inert params per
-notes/hpo_search_space_finalization.md. fixes n_epochs at 2000 (HPO decision:
+notes/hpo_search_space_finalization.md. fixes n_steps at 2000 (HPO decision:
 uniform multi-fidelity resource axis).
 
 inertness edges (from static + scratch/ctsm_inertness_probe.py):
@@ -25,7 +25,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 6400
+N_STEPS = 6400
 
 
 METADATA = {
@@ -38,7 +38,7 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the CTSM search space.
 
-    emits n_epochs as the fixed constant N_EPOCHS, plus 3 switch (sched,
+    emits n_steps as the fixed constant N_STEPS, plus 3 switch (sched,
     inner_eps, time_dist), 3 conditional (k, gamma_min, apply_iw -- each
     suggested only when its switch condition holds), and 15 unconditional.
 
@@ -52,7 +52,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp = {}
 
     # fixed constant + mandatory builder keys
-    hp["n_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
     hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 

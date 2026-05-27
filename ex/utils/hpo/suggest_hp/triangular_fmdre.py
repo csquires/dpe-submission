@@ -1,7 +1,7 @@
 """define-by-run optuna suggest_hp for TriangularFMDRE.
 
 aligned to FMDRE/FMDRE_S2 conventions (same conditionality structure):
-fixes n_epochs at N_EPOCHS = 2000 (HPO decision: uniform multi-fidelity
+fixes n_steps at N_STEPS = 2000 (HPO decision: uniform multi-fidelity
 resource axis).
 
 inertness edges (inherited from FMDRE-family via shared make_fm_loss):
@@ -20,7 +20,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 6400
+N_STEPS = 6400
 
 
 METADATA = {
@@ -33,7 +33,7 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the TriangularFMDRE search space.
 
-    emits n_epochs as the fixed constant N_EPOCHS, plus 2 switch (precond,
+    emits n_steps as the fixed constant N_STEPS, plus 2 switch (precond,
     time_dist), 2 conditional (reweight, apply_iw), and 14 unconditional
     (triangular_p_uncond, score_weight, layernorm included).
 
@@ -47,7 +47,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp = {}
 
     # fixed constant + mandatory builder keys
-    hp["n_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
     hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 

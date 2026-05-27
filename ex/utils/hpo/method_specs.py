@@ -43,7 +43,7 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "eps": ("log_uniform", 1e-6, 1e-4),
@@ -71,7 +71,7 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "sigma": ("log_uniform", 0.3, 3.0),
@@ -113,7 +113,7 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "k": ("choice", [10, 20, 40]),
@@ -156,7 +156,7 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "k": ("choice", [10, 20, 40]),
@@ -211,7 +211,7 @@ METHOD_SPECS = {
             "n_hidden_layers": ("choice", [1, 2, 3]),
             # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
-            "num_epochs": ("log_uniform_int", 100, 500),
+            "n_steps": ("log_uniform_int", 100, 500),
             "batch_size": ("choice", [None, 128, 256]),
         },
         "tabular_only": False,
@@ -227,7 +227,7 @@ METHOD_SPECS = {
             "n_hidden_layers": ("choice", [1, 2, 3]),
             # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
-            "num_epochs": ("log_uniform_int", 100, 500),
+            "n_steps": ("log_uniform_int", 100, 500),
             "batch_size": ("choice", [None, 128, 256]),
             # classifier output dimension (= num_classes)
             "num_waypoints": ("choice", [5, 10, 15]),
@@ -241,7 +241,7 @@ METHOD_SPECS = {
         "num_waypoints": None,
         "base_search_space": {
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
-            "num_epochs": ("log_uniform_int", 100, 1000),
+            "n_steps": ("log_uniform_int", 100, 1000),
             "hidden_dim": ("choice", [16, 32, 64, 128]),
             "head_dim": ("choice", [10, 20, 40]),
             "num_shared_layers": ("choice", [1, 2, 3]),
@@ -255,7 +255,7 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 500, 1500),
+            "n_steps": ("log_uniform_int", 500, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [128, 256, 512]),
             "eps": ("log_uniform", 1e-3, 5e-2),
@@ -286,7 +286,7 @@ METHOD_SPECS = {
         "requires_pstar": False,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 500, 1500),
+            "n_steps": ("log_uniform_int", 500, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [128, 256, 512]),
             "eps": ("log_uniform", 1e-3, 5e-2),
@@ -334,7 +334,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 500, 1500),
+            "n_steps": ("log_uniform_int", 500, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [128, 256, 512]),
             "eps": ("log_uniform", 1e-3, 5e-2),
@@ -366,7 +366,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "hidden_dim": ("choice", [128, 256, 512]),
@@ -402,7 +402,7 @@ METHOD_SPECS = {
         "num_waypoints": None,
         "base_search_space": {
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
-            "num_epochs": ("log_uniform_int", 100, 1000),
+            "n_steps": ("log_uniform_int", 100, 1000),
             "hidden_dim": ("choice", [16, 32, 64, 128]),
             "head_dim": ("choice", [10, 20, 40]),
             "num_shared_layers": ("choice", [1, 2, 3]),
@@ -422,7 +422,7 @@ METHOD_SPECS = {
             "n_hidden_layers": ("choice", [1, 2, 3]),
             # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
-            "num_epochs": ("log_uniform_int", 100, 500),
+            "n_steps": ("log_uniform_int", 100, 500),
             "batch_size": ("choice", [None, 128, 256]),
             # classifier output dimension (= num_classes)
             "num_waypoints": ("choice", [5, 10, 15]),
@@ -439,7 +439,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "sigma": ("log_uniform", 0.3, 3.0),
@@ -482,7 +482,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "sigma": ("log_uniform", 0.3, 3.0),
@@ -521,7 +521,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 3e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "sigma": ("log_uniform", 0.3, 3.0),
@@ -561,7 +561,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "sigma": ("log_uniform", 0.3, 3.0),
@@ -616,7 +616,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "k": ("choice", [10, 20, 40]),
@@ -663,7 +663,7 @@ METHOD_SPECS = {
         "requires_pstar": True,
         "num_waypoints": None,
         "base_search_space": {
-            "n_epochs": ("log_uniform_int", 750, 1500),
+            "n_steps": ("log_uniform_int", 750, 1500),
             "lr": ("log_uniform", 5e-4, 3e-3),
             "batch_size": ("choice", [64, 128, 256]),
             "k": ("choice", [10, 20, 40]),
@@ -736,7 +736,7 @@ _FIX_KNOBS = {
 # unused after refactor; kept here as documentation of the canonical
 # midpoint values that wave-3 will pick automatically via _midpoint().
 _WAVE3_LOCKS = {
-    "n_epochs": 1100,
+    "n_steps": 1100,
     "lr": 1e-3,
     "batch_size": 128,
     "sigma": 1.0,

@@ -15,7 +15,7 @@ METADATA = {
     "builder": "build_MHTDRE",
 }
 
-N_EPOCHS = 6400
+N_STEPS = 6400
 
 
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
@@ -30,8 +30,8 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     - batch_size: categorical [None, 128, 256, 512]
     - weight_decay: categorical [0.0, 1e-5, 1e-4, 1e-3]
 
-    num_epochs fixed at N_EPOCHS per shared HPO decision: uniform resource
-    axis for Hyperband. builder (build_MHTDRE) reads flat_hp["num_epochs"]
+    n_steps fixed at N_STEPS per shared HPO decision: uniform resource
+    axis for Hyperband. builder (build_MHTDRE) reads flat_hp["n_steps"]
     mandatorily.
 
     returns flat dict passed to builder; no branching—all parameters active.
@@ -39,7 +39,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp = {}
 
     # fixed training budget (Hyperband resource axis)
-    hp["num_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
 
     # log-uniform continuous
     hp["learning_rate"] = trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True)

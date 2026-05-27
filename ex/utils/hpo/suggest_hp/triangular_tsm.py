@@ -5,7 +5,7 @@ translates the tuple-format search space from method_specs.py to trial.suggest_*
 calls. mirrors the structure of `tsm.py` for the optimizer/regulariser block
 (TriangularTSM shares the score-matching core and the same TSM-family knobs)
 and adopts the vertex range from `triangular_ctsm.py`/`triangular_vfm.py`
-(0.2, 0.8). pins n_epochs at N_EPOCHS (uniform multi-fidelity resource axis).
+(0.2, 0.8). pins n_steps at N_STEPS (uniform multi-fidelity resource axis).
 
 unique to TriangularTSM:
   - vertex in (0, 1): bell peak location; mirrored to (0.2, 0.8) per the
@@ -34,7 +34,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 4000
+N_STEPS = 6400
 
 
 METADATA = {
@@ -47,7 +47,7 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the TriangularTSM search space.
 
-    emits n_epochs as the fixed constant N_EPOCHS, plus 1 switch (time_dist),
+    emits n_steps as the fixed constant N_STEPS, plus 1 switch (time_dist),
     1 conditional (apply_iw -- suggested only when time_dist != "uniform"),
     and 13 unconditional knobs (incl. the bell-path scalars vertex/peak_max).
 
@@ -61,7 +61,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp = {}
 
     # fixed constant + mandatory builder keys (mirrors tsm.py)
-    hp["n_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
     hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 

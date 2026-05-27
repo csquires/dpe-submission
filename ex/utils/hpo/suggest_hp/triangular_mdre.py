@@ -6,7 +6,7 @@ calls. flat parameter space; the behavioral inertness probe
 confirmed all parameters active in every training context (including the
 waypoint-builder knobs midpoint_oversample / gamma_power / vertex, which
 flow through the training data via TriangularWaypointBuilder1D). no
-conditional branching. fixes num_epochs at N_EPOCHS = 6400 (HPO decision:
+conditional branching. fixes n_steps at N_STEPS = 6400 (HPO decision:
 uniform multi-fidelity resource axis, mirroring VFM / MultiHeadTDRE).
 """
 
@@ -15,7 +15,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 6400
+N_STEPS = 6400
 
 
 METADATA = {
@@ -28,7 +28,7 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters for TriangularMDRE.
 
-    emits num_epochs as the fixed constant N_EPOCHS, plus 7 tuned params:
+    emits n_steps as the fixed constant N_STEPS, plus 7 tuned params:
     - learning_rate: log-uniform [1e-4, 1e-2]
     - latent_dim: categorical [64, 128, 256]
     - batch_size: categorical [None, 128, 256]
@@ -50,7 +50,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """
     hp = {}
 
-    hp["num_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
 
     hp["learning_rate"] = trial.suggest_float(
         "learning_rate", 1e-4, 1e-2, log=True

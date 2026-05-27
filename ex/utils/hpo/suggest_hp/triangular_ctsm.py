@@ -3,7 +3,7 @@
 translates the tuple-format search spaces from method_specs.py to trial.suggest_*
 calls. conditional suggestion of inert params per the inertness edges in
 notes/hpo_search_space_finalization.md (static scan + seeded double-build probe
-in scratch/triangular_ctsm_inertness_probe.py). pins n_epochs at N_EPOCHS
+in scratch/triangular_ctsm_inertness_probe.py). pins n_steps at N_STEPS
 (uniform multi-fidelity resource axis).
 
 three versions share most of the space; they differ in the path family:
@@ -38,7 +38,7 @@ import optuna
 from src.methods.reg.common._time_samplers import TIME_DISTS
 
 
-N_EPOCHS = 6400
+N_STEPS = 6400
 
 
 METADATA_V1 = {"uses_pruning": True, "requires_pstar": True, "builder": "build_TriangularCTSM_V1"}
@@ -48,7 +48,7 @@ METADATA_V3 = {"uses_pruning": True, "requires_pstar": True, "builder": "build_T
 
 def _common_optim(trial: optuna.Trial, hp: dict) -> None:
     """suggest the optimizer + regulariser knobs shared by all three versions."""
-    hp["n_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
     hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
     hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)

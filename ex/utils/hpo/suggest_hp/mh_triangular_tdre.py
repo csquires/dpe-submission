@@ -8,7 +8,7 @@ from typing import Any
 import optuna
 
 
-N_EPOCHS = 6400
+N_STEPS = 6400
 
 
 METADATA = {
@@ -32,7 +32,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     - weight_decay: categorical [0.0, 1e-5, 1e-4, 1e-3]
     - midpoint_oversample: categorical [0, 3, 5, 7]
     - gamma_power: log-uniform [1.0, 5.0]
-    - num_epochs: constant N_EPOCHS
+    - n_steps: constant N_STEPS
 
     returns flat dict passed to builder; builder validates shape constraints.
     """
@@ -57,6 +57,6 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["gamma_power"] = trial.suggest_float("gamma_power", 1.0, 5.0, log=True)
 
     # constant (training iterations)
-    hp["num_epochs"] = N_EPOCHS
+    hp["n_steps"] = N_STEPS
 
     return hp
