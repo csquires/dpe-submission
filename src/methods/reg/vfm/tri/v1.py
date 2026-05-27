@@ -43,7 +43,7 @@ class TriangularVFMV1(ELDR):
         vertex: float = 0.5,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: OptimCfg = None,
         sched: SchedCfg = SchedCfg(),
@@ -113,7 +113,7 @@ class TriangularVFMV1(ELDR):
         # store network hyperparameters for hpo introspection
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.k = k
         self.vertex = vertex
@@ -220,8 +220,8 @@ class TriangularVFMV1(ELDR):
 
         optim_b = make_optim(self.net_b.parameters(), self.optim)
         optim_eta = make_optim(self.net_eta.parameters(), self.optim)
-        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
-        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
+        sched_b = make_sched(optim_b, self.n_steps, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_steps, self.optim.lr, self.sched)
         ema_b = make_ema(self.net_b, self.ema)
         ema_eta = make_ema(self.net_eta, self.ema)
         self.ema_b = ema_b
@@ -290,7 +290,7 @@ class TriangularVFMV1(ELDR):
             loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler_b=sched_b,

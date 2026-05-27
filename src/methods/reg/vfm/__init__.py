@@ -57,7 +57,7 @@ class VFM(DRE):
         test_path: Optional["DirectPath1D"] = None,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: Optional[OptimCfg] = None,
         sched: SchedCfg = None,
@@ -126,7 +126,7 @@ class VFM(DRE):
         # store network and training hyperparameters
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.optim = optim if optim is not None else OptimCfg(lr=1e-3)
         self.sched = sched if sched is not None else SchedCfg()
@@ -234,8 +234,8 @@ class VFM(DRE):
 
         optim_b = make_optim(self.net_b.parameters(), self.optim)
         optim_eta = make_optim(self.net_eta.parameters(), self.optim)
-        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
-        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
+        sched_b = make_sched(optim_b, self.n_steps, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_steps, self.optim.lr, self.sched)
         ema_b = make_ema(self.net_b, self.ema)
         ema_eta = make_ema(self.net_eta, self.ema)
         self.ema_b, self.ema_eta = ema_b, ema_eta
@@ -341,7 +341,7 @@ class VFM(DRE):
                 loss_eta=loss_eta,
                 optim_b=optim_b,
                 optim_eta=optim_eta,
-                n_steps=self.n_epochs,
+                n_steps=self.n_steps,
                 batch_size=self.batch_size,
                 time_sampler=self.time,
                 scheduler_b=sched_b,
@@ -427,7 +427,7 @@ def make_vfm(input_dim: int, device: str = "cuda", **kwargs) -> VFM:
     """
     defaults = {
         "k": 20,
-        "n_epochs": 1000,
+        "n_steps": 1000,
         "hidden_dim": 256,
         "n_hidden_layers": 3,
         "batch_size": 512,
@@ -478,7 +478,7 @@ class VFMOrthros(DRE):
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_shared_layers: int = 2,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: Optional[OptimCfg] = None,
         sched: SchedCfg = None,
@@ -549,7 +549,7 @@ class VFMOrthros(DRE):
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_shared_layers = n_shared_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.optim = optim if optim is not None else OptimCfg(lr=1e-3)
         self.sched = sched if sched is not None else SchedCfg()
@@ -637,7 +637,7 @@ class VFMOrthros(DRE):
             )
 
         optim = make_optim(self.net.parameters(), self.optim)
-        sched = make_sched(optim, self.n_epochs, self.optim.lr, self.sched)
+        sched = make_sched(optim, self.n_steps, self.optim.lr, self.sched)
         ema_net = make_ema(self.net, self.ema)
         self.ema_net = ema_net
 
@@ -746,7 +746,7 @@ class VFMOrthros(DRE):
             samples_pstar=None,
             loss_fn=loss_orthros,
             optim=optim,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler=sched,

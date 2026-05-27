@@ -100,7 +100,7 @@ class TriangularVFMV2(ELDR):
         test_gamma_min: float = 0.0,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: OptimCfg,
         sched: SchedCfg = SchedCfg(),
@@ -135,7 +135,7 @@ class TriangularVFMV2(ELDR):
             inner_eps: inner coordinate clamp for train path (default 0.0).
             test_gamma_min: floor on gamma(tau) for test path (default 0.0).
             test_inner_eps: inner coordinate clamp for test path (default 0.0).
-            hidden_dim, n_hidden_layers, n_epochs, batch_size: network and
+            hidden_dim, n_hidden_layers, n_steps, batch_size: network and
                   training shape.
             optim: required optimcfg (optimizer config with lr, etc.).
             sched: schedcfg for learning rate schedule (default schedcfg()).
@@ -216,7 +216,7 @@ class TriangularVFMV2(ELDR):
         # step 6: store network and training scalars
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.optim = optim
         self.sched = sched
@@ -291,8 +291,8 @@ class TriangularVFMV2(ELDR):
         self.init_model()
         optim_b = make_optim(self.net_b.parameters(), self.optim)
         optim_eta = make_optim(self.net_eta.parameters(), self.optim)
-        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
-        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
+        sched_b = make_sched(optim_b, self.n_steps, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_steps, self.optim.lr, self.sched)
         ema_b = make_ema(self.net_b, self.ema)
         ema_eta = make_ema(self.net_eta, self.ema)
         self.ema_b = ema_b
@@ -369,7 +369,7 @@ class TriangularVFMV2(ELDR):
             loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler_b=sched_b,

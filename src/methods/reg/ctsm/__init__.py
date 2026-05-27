@@ -51,7 +51,7 @@ class CTSM(DRE):
         integrator: Optional[object] = None,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: OptimCfg = None,
         sched: SchedCfg = None,
@@ -81,7 +81,7 @@ class CTSM(DRE):
                 defaults to integrator_trapezoid.
             hidden_dim: width of score network hidden layers.
             n_hidden_layers: depth of score network.
-            n_epochs: training iterations.
+            n_steps: training iterations.
             batch_size: minibatch size.
             optim: optimizer config (required keyword-only).
             sched: scheduler config; defaults to no scheduling.
@@ -170,7 +170,7 @@ class CTSM(DRE):
         # step 3c: store network/training scalars
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.sigma = sigma
         self.integration_steps = integration_steps
@@ -234,7 +234,7 @@ class CTSM(DRE):
 
         # step 5b: build single optimizer, scheduler, EMA
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
         self.ema_obj = make_ema(self.model, self.ema)
 
         # step 5c: define loss closure
@@ -296,7 +296,7 @@ class CTSM(DRE):
             samples_pstar=None,
             loss_fn=loss_fn,
             optim=optim_obj,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler=sched_obj,

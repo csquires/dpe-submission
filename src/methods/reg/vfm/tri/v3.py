@@ -57,7 +57,7 @@ class TriangularVFM2D(ELDR):
         test_gamma_min: float = 0.0,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: Optional[OptimCfg] = None,
         sched: Optional[SchedCfg] = None,
@@ -98,7 +98,7 @@ class TriangularVFM2D(ELDR):
                           defaults to 0.0.
           test_gamma_min: float; value floor for test path.
                           defaults to 0.0.
-          hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training shape.
+          hidden_dim, n_hidden_layers, n_steps, batch_size: network and training shape.
           optim, sched, ema: configuration objects (optimcfg, schedcfg, emacfg).
           device: torch device string; defaults to cuda if available, else cpu.
           antithetic: bool; apply antithetic variance reduction in b-phase velocity loss.
@@ -171,7 +171,7 @@ class TriangularVFM2D(ELDR):
         # store training/network scalars
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.optim = optim if optim is not None else OptimCfg(lr=1e-3)
         self.sched = sched if sched is not None else SchedCfg()
@@ -295,8 +295,8 @@ class TriangularVFM2D(ELDR):
         optim_eta = make_optim(self.net_eta.parameters(), self.optim)
 
         # create schedulers from shared cfg
-        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
-        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
+        sched_b = make_sched(optim_b, self.n_steps, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_steps, self.optim.lr, self.sched)
 
         # create emas from shared cfg
         ema_b1 = make_ema(self.net_b1, self.ema)
@@ -419,7 +419,7 @@ class TriangularVFM2D(ELDR):
             net_b1, net_b2, net_eta,
             loss_b, loss_eta,
             optim_b, optim_eta,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             scheduler_b=sched_b,
             scheduler_eta=sched_eta,
             ema_b1=ema_b1,

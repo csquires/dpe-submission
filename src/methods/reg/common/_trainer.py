@@ -525,7 +525,7 @@ def train_interleaved_3(
       loss_eta: zero-arg callable -> scalar tensor. denoiser loss.
       optim_b: owns net_b1.parameters() + net_b2.parameters().
       optim_eta: owns net_eta.parameters().
-      n_steps: number of interleaved steps (caller passes self.n_epochs).
+      n_steps: number of interleaved steps (caller passes self.n_steps).
       scheduler_b, scheduler_eta: optional, stepped once per group update.
       ema_b1, ema_b2, ema_eta: optional EMA wrappers, updated after their group's step.
       b_params, eta_params: pre-built param lists for grad clipping (None -> skip).

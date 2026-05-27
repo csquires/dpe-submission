@@ -44,7 +44,7 @@ class TriangularCTSMV1(ELDR):
         test_gamma_min: float = 0.0,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: OptimCfg,
         sched: SchedCfg = SchedCfg(),
@@ -147,7 +147,7 @@ class TriangularCTSMV1(ELDR):
         # step 6: store network scalars
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.sigma = sigma
         self.vertex = vertex
@@ -193,7 +193,7 @@ class TriangularCTSMV1(ELDR):
 
         # step 2: build optimizer and scheduler
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
 
         # step 3: build EMA
         self.ema_obj = make_ema(self.model, self.ema)
@@ -221,7 +221,7 @@ class TriangularCTSMV1(ELDR):
             samples_pstar=samples_pstar,
             loss_fn=loss_fn,
             optim=optim_obj,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler=sched_obj,

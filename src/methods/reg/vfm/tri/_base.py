@@ -29,7 +29,7 @@ class _TriangularVFMBase(ELDR):
         path,
         hidden_dim: int,
         n_hidden_layers: int,
-        n_epochs: int,
+        n_steps: int,
         batch_size: int,
         *,
         optim: OptimCfg,
@@ -51,7 +51,7 @@ class _TriangularVFMBase(ELDR):
         self.path = path
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.optim = optim
         self.sched = sched
@@ -137,8 +137,8 @@ class _TriangularVFMBase(ELDR):
 
         optim_b = make_optim(self.net_b.parameters(), self.optim)
         optim_eta = make_optim(self.net_eta.parameters(), self.optim)
-        sched_b = make_sched(optim_b, self.n_epochs, self.optim.lr, self.sched)
-        sched_eta = make_sched(optim_eta, self.n_epochs, self.optim.lr, self.sched)
+        sched_b = make_sched(optim_b, self.n_steps, self.optim.lr, self.sched)
+        sched_eta = make_sched(optim_eta, self.n_steps, self.optim.lr, self.sched)
         ema_b = make_ema(self.net_b, self.ema)
         ema_eta = make_ema(self.net_eta, self.ema)
         self.ema_b = ema_b
@@ -159,8 +159,8 @@ class _TriangularVFMBase(ELDR):
             loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
-            n_steps_b=self.n_epochs,
-            n_steps_eta=self.n_epochs,
+            n_steps_b=self.n_steps,
+            n_steps_eta=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
             scheduler_b=sched_b,

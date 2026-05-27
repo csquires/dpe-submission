@@ -53,7 +53,7 @@ class TriangularCTSM2D(ELDR):
         # network / training scalars
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: Optional[OptimCfg] = None,
         sched: Optional[SchedCfg] = None,
@@ -71,7 +71,7 @@ class TriangularCTSM2D(ELDR):
             time: optional TimeSampler2D; defaults to product of uniforms.
             curve: optional Curve; defaults to LowArcCurve2D(path_height=1.0).
             integrator: integration scheme for predict_ldr; defaults to trapezoid.
-            hidden_dim, n_hidden_layers, n_epochs, batch_size: network and training hyperparams.
+            hidden_dim, n_hidden_layers, n_steps, batch_size: network and training hyperparams.
             optim: required OptimCfg (optimizer config with lr, grad_clip_norm, etc.).
             sched: SchedCfg for learning rate schedule; defaults to SchedCfg().
             ema: EmaCfg for exponential moving average; defaults to EmaCfg().
@@ -91,7 +91,7 @@ class TriangularCTSM2D(ELDR):
         # store cfg objects and scalars
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.optim = optim if optim is not None else OptimCfg(lr=1e-3)
         self.sched = sched if sched is not None else SchedCfg()
@@ -198,7 +198,7 @@ class TriangularCTSM2D(ELDR):
 
         # build optimizer, scheduler, ema from cfgs
         optimizer = make_optim(self.model.parameters(), self.optim)
-        scheduler = make_sched(optimizer, self.n_epochs, self.optim.lr, self.sched)
+        scheduler = make_sched(optimizer, self.n_steps, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
 
         self.model.train()
@@ -238,7 +238,7 @@ class TriangularCTSM2D(ELDR):
         do_ema = (lambda: ema_obj.update(model)) if ema_obj is not None else (lambda: None)
 
         # training loop
-        for epoch in range(self.n_epochs):
+        for epoch in range(self.n_steps):
             # bootstrap minibatches
             idx0 = torch.randint(0, n0, (self.batch_size,), device=device)  # [B]
             idx1 = torch.randint(0, n1, (self.batch_size,), device=device)  # [B]

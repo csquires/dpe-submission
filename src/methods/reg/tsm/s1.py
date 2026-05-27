@@ -22,7 +22,7 @@ class TSM(DRE):
         input_dim: int,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         *,
         optim: OptimCfg,
@@ -41,7 +41,7 @@ class TSM(DRE):
             input_dim: dimension of input space x.
             hidden_dim: width of score network hidden layers.
             n_hidden_layers: depth of score network (default 3).
-            n_epochs: training epochs.
+            n_steps: training epochs.
             batch_size: batch size (default 512).
             optim: required OptimCfg instance (carries lr, grad_clip_norm, etc).
             sched: scheduler config (default SchedCfg() — no scheduling).
@@ -67,7 +67,7 @@ class TSM(DRE):
         # store hyperparams
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.reweight = reweight
         self.activation = activation
@@ -121,7 +121,7 @@ class TSM(DRE):
         """
         self.init_model()
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
 
@@ -144,7 +144,7 @@ class TSM(DRE):
             samples_pstar=None,
             loss_fn=tsm_loss,
             optim=optim_obj,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
             scheduler=sched_obj,

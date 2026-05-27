@@ -27,7 +27,7 @@ class _TriangularCTSMBase(ELDR):
         path,
         hidden_dim: int,
         n_hidden_layers: int,
-        n_epochs: int,
+        n_steps: int,
         batch_size: int,
         *,
         optim: OptimCfg,
@@ -44,7 +44,7 @@ class _TriangularCTSMBase(ELDR):
         self.path = path
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.sigma = sigma
         self.integration_steps = integration_steps
@@ -87,7 +87,7 @@ class _TriangularCTSMBase(ELDR):
         """build network, optim/sched/ema/time-sampler from cfgs, delegate to train_loop."""
         self.init_model()
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
         self.ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
         loss_fn = make_sb_loss(path=self.path, reweight=self.reweight)
@@ -99,7 +99,7 @@ class _TriangularCTSMBase(ELDR):
             samples_pstar=samples_pstar,
             loss_fn=loss_fn,
             optim=optim_obj,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
             scheduler=sched_obj,

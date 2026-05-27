@@ -54,7 +54,7 @@ class TriangularCTSMV2(ELDR):
         # network and training scalars
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         optim: OptimCfg = None,
         sched: SchedCfg = None,
@@ -84,7 +84,7 @@ class TriangularCTSMV2(ELDR):
             gamma_min: value floor for gamma (default 0.0, no floor).
             test_inner_eps: coordinate-clamp for inference (default 0.0, unclamped).
             test_gamma_min: value floor for inference (default 0.0, unclamped).
-            hidden_dim, n_hidden_layers, n_epochs, batch_size, activation,
+            hidden_dim, n_hidden_layers, n_steps, batch_size, activation,
             integration_steps, reweight: network and training parameters.
             optim, sched, ema: optimizer, scheduler, EMA configs.
             device: torch device (auto-selected if None).
@@ -171,7 +171,7 @@ class TriangularCTSMV2(ELDR):
         # store training hyperparameters
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.activation = activation
         self.integration_steps = integration_steps
@@ -229,7 +229,7 @@ class TriangularCTSMV2(ELDR):
 
         # construct optimizer, scheduler, EMA from configs
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
         self.ema_obj = make_ema(self.model, self.ema)
 
         # build eval_fn if both callbacks and eval data are provided
@@ -252,7 +252,7 @@ class TriangularCTSMV2(ELDR):
             samples_pstar=samples_pstar,
             loss_fn=loss_fn,
             optim=optim_obj,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler=sched_obj,

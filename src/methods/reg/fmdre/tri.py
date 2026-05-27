@@ -35,7 +35,7 @@ class TriangularFMDRE(ELDR):
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_shared_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         *,
         optim: OptimCfg,
@@ -64,7 +64,7 @@ class TriangularFMDRE(ELDR):
             n_shared_layers: hidden rounds in the shared backbone (default 3 =
                 fully shared, same as pre-split TriangularFMDRE). must satisfy
                 1 <= n_shared_layers <= n_hidden_layers.
-            n_epochs: training steps (default 1000).
+            n_steps: training steps (default 1000).
             batch_size: mini-batch size (default 512).
             optim: optimizer config (required, no default).
             sched: scheduler config (default SchedCfg() disables annealing).
@@ -81,7 +81,7 @@ class TriangularFMDRE(ELDR):
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.score_weight = score_weight
         self.integration_steps = integration_steps
@@ -163,7 +163,7 @@ class TriangularFMDRE(ELDR):
             self._moments = endpoint_moments({"x_data": x_data_tripled})
 
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
 
@@ -220,7 +220,7 @@ class TriangularFMDRE(ELDR):
             samples_pstar=samples_pstar,
             loss_fn=loss_fn,
             optim=optim_obj,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
             scheduler=sched_obj,

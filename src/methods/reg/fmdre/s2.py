@@ -34,7 +34,7 @@ class FMDRE_S2(DRE):
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_shared_layers: int = 3,
-        n_epochs: int = 1000,
+        n_steps: int = 1000,
         batch_size: int = 512,
         *,
         optim: OptimCfg,
@@ -62,7 +62,7 @@ class FMDRE_S2(DRE):
             n_shared_layers: hidden rounds in the shared backbone (default 3 =
                 fully shared, same as pre-split FMDRE_S2). must satisfy
                 1 <= n_shared_layers <= n_hidden_layers.
-            n_epochs: training steps (default 1000).
+            n_steps: training steps (default 1000).
             batch_size: mini-batch size (default 512).
             optim: optimizer config (required, no default).
             sched: scheduler config (default SchedCfg() disables annealing).
@@ -82,7 +82,7 @@ class FMDRE_S2(DRE):
         self.hidden_dim = hidden_dim
         self.n_hidden_layers = n_hidden_layers
         self.n_shared_layers = n_shared_layers
-        self.n_epochs = n_epochs
+        self.n_steps = n_steps
         self.batch_size = batch_size
         self.optim = optim
         self.sched = sched
@@ -152,7 +152,7 @@ class FMDRE_S2(DRE):
         samples_p1 = samples_p1.float()
 
         optim_obj = make_optim(self.model.parameters(), self.optim)
-        sched_obj = make_sched(optim_obj, self.n_epochs, self.optim.lr, self.sched)
+        sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
 
@@ -208,7 +208,7 @@ class FMDRE_S2(DRE):
             samples_pstar=None,
             loss_fn=loss_fn,
             optim=optim_obj,
-            n_steps=self.n_epochs,
+            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=time_sampler,
             scheduler=sched_obj,
