@@ -1,5 +1,5 @@
 """TriangularTSM: time-score matching DRE on a bell-shaped path."""
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 from math import ceil
 
 import torch
@@ -122,8 +122,24 @@ class TriangularTSM(ELDR):
         samples_p0: torch.Tensor,
         samples_p1: torch.Tensor,
         samples_pstar: torch.Tensor,
+        *,
+        step_cb: Callable[[int, float], None] | None = None,
+        eval_data: dict[str, torch.Tensor] | None = None,
+        step_cb_interval: int = 50,
     ) -> None:
-        """init model, build optim/scheduler/ema/time_sampler from cfg, then delegate to train_loop."""
+        """init model, build optim/scheduler/ema/time_sampler from cfg, then delegate to train_loop.
+
+        Args:
+            samples_p0: [N0, input_dim] samples from p0.
+            samples_p1: [N1, input_dim] samples from p1.
+            samples_pstar: [Ns, input_dim] samples from p_star.
+            step_cb: optional callback invoked every step_cb_interval steps with
+                (step_index: int, score: float). when None, no instrumentation.
+            eval_data: optional dict with keys "pstar" and "true_ldrs"; used to
+                build eval_fn for Hyperband's per-step pruning. ignored when
+                step_cb is None.
+            step_cb_interval: interval (in minibatch updates) for step_cb (default 50).
+        """
         self._init_model()
         self.model.train()
 
@@ -136,6 +152,18 @@ class TriangularTSM(ELDR):
         sched_obj = make_sched(optim_obj, n_steps, self.optim.lr, self.sched)
         ema_obj = make_ema(self.model, self.ema)
         time_sampler = make_time_sampler(self.time)
+
+        # build eval_fn only when both pruning callback and eval data provided.
+        eval_fn = None
+        if step_cb is not None and eval_data is not None:
+            eval_pstar = eval_data["pstar"]
+            eval_true_ldrs = eval_data["true_ldrs"]
+
+            def eval_fn(_model) -> torch.Tensor:
+                """mae between predict_ldr(eval_pstar) and true_ldrs."""
+                predicted = self.predict_ldr(eval_pstar)
+                target = eval_true_ldrs.to(predicted.device)
+                return torch.abs(predicted - target).mean()
 
         train_loop(
             model=self.model,
@@ -157,6 +185,9 @@ class TriangularTSM(ELDR):
                 "vertex": self.vertex,
                 "peak_max": self.peak_max,
             },
+            step_cb=step_cb,
+            eval_fn=eval_fn,
+            step_cb_interval=step_cb_interval,
         )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
