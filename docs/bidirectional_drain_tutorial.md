@@ -10,7 +10,7 @@ A single watchdog process manages a shared queue file. GPU-side jobs pop trials 
 
 ## Cluster Prerequisites
 
-Before starting, verify your cluster has the required partitions and QOS limits. Run these commands:
+Before starting, verify your cluster has SLURM, the required partitions, and QOS limits. Note that these are anonymized sample names and may differ for your cluster. Read your cluster's documentation or contact its administrators. To investigate yourself, these commands may be helpful:
 
 ```bash
 # Check GPU/preempt partition exists and has GPUs
@@ -32,7 +32,7 @@ scontrol show config | grep -E "MaxArraySize|MaxJobCount"
 - SLURM MaxArraySize ≥ 1000
 - shared NFS filesystem (for queue file and results, e.g., `/data`, `/home`)
 
-If your cluster names partitions differently (e.g., `gpu` instead of `preempt`, `cpu` instead of `array`), note those names now—you'll adapt them in the code files below.
+When you find your cluster's metadata (e.g., `gpu` instead of `preempt`, `cpu` instead of `array`), note those names now. You may need to adapt them in the code files below. (Along with the resource limits). 
 
 ---
 
@@ -512,7 +512,7 @@ If you vary `--cpu-n-per-element` (e.g., 8 vs. 4), CPU results should have simil
 
 ## Common Mistakes
 
-### Mistake 1: Using `/tmp` or `/scratch` for Queue File
+### Mistake 1: Using node-local storage e.g. `/tmp` for the queue file
 
 ```bash
 # WRONG: queue file lost if node reboots
