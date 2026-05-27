@@ -48,9 +48,6 @@ export DPE_DATA_ROOT=/path/to/nfs/scratch # only if using HPO
   - `utils/hpo/` - the Optuna HPO stack and the per-experiment adapters that drive it (see "HPO" below).
   - `utils/step2_runner/` - distributed post-HPO runner used by some experiments to fan winning hyperparameters across slurm jobs.
 
-- `plans/` - low-level specs for major refactors. each subdirectory is one plan, one markdown file per source file touched.
-- `tests/` - cross-cutting test suite for `src/`, the Optuna stack, and adapter signatures.
-
 ## Core Abstractions
 
 **DRE** (`src/methods/common/base.py`)
