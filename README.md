@@ -92,7 +92,6 @@ python -m ex.<regime>.<exp>.step4_plot_results      # generate figures
 - **step2_run_algorithms**: post-HPO evaluation. reads winning hyperparameters from a `winners.yaml` (one entry per `(method, cell)` group) and runs the full-budget fit + predict across all cells. for experiments wired into the distributed runner, `ex/utils/step2_runner/` orchestrates this across a slurm array.
 - **step3_process_results**: aggregate the raw per-cell results into summary metrics. writes `processed_results/metrics.h5`.
 - **step4_plot_results**: render figures from `processed_results/`. plots land in `figures/`.
-- **step5_compare** (present in `mnist` only): cross-method comparison plots.
 
 raw per-cell outputs land in `ex/<regime>/<exp>/raw_results/` and aggregated metrics in `ex/<regime>/<exp>/processed_results/`. figures land in `ex/<regime>/<exp>/figures/`. all paths are configurable per-experiment via yaml.
 
