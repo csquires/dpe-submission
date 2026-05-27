@@ -28,7 +28,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     - num_shared_layers: categorical [1, 2, 3]
     - num_waypoints: categorical [3, 5, 7, 9]
     - vertex: uniform [0.2, 0.8]
-    - batch_size: categorical [None, 128, 256, 512]
+    - batch_size: categorical [64, 128, 256, 512]
     - weight_decay: categorical [0.0, 1e-5, 1e-4, 1e-3]
     - midpoint_oversample: categorical [0, 3, 5, 7]
     - gamma_power: log-uniform [1.0, 5.0]
@@ -46,7 +46,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["head_dim"] = trial.suggest_categorical("head_dim", [10, 20, 40])
     hp["num_shared_layers"] = trial.suggest_categorical("num_shared_layers", [1, 2, 3])
     hp["num_waypoints"] = trial.suggest_categorical("num_waypoints", [3, 5, 7, 9])
-    hp["batch_size"] = trial.suggest_categorical("batch_size", [None, 128, 256, 512])
+    hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3])
     hp["midpoint_oversample"] = trial.suggest_categorical("midpoint_oversample", [0, 3, 5, 7])
 

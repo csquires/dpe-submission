@@ -212,7 +212,7 @@ METHOD_SPECS = {
             # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
             "n_steps": ("log_uniform_int", 100, 500),
-            "batch_size": ("choice", [None, 128, 256]),
+            "batch_size": ("choice", [64, 128, 256, 512]),
         },
         "tabular_only": False,
     },
@@ -228,7 +228,7 @@ METHOD_SPECS = {
             # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
             "n_steps": ("log_uniform_int", 100, 500),
-            "batch_size": ("choice", [None, 128, 256]),
+            "batch_size": ("choice", [64, 128, 256, 512]),
             # classifier output dimension (= num_classes)
             "num_waypoints": ("choice", [5, 10, 15]),
         },
@@ -423,7 +423,7 @@ METHOD_SPECS = {
             # tier-2 training dynamics
             "learning_rate": ("log_uniform", 1e-4, 1e-2),
             "n_steps": ("log_uniform_int", 100, 500),
-            "batch_size": ("choice", [None, 128, 256]),
+            "batch_size": ("choice", [64, 128, 256, 512]),
             # classifier output dimension (= num_classes)
             "num_waypoints": ("choice", [5, 10, 15]),
             # triangular waypoint-builder knobs

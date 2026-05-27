@@ -29,7 +29,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     emits n_steps as the fixed constant N_STEPS, plus 4 tuned params:
     - learning_rate: log-uniform [1e-4, 1e-2]
     - latent_dim: categorical [64, 128, 256]
-    - batch_size: categorical [None, 128, 256]
+    - batch_size: categorical [64, 128, 256, 512]
     - num_waypoints: categorical [3, 5, 7, 9] (= classifier num_classes)
 
     not searched -- pinned per-experiment via StudyConfig.fixed_hp:
@@ -54,7 +54,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         "latent_dim", [64, 128, 256]
     )
     hp["batch_size"] = trial.suggest_categorical(
-        "batch_size", [None, 128, 256, 512]
+        "batch_size", [64, 128, 256, 512]
     )
     hp["num_waypoints"] = trial.suggest_categorical(
         "num_waypoints", [3, 5, 7, 9]
