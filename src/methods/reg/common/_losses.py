@@ -453,8 +453,10 @@ def tri_tsm_loss(
     term1 = 2 * model(x0, t0, tp0).squeeze(-1) * lam.lam_t0
     term2 = 2 * model(x1, t1, tp1).squeeze(-1) * lam.lam_t1
 
-    sqrt_t = torch.sqrt(torch.clamp(1.0 - t ** 2, min=eps))
-    sqrt_tp = torch.sqrt(torch.clamp(1.0 - t_prime ** 2, min=eps))
+    # fixed tiny floor (decoupled from the searched time-eps): matches TSM's
+    # un-clamped sqrt path so the only train-time difference is the bell path.
+    sqrt_t = torch.sqrt(torch.clamp(1.0 - t ** 2, min=1e-8))
+    sqrt_tp = torch.sqrt(torch.clamp(1.0 - t_prime ** 2, min=1e-8))
     x_t = sqrt_t * x0 + t * x1
     x_tau = sqrt_tp * x_t + t_prime * xstar
 
