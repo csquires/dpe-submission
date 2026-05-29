@@ -230,6 +230,7 @@ def build_TriangularTSM(input_dim: int, device: str | torch.device, num_waypoint
         vertex=flat_hp.get("vertex", 0.5),
         peak_max=flat_hp.get("peak_max", 1.0),
         activation=flat_hp.get("activation", "silu"),
+        integration_steps=flat_hp.get("integration_steps", 100),
     )
 
 

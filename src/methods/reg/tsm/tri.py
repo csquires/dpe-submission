@@ -44,6 +44,7 @@ class TriangularTSM(ELDR):
         vertex: float = 0.5,
         peak_max: float = 1.0,
         activation: str = "silu",
+        integration_steps: int = 100,
     ) -> None:
         """bell path: t' = peak_max (1 - ((tau - vertex)/scale)^2) on (0, vertex) and (vertex, 1).
 
@@ -62,6 +63,8 @@ class TriangularTSM(ELDR):
             vertex: peak location in (0, 1). default 0.5.
             peak_max: peak height in (0, 1]. default 1.0.
             activation: nonlinearity in {'elu', 'gelu', 'silu'}. default 'silu'.
+            integration_steps: tau-grid resolution for predict_ldr's trapezoid.
+                default 100. mirrors the searchable knob on TSM/CTSM/VFM.
         """
         super().__init__(input_dim)
 
@@ -82,6 +85,7 @@ class TriangularTSM(ELDR):
         self.vertex = vertex
         self.peak_max = peak_max
         self.activation = activation
+        self.integration_steps = integration_steps
 
         # store cfg objects
         self.optim = optim
@@ -186,7 +190,7 @@ class TriangularTSM(ELDR):
         )
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
-        """trapezoid-integrate -model(xs, t, t') over a 100-point tau grid in [eps, 1]."""
+        """trapezoid-integrate -model(xs, t, t') over an integration_steps-point tau grid in [eps, 1]."""
         if self.model is None:
             raise RuntimeError("Model not trained. Call fit() before predict_ldr().")
 
@@ -197,7 +201,7 @@ class TriangularTSM(ELDR):
             return torch.zeros(0, dtype=samples.dtype, device=self.device)
 
         with torch.no_grad():
-            tau_grid = torch.linspace(self.time.eps, 1.0, 100, device=self.device)
+            tau_grid = torch.linspace(self.time.eps, 1.0, self.integration_steps, device=self.device)
             scores = []
             for tau_scalar in tau_grid:
                 t, t_prime = self._path_t_tprime(tau_scalar.view(1, 1))

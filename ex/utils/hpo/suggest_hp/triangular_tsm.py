@@ -15,8 +15,10 @@ unique to TriangularTSM:
     matches plain TSM's MAE while 0.5/1.0 was materially worse. the
     constructor enforces peak_max <= 1.0, so 1.0 is the open upper bound.
 
-absent vs TSM: integration_steps -- TriangularTSM.predict_ldr uses a hardcoded
-100-point trapezoid grid, so the key would be inert.
+integration_steps: searched in [100, 2600] like TSM/CTSM/VFM (predict_ldr now
+reads self.integration_steps instead of a hardcoded 100-point grid). a step-700
+fit-once grid sweep on eig found MAE flat across 100..2000, so 100 suffices
+there; the knob is exposed for parity and so HPO can probe other regimes.
 
 inertness edges (carried over from TSM):
   - apply_iw inert when time_dist == "uniform" (UniformSampler returns iw=1).
@@ -49,7 +51,8 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     emits n_steps as the fixed constant N_STEPS, plus 1 switch (time_dist),
     1 conditional (apply_iw -- suggested only when time_dist != "uniform"),
-    and 13 unconditional knobs (incl. the bell-path scalars vertex/peak_max).
+    and 14 unconditional knobs (incl. integration_steps and the bell-path
+    scalars vertex/peak_max).
 
     args:
         trial: optuna trial object
@@ -75,6 +78,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # unconditional shared-with-TSM knobs.
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
+    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["activation"] = trial.suggest_categorical("activation", ["elu", "gelu", "silu"])
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
