@@ -30,10 +30,7 @@ inertness edges (probe + static):
 test-path knobs are derived from the train-side counterparts. test_eps is no
 longer independent: we search a small test_eps_offset and derive test_eps =
 eps + offset, which forces the inference linspace boundary strictly inside
-the training support (kills the off-path-low boundary failure mode flagged
-in notes/triangular_nogozone_audit.md). not searched -- pinned:
-n_hidden_layers (via StudyConfig.fixed_hp), div_method/div_noise/
-n_hutch_samples, activation.
+the training support. 
 """
 
 from typing import Any
