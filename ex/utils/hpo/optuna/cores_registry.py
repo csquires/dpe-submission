@@ -20,6 +20,7 @@ CORES_REGISTRY: dict[str, int] = {
     "FMDRE": 4,
     "FMDRE_S2": 4,
     "TriangularTSM": 4,
+    "TriangularTSM_fix": 4,
     "TriangularFMDRE": 4,
     "TriangularMDRE": 4,
     "MultiHeadTriangularTDRE": 4,

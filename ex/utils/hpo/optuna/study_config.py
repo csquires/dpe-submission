@@ -44,6 +44,10 @@ class StudyConfig:
             but methods has no tabular.
         lanes: lane names the multi-lane keeper drains for this study; each must be a
             key in ex.utils.hpo.optuna.lanes.LANES. default ['preempt', 'array'].
+        max_in_flight: cap on concurrent trials per (experiment, method) summed
+            across lanes (per-lane B * n_active_jobs). keeper-enforced; prevents
+            journal-lock contention when the array lane (B=32) is fully loaded
+            on a slow-load journal. default 256.
         schema_version: config schema version; mismatch logs warning, does not
             error.
     """
@@ -67,6 +71,7 @@ class StudyConfig:
     resume_existing: bool = True
     include_tabular: bool = False
     lanes: List[str] = field(default_factory=lambda: ["preempt", "array"])
+    max_in_flight: int = 256
     schema_version: str = "1.0"
 
     def __post_init__(self):
@@ -117,6 +122,12 @@ class StudyConfig:
         # validate target_trials
         if self.target_trials <= 0:
             raise ValueError(f"target_trials must > 0, got {self.target_trials}")
+
+        # validate max_in_flight
+        if self.max_in_flight <= 0:
+            raise ValueError(
+                f"max_in_flight must > 0, got {self.max_in_flight}"
+            )
 
         # validate cores_per_trial if provided
         if self.cores_per_trial is not None:

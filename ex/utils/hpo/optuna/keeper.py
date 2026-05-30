@@ -28,6 +28,7 @@ import time
 
 from optuna.trial import TrialState
 
+from ex.utils.hpo.optuna.cores_registry import get_cores_for_method
 from ex.utils.hpo.optuna.lanes import get_lane, LaneProfile
 from ex.utils.hpo.optuna.study_config import load_config
 from ex.utils.hpo.optuna.storage import create_or_load
@@ -78,6 +79,41 @@ def job_name(experiment: str, method: str, lane_name: str) -> str:
     per-lane squeue -n counts never collide across lanes.
     """
     return f"optk_{experiment}_{method}_{lane_name}"
+
+
+def lane_b(lane: LaneProfile, method: str) -> int:
+    """concurrent trials per worker task on `lane` for `method`.
+
+    pinned `lane.batch_size`; else derived as cpus_per_task // cores, where
+    cores is the lane-pinned `cores_per_trial` or the cores_registry default.
+    """
+    if lane.batch_size is not None:
+        return max(1, lane.batch_size)
+    cores = lane.cores_per_trial or get_cores_for_method(method)
+    return max(1, lane.cpus_per_task // cores)
+
+
+def estimate_in_flight(
+    experiment: str, method: str, lanes: list[str], user: str | None
+) -> int:
+    """estimate concurrent trials in the journal for (experiment, method).
+
+    sum lane_b(lane) * squeue_count(lane, name) across `lanes`. drops the
+    contributions of lanes whose squeue lookup fails so a single transient
+    error doesn't unblock dispatch beyond the cap.
+    """
+    total = 0
+    for lane_name in lanes:
+        try:
+            lane = get_lane(lane_name)
+            n_jobs = squeue_count(
+                partition=lane.partition, user=user,
+                name=job_name(experiment, method, lane_name),
+            )
+        except Exception:
+            continue
+        total += n_jobs * lane_b(lane, method)
+    return total
 
 
 def cull_study_jobs(experiment: str, method: str, lanes: list[str],
@@ -371,9 +407,26 @@ def main() -> int:
             continue
 
         # (2) for each lane: split lane.max_concurrent (the per-lane total
-        # running cap) evenly across the studies still under target.
+        # running cap) evenly across the studies still under target. each
+        # study also carries a max_in_flight cap (concurrent trials summed
+        # across lanes via lane_b) that throttles dispatch when the journal
+        # is loaded -- protects against array-lane fan-out (B=32) saturating
+        # the journal lock at scale.
         n_pending = len(pending)
         cycle_dispatched = 0
+        study_slots: dict[str, int] = {}
+        for (_, method, _) in pending:
+            try:
+                in_flight = estimate_in_flight(
+                    config.experiment, method, config.lanes, user
+                )
+            except Exception as e:
+                logger.warning(
+                    "cycle %d: in_flight estimate failed for %s: %s; "
+                    "treating as 0", cycle, method, e,
+                )
+                in_flight = 0
+            study_slots[method] = max(0, config.max_in_flight - in_flight)
         for lane_name in config.lanes:
             try:
                 lane = get_lane(lane_name)
@@ -389,7 +442,8 @@ def main() -> int:
 
             if lane_name == "array":
                 # array lane: one --array job per under-target study, sized to
-                # that study's share; skip if a job is already alive.
+                # min(per_study, study_slots[method] // lane_b). a study that
+                # already has a live array job is skipped here.
                 for (combo_index, method, n) in pending:
                     try:
                         count = squeue_count(
@@ -400,16 +454,28 @@ def main() -> int:
                         logger.warning("squeue failed for array %s: %s", method, e)
                         continue
 
-                    if count == 0:
-                        try:
-                            dispatch_array(
-                                args.config, combo_index, config.experiment,
-                                method, lane, per_study, args.workdir,
-                                args.log_dir, args.dry_run,
-                            )
-                            cycle_dispatched += 1
-                        except Exception as e:
-                            logger.warning("dispatch_array failed for %s: %s", method, e)
+                    if count != 0:
+                        continue
+                    b = lane_b(lane, method)
+                    slot_n = study_slots.get(method, 0) // b
+                    array_n = min(per_study, slot_n)
+                    if array_n <= 0:
+                        logger.info(
+                            "skip array dispatch for %s: in_flight cap "
+                            "(slots=%d, B=%d)",
+                            method, study_slots.get(method, 0), b,
+                        )
+                        continue
+                    try:
+                        dispatch_array(
+                            args.config, combo_index, config.experiment,
+                            method, lane, array_n, args.workdir,
+                            args.log_dir, args.dry_run,
+                        )
+                        cycle_dispatched += 1
+                        study_slots[method] -= array_n * b
+                    except Exception as e:
+                        logger.warning("dispatch_array failed for %s: %s", method, e)
 
             else:
                 # per-worker lanes (preempt, cpu, general): top each study up to
@@ -430,11 +496,15 @@ def main() -> int:
                         )
                         continue
 
+                    b = lane_b(lane, method)
                     deficit = per_study - running
                     deficit = min(deficit, config.target_trials - n)
                     deficit = min(
                         deficit, args.max_dispatch_per_cycle - cycle_dispatched
                     )
+                    # in_flight cap: convert remaining slots to a per-lane
+                    # task count via B and clamp deficit. floor at 0.
+                    deficit = min(deficit, study_slots.get(method, 0) // b)
 
                     for _ in range(max(0, deficit)):
                         try:
@@ -444,6 +514,7 @@ def main() -> int:
                                 args.log_dir, args.dry_run,
                             )
                             cycle_dispatched += 1
+                            study_slots[method] -= b
                         except Exception as e:
                             logger.warning(
                                 "dispatch failed for %s on %s: %s",
