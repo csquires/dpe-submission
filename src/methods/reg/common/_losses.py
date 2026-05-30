@@ -445,8 +445,14 @@ def tri_tsm_loss(
 
     t0 = torch.zeros_like(tau) + eps
     t1 = torch.ones_like(tau)
-    tp0 = torch.zeros_like(tau) + eps
-    tp1 = torch.ones_like(tau)
+    # boundary (t, t') must lie on the bell path used at inference. supervising
+    # an off-manifold point (e.g. tp1=1 when bell(1)=0) biases the score the
+    # ldr integral consumes. bell(1)=0 exactly; bell(eps) on the left branch.
+    bell_eps_l = peak_max * (2.0 * (eps / vertex) - (eps / vertex) ** 2)
+    bell_eps_r = peak_max * (1.0 - ((eps - vertex) / (1.0 - vertex)) ** 2)
+    bell_eps = min(1.0, max(0.0, bell_eps_l if eps <= vertex else bell_eps_r))
+    tp0 = torch.zeros_like(tau) + bell_eps
+    tp1 = torch.zeros_like(tau)
 
     lam = resolve_lambdas(reweight, t, t0, t1, eps=eps)
 
