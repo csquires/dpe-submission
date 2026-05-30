@@ -262,8 +262,18 @@ class TriangularCTSMV1(ELDR):
                     results.append(self.model(samples, tau_batch))  # [n_samples, 1]
                 return torch.stack(results, dim=0).squeeze(-1)  # [chunk_len, n_samples]
 
-            # step 5: invoke unified integrator
+            # step 5: invoke unified integrator. when the test path has a
+            # non-zero coordinate clamp around the vertex, excise the same band
+            # from the inference linspace so we never query the net at tau values
+            # the train sampler excluded.
             from ...common._predict_ldr import predict_ldr_via_curve
+            excise = None
+            if self.test_inner_eps > 0.0:
+                v = float(self.vertex)
+                lo = max(self.test_path.eps, v - self.test_inner_eps)
+                hi = min(1.0 - self.test_path.eps, v + self.test_inner_eps)
+                if lo < hi:
+                    excise = (lo, hi)
             ldr = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
                 path=self.test_path,
@@ -271,6 +281,7 @@ class TriangularCTSMV1(ELDR):
                 integrator=self.integrator,
                 n_points=self.integration_steps,
                 samples=xs,
+                excise_band=excise,
             )
             return ldr.cpu()
         finally:

@@ -26,8 +26,11 @@ inertness edges (probe + static):
     gates it on sched, a fragile edge we decline to encode).
 
 test-path knobs (test_sched, test_sigma, test_inner_eps, test_gamma_min,
-test_k) are derived from the train-side counterparts; only test_eps remains
-independent (mirrors the VFM/CTSM convention).
+test_k) are derived from the train-side counterparts. test_eps is no longer
+independent: we search a small test_eps_offset and derive test_eps = eps +
+offset, which forces the inference linspace boundary strictly inside the
+training support (kills the off-path-low boundary failure mode flagged in
+notes/triangular_nogozone_audit.md).
 
 not searched -- pinned: n_hidden_layers (per-experiment via StudyConfig.fixed_hp).
 """
@@ -60,12 +63,20 @@ def _common_optim(trial: optuna.Trial, hp: dict) -> None:
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["cosine_min_factor"] = 0.0
-    hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)
+    hp["test_eps_offset"] = trial.suggest_float(
+        "test_eps_offset", 1e-5, 1e-3, log=True,
+    )
 
 
 def _derive_test(hp: dict) -> None:
-    """derive the test-path schedule from the train-side knobs (test_eps stays
-    independent). placed last so every mirrored train key is already present."""
+    """derive the test-path schedule from the train-side knobs.
+
+    test_eps is derived as eps + test_eps_offset; this forces the inference
+    linspace strictly inside the training time support, killing the boundary
+    off-path failure mode. placed last so every mirrored train key is already
+    present.
+    """
+    hp["test_eps"] = hp["eps"] + hp["test_eps_offset"]
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
@@ -93,7 +104,7 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
     hp["inner_eps"] = inner_eps
 
     if psb:
-        hp["vertex"] = trial.suggest_float("vertex", 0.2, 0.8)
+        hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
 
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])

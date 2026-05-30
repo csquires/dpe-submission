@@ -349,6 +349,17 @@ class TriangularVFMV1(ELDR):
                 out.append(vfm_time_score_1d(net_b_use, net_eta_use, path, x, tau_i, self._div_fn))
             return torch.stack(out, dim=0)
 
+        # excise the band around the vertex when the test path's coordinate
+        # clamp is active. mirrors the training sampler's excised band so we
+        # never query the net at tau values the train sampler excluded.
+        excise = None
+        if self.test_inner_eps > 0.0:
+            v = float(self.vertex)
+            lo = max(self.test_path.eps, v - self.test_inner_eps)
+            hi = min(1.0 - self.test_path.eps, v + self.test_inner_eps)
+            if lo < hi:
+                excise = (lo, hi)
+
         # apply EMA, call shared inference, restore networks
         try:
             if self.ema_b is not None:
@@ -363,6 +374,7 @@ class TriangularVFMV1(ELDR):
                 integrator=self.integrator,
                 n_points=self.integration_steps,
                 samples=samples,
+                excise_band=excise,
             )
             return result
         finally:
