@@ -70,12 +70,14 @@ def _common_optim(trial: optuna.Trial, hp: dict) -> None:
 def _derive_test(hp: dict) -> None:
     """derive the test-path schedule from the train-side knobs.
 
-    test_eps is derived as eps + test_eps_offset; this forces the inference
-    linspace strictly inside the training time support, killing the boundary
-    off-path failure mode. placed last so every mirrored train key is already
-    present.
+    test_eps is derived as max(eps, inner_eps) + test_eps_offset; this forces
+    the inference linspace strictly inside the training time support AND
+    strictly outside the path's gamma-clamp band, killing both the boundary
+    off-path failure mode and the clamp-band off-path failure mode (the latter
+    only kicks in when inner_eps > eps, which is V1's regime). placed last so
+    every mirrored train key is already present.
     """
-    hp["test_eps"] = hp["eps"] + hp["test_eps_offset"]
+    hp["test_eps"] = max(hp["eps"], hp["inner_eps"]) + hp["test_eps_offset"]
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
@@ -135,10 +137,14 @@ def suggest_hp_v1(trial: optuna.Trial) -> dict[str, Any]:
 def suggest_hp_v2(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularCTSM V2 (barycentric path, vertex pinned 0.5 in the builder).
 
-    switches: sched, inner_eps, time_dist. conditional: k (stiff), gamma_min
-    (inner_eps==0), apply_iw (time_dist != uniform).
+    switches: sched, time_dist. conditional: k (stiff), apply_iw (time_dist !=
+    uniform). inner_eps pinned to 0: for bary_1d it clamps the same axis as
+    eps (the outer tau), so the two knobs guard the same endpoint zero and
+    inner_eps > eps merely produces a band of biased zero-gradient training
+    mass (audit sec 2-3, notes/triangular_nogozone_audit.md). gamma_min is now
+    unconditionally searched as the sole endpoint protection.
     """
-    return _suggest_1d(trial, inner_eps_grid=[0.0, 0.05, 0.1], psb=False)
+    return _suggest_1d(trial, inner_eps_grid=[0.0], psb=False)
 
 
 def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
@@ -148,7 +154,9 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     t2_max + path_height (path_height is inference-only: it parameterises the
     curve used only in predict_ldr). conditional: k (stiff). gamma_min searched
     unconditionally (the probe gates it on sched, a fragile edge we decline to
-    encode). test_gamma_min derived from gamma_min.
+    encode). inner_eps pinned to 0: for rect_2d it clamps the same t1 axis as
+    eps, so the two knobs guard the same endpoint zero (audit sec 2-3,
+    notes/triangular_nogozone_audit.md). test_gamma_min derived from gamma_min.
     """
     hp: dict[str, Any] = {}
     _common_optim(trial, hp)
@@ -156,7 +164,7 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
 
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    hp["inner_eps"] = trial.suggest_categorical("inner_eps", [0.0, 0.05, 0.1])
+    hp["inner_eps"] = 0.0
     hp["t2_max"] = trial.suggest_float("t2_max", 0.6, 0.9)
     hp["path_height"] = trial.suggest_float("path_height", 1.0, 2.0)
     hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
