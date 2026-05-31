@@ -64,7 +64,7 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["cosine_min_factor"] = 0.0
     hp["test_eps_offset"] = trial.suggest_float(
-        "test_eps_offset", 1e-5, 1e-3, log=True,
+        "test_eps_offset", 0, 1e-3, log=True,
     )
 
     # divergence estimator pinned to exact; div_noise / n_hutch_samples inert
