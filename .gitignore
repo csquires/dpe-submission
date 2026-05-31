@@ -65,3 +65,10 @@ jsons/
 *_EMA.md
 
 scratch/*
+
+# campaign-specific (non-reproducer) hpo configs. gold-standard
+# eig.py/occupancy.py/pendulum.py are tracked; any *_<suffix>.py sibling is
+# treated as an untracked, transient fillin / rerun config.
+ex/utils/hpo/optuna/configs/eig_*.py
+ex/utils/hpo/optuna/configs/occupancy_*.py
+ex/utils/hpo/optuna/configs/pendulum_*.py
