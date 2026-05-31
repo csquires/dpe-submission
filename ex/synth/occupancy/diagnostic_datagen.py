@@ -254,47 +254,37 @@ def plot_k1_inversion_check(ax,
     ax.set_title(r"$K_1$: prescribed vs realized (hue: $k_1$ idx)")
 
 
-def plot_beta_vs_k2_realized(ax,
-                             cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
-                             beta_values: List[float]) -> None:
-    """scatter (beta_set, KL2_realized) across all (cell, seed); no y=x.
+def plot_k1_vs_k2_realized(ax,
+                           cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
+                           k1_values: List[float],
+                           beta_values: List[float]) -> None:
+    r"""$K_1$ prescribed vs $K_2$ realized; one line per $\beta$ value.
 
-    color encodes beta_idx (plasma).
+    each marker is the median across seeds at one (K1, $\beta$) cell. with
+    singleton $\beta$ this is a single monotone line; with swept $\beta$ this
+    is one line per $\beta$, color-coded.
     """
     n2 = len(beta_values)
-    for (_, bi), recs in cells.items():
-        col = plt.cm.plasma(bi / max(1, n2 - 1))
-        for r in recs:
-            a = r["attrs"]
-            if "beta" in a and "k2_real" in a:
-                ax.scatter(a["beta"], a["k2_real"], s=15, alpha=0.6, color=col)
-    ax.set_xlabel(r"$\beta$ (set)")
-    ax.set_ylabel(r"$K_2$ realized = $KL(d_{mix} \| d_E)$")
-    ax.set_title(r"$\beta$ (set) vs $K_2$ realized (hue: $\beta$ idx)")
-
-
-def plot_alpha_beta_coverage(ax,
-                             cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
-                             k1_values: List[float],
-                             beta_values: List[float]) -> None:
-    """scatter of (alpha*, beta_set) across all (cell, seed).
-
-    color encodes k1_idx (hue) and beta_idx (marker size).
-    """
-    n1 = max(1, len(k1_values) - 1)
+    by_beta: Dict[int, List[Tuple[float, float]]] = {}
     for (ai, bi), recs in cells.items():
-        col = plt.cm.viridis(ai / n1)
-        size = 20 + 30 * (bi / max(1, len(beta_values) - 1))
-        for r in recs:
-            a = r["attrs"]
-            if "alpha" in a and "beta" in a:
-                ax.scatter(a["alpha"], a["beta"], s=size, alpha=0.6,
-                           color=col, edgecolors="black", linewidths=0.3)
-    ax.set_xlabel(r"$\alpha^*$")
-    ax.set_ylabel(r"$\beta$ (set)")
-    ax.set_title(r"$(\alpha^*, \beta)$ coverage (hue: $k_1$ idx, size: $\beta$ idx)")
-    ax.set_xlim(-0.05, 1.05)
-    ax.set_ylim(-0.05, 1.05)
+        vals = [r["attrs"]["k2_real"] for r in recs
+                if "k2_real" in r["attrs"]]
+        if not vals:
+            continue
+        by_beta.setdefault(bi, []).append(
+            (float(k1_values[ai]), float(np.median(vals))))
+    for bi, pts in sorted(by_beta.items()):
+        pts.sort()
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        col = plt.cm.plasma(bi / max(1, n2 - 1))
+        ax.plot(xs, ys, "-o", color=col, markersize=5,
+                label=rf"$\beta$={beta_values[bi]}")
+    ax.set_xlabel(r"$K_1$ prescribed")
+    ax.set_ylabel("$K_2$ realized\n(median over seeds)")
+    ax.set_title(r"$K_1$ vs $K_2$ realized (one line per $\beta$)")
+    if n2 > 1:
+        ax.legend(fontsize=7)
 
 
 def plot_ldr_histograms_grid(
@@ -336,7 +326,7 @@ def plot_ldr_histograms_grid(
                 fontsize=7)
             ax.tick_params(labelsize=6)
     pos = gs_slice.get_position(fig)
-    fig.text(0.5 * (pos.x0 + pos.x1), pos.y1 + 0.005,
+    fig.text(0.5 * (pos.x0 + pos.x1), pos.y1 + 0.02,
              f"{title_prefix} histograms (rows: $k_1$ idx, cols: $\\beta$ idx)",
              ha="center", va="bottom", fontsize=10)
 
@@ -524,16 +514,15 @@ def plot_lightweight_figure(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
                            height_ratios=[1, n1 * 1.2, 2],
                            hspace=0.5)
 
-    sub0 = gridspec.GridSpecFromSubplotSpec(1, 4, subplot_spec=gs[0],
+    sub0 = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs[0],
                                              wspace=0.4)
     plot_k1_inversion_check(fig.add_subplot(sub0[0, 0]), cells, k1_values)
-    plot_beta_vs_k2_realized(fig.add_subplot(sub0[0, 1]), cells, beta_values)
-    plot_alpha_beta_coverage(fig.add_subplot(sub0[0, 2]),
-                             cells, k1_values, beta_values)
+    plot_k1_vs_k2_realized(fig.add_subplot(sub0[0, 1]), cells,
+                           k1_values, beta_values)
     if not is_onehot:
-        plot_discrete_vs_smoothed(fig.add_subplot(sub0[0, 3]), cells)
+        plot_discrete_vs_smoothed(fig.add_subplot(sub0[0, 2]), cells)
     else:
-        ax = fig.add_subplot(sub0[0, 3])
+        ax = fig.add_subplot(sub0[0, 2])
         ax.set_visible(False)
 
     plot_ldr_histograms_grid(fig, gs[1], cells, k1_values, beta_values,
