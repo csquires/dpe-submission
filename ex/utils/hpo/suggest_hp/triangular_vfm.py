@@ -10,27 +10,30 @@ TriangularCTSM. like stock VFM, the divergence estimator is pinned
 (hutchinson/rademacher/4) and activation is pinned -- these are inference-side
 knobs the train-side probe cannot rank, so a dedicated study is deferred.
 
+boundary protection is pinned to sampler-side: eps > 0 and inner_eps = 0. The
+path's local_tau clamp is plumbed through the builders but not searched.
+
+V1-only vertex_band is an always-on knob (sampler-side excision of the vertex);
+the inference excise band uses test_vertex_band = vertex_band +
+test_vertex_band_offset, guaranteeing the inference excision is strictly wider
+than the training one.
+
 inertness edges (probe + static):
   - k inert when sched == "bridge".
-  - gamma_min inert when inner_eps > 0 (V1/V2). V3 searches gamma_min
-    unconditionally (probe gates it on sched, a fragile edge we decline).
+  - gamma_min always searched in sampler mode (the path is not coord-clamped).
   - V1 always samples time per-leg via a width-proportional two-leg mixture
-    sampler (any inner_eps; every TIME_DISTS value applied per leg), so time_dist is
-    unconditional -- same treatment as V2, only the sampler differs
-    (see notes/triangular_v1_time_dist_coupling.md).
+    sampler (every TIME_DISTS value applied per leg), so time_dist is
+    unconditional (see notes/triangular_v1_time_dist_coupling.md).
   - apply_iw inert when time_dist == "uniform".
   - reweight gated on precond == False (mirrors stock VFM: the precond=True
-    EDM-lambda path masks it). NB the probe found reweight active even under
-    precond == True for the triangular paths, but per the user decision we
-    mirror stock VFM's structure exactly. V3 has no precond, so reweight is
-    always active there.
+    EDM-lambda path masks it). all three versions search precond.
   - V3 (TriangularVFM2D) has no precond support and no time-sampling knobs;
     path_height is inference-only (curve used only in predict_ldr).
 
-test-path knobs are derived from the train-side counterparts. test_eps is no
-longer independent: we search a small test_eps_offset and derive test_eps =
-eps + offset, which forces the inference linspace boundary strictly inside
-the training support. 
+test-path knobs are derived from train-side counterparts. test_eps = max(eps,
+inner_eps) * (1 + test_eps_frac); test_vertex_band = vertex_band *
+(1 + test_vertex_band_frac) (V1 only). Fractional offsets make the safety
+margin scale with the base knob.
 """
 
 from typing import Any
@@ -55,6 +58,7 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
     hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
+    hp["inner_eps"] = 0.0
     hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
     hp["ema_decay"] = 0.999
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
@@ -63,8 +67,8 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
     hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["cosine_min_factor"] = 0.0
-    hp["test_eps_offset"] = trial.suggest_float(
-        "test_eps_offset", 0, 1e-3, log=True,
+    hp["test_eps_frac"] = trial.suggest_float(
+        "test_eps_frac", 1e-4, 1.0, log=True,
     )
 
     # divergence estimator pinned to exact; div_noise / n_hutch_samples inert
@@ -79,47 +83,56 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
 def _derive_test(hp: dict) -> None:
     """derive the test-path schedule from the train-side knobs.
 
-    test_eps is derived as max(eps, inner_eps) + test_eps_offset; this forces
-    the inference linspace strictly inside the training time support AND
-    strictly outside the path's gamma-clamp band, killing both the boundary
-    off-path failure mode and the clamp-band off-path failure mode (the latter
-    only kicks in when inner_eps > eps, which is V1's regime).
+    test_eps and test_vertex_band are multiplicatively offset from their
+    train-side counterparts: a *fractional* margin makes the safety shift
+    scale-invariant w.r.t. the base knob.
+
+    test_eps         = max(eps, inner_eps) * (1 + test_eps_frac)
+    test_vertex_band = vertex_band * (1 + test_vertex_band_frac)        [V1 only]
     """
-    hp["test_eps"] = max(hp["eps"], hp["inner_eps"]) + hp["test_eps_offset"]
+    boundary = max(hp["eps"], hp["inner_eps"])
+    hp["test_eps"] = boundary * (1.0 + hp["test_eps_frac"])
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
+    if "vertex_band" in hp:
+        hp["test_vertex_band"] = hp["vertex_band"] * (1.0 + hp["test_vertex_band_frac"])
+    else:
+        hp["test_vertex_band"] = 0.0
     if "gamma_min" in hp:
         hp["test_gamma_min"] = hp["gamma_min"]
     if "k" in hp:
         hp["test_k"] = hp["k"]
 
 
-def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict[str, Any]:
-    """shared body for the two 1d-time versions (V1 psb, V2 bary)."""
+def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
+    """shared body for the two 1d-time versions (V1 psb, V2 bary).
+
+    psb=True adds vertex_band + test_vertex_band_offset (V1 only). Both
+    versions search vertex.
+    """
     hp: dict[str, Any] = {}
     _common(trial, hp)
 
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    inner_eps = trial.suggest_categorical("inner_eps", inner_eps_grid)
-    hp["inner_eps"] = inner_eps
     hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 
+    if psb:
+        hp["vertex_band"] = trial.suggest_float("vertex_band", 1e-4, 1e-1, log=True)
+        hp["test_vertex_band_frac"] = trial.suggest_float(
+            "test_vertex_band_frac", 1e-4, 1.0, log=True,
+        )
+
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
-    if inner_eps == 0.0:
-        hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
-    # reweight gated on not-precond (mirrors stock VFM: the precond=True path
-    # uses an EDM lambda outer-weight that masks reweight).
+
     if not precond:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
-    # time_dist/apply_iw always active for V1 and V2. V1 samples time per-leg
-    # via the two-leg mixture sampler (any inner_eps; every TIME_DISTS value per
-    # leg); V2 uses the global sampler. same suggester treatment.
     time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
     hp["time_dist"] = time_dist
     if time_dist != "uniform":
@@ -130,51 +143,45 @@ def _suggest_1d(trial: optuna.Trial, *, inner_eps_grid: list, psb: bool) -> dict
 
 
 def suggest_hp_v1(trial: optuna.Trial) -> dict[str, Any]:
-    """TriangularVFM V1 (piecewise-SB path, searched vertex, searched precond).
+    """TriangularVFM V1 (piecewise-SB path, searched vertex + vertex_band).
 
-    note: the stiff-schedule `k` IS live for V1 (it parameterises stiff_noise);
-    the old "k vestigial" spec comment confused it with the barycentric
-    constructor scalar. conditional: k (stiff), gamma_min (inner_eps==0),
-    apply_iw (time_dist != uniform). time_dist always active.
+    switches: sched, time_dist, precond. always: vertex_band,
+    test_vertex_band_offset, gamma_min. conditional: k (stiff), reweight
+    (precond==False), apply_iw (time_dist != uniform).
     """
-    return _suggest_1d(trial, inner_eps_grid=[0.0, 0.05, 0.1], psb=True)
+    return _suggest_1d(trial, psb=True)
 
 
 def suggest_hp_v2(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularVFM V2 (barycentric path, searched vertex, searched precond).
 
-    conditional: k (stiff), apply_iw (time_dist != uniform). time_dist always
-    active. inner_eps pinned to 0: for bary_1d it clamps the same outer-tau
-    axis as eps, so the two knobs guard the same endpoint zero and inner_eps
-    > eps merely produces a band of biased zero-gradient training mass (audit
-    sec 2-3, notes/triangular_nogozone_audit.md). gamma_min is now
-    unconditionally searched as the sole endpoint protection.
+    switches: sched, time_dist, precond. always: vertex, gamma_min.
+    conditional: k (stiff), reweight (precond==False), apply_iw (time_dist !=
+    uniform).
     """
-    return _suggest_1d(trial, inner_eps_grid=[0.0], psb=False)
+    return _suggest_1d(trial, psb=False)
 
 
 def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularVFM V3 (2D stacked path + LowArcCurve2D).
 
-    no precond (TriangularVFM2D has no precond support) and no time-sampling
-    knobs (the builder hardcodes a product of uniforms). adds t2_max +
-    path_height (inference-only). conditional: k (stiff). gamma_min searched
-    unconditionally. inner_eps pinned to 0: for rect_2d it clamps the same t1
-    axis as eps, so the two knobs guard the same endpoint zero (audit sec 2-3,
-    notes/triangular_nogozone_audit.md). test_gamma_min derived from gamma_min.
+    searches precond and gates reweight on not-precond (mirrors V1/V2 pattern).
+    no time-sampling knobs (the builder hardcodes a product of uniforms).
+    adds t2_max + path_height (inference-only). conditional: k (stiff),
+    reweight (precond==False).
     """
     hp: dict[str, Any] = {}
     _common(trial, hp)
 
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    hp["inner_eps"] = 0.0
     hp["t2_max"] = trial.suggest_float("t2_max", 0.6, 0.9)
     hp["path_height"] = trial.suggest_float("path_height", 1.0, 2.0)
     hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
-    # no precond support, so reweight is always active (the gate `not precond`
-    # is vacuously true here).
-    hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
+    precond = trial.suggest_categorical("precond", [False, True])
+    hp["precond"] = precond
+    if not precond:
+        hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])

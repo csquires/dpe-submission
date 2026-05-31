@@ -455,10 +455,17 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
 
     builds explicit train and test psb paths via the general psb_1d builder so the
     noise schedule (sched, sigma) is HPO-selectable for both paths.
+
+    boundary protection is xor: either eps>0 (sampler-side trim) OR inner_eps>0
+    (path-side local_tau clamp). vertex_band is a separate, independently-searched
+    knob that controls the sampler-side vertex excision (V1-specific). the path's
+    inner_eps still also clamps local_tau when in clamp mode, but the vertex zone
+    geometry comes from vertex_band alone.
     """
     inner_eps = flat_hp.get("inner_eps", 0.0)
     vertex = flat_hp["vertex"]
     eps = flat_hp["eps"]
+    vertex_band = flat_hp["vertex_band"]
     path = psb_1d(
         sched=_sched_1d(flat_hp), vertex=vertex,
         inner_eps=inner_eps, gamma_min=flat_hp.get("gamma_min", 0.0), eps=eps,
@@ -469,14 +476,10 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
         gamma_min=flat_hp.get("test_gamma_min", 0.0),
         eps=flat_hp.get("test_eps", eps),
     )
-    # two-legged psb path: always sample time per-leg via the width-proportional
-    # mixture (any time_dist applied per leg). inner_eps only sets the excised
-    # band; at inner_eps == 0 the legs meet at the vertex. uniform time_dist is
-    # identical to the old global-uniform behavior.
     time = make_psb_mixture_sampler(
         time_dist=flat_hp.get("time_dist", "uniform"),
         apply_iw=flat_hp.get("apply_iw", True),
-        vertex=vertex, inner_eps=inner_eps, eps=path.eps,
+        vertex=vertex, vertex_band=vertex_band, eps=path.eps,
     )
     return TriangularCTSM(
         input_dim=input_dim,
@@ -485,6 +488,7 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
         time=time,
         sigma=flat_hp.get("sigma", 1.0),
         vertex=vertex,
+        test_vertex_band=flat_hp.get("test_vertex_band", 0.0),
         hidden_dim=flat_hp.get("hidden_dim", 256),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         n_steps=flat_hp["n_steps"],
@@ -597,6 +601,7 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
     inner_eps = flat_hp.get("inner_eps", 0.0)
     vertex = flat_hp["vertex"]
     eps = flat_hp["eps"]
+    vertex_band = flat_hp["vertex_band"]
     # gamma_min is conditionally inert (masked when inner_eps > 0), so the
     # suggester omits it on that branch; default to 0.0 like build_VFM / the
     # CTSM-V1 builder. when inner_eps == 0 the key is always present.
@@ -611,13 +616,10 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         inner_eps=flat_hp.get("test_inner_eps", 0.0),
         eps=flat_hp.get("test_eps", eps),
     )
-    # two-legged psb path: always sample time per-leg via the width-proportional
-    # mixture (any time_dist applied per leg). inner_eps only sets the excised
-    # band; at inner_eps == 0 the legs meet at the vertex.
     time = make_psb_mixture_sampler(
         time_dist=flat_hp.get("time_dist", "uniform"),
         apply_iw=flat_hp.get("apply_iw", True),
-        vertex=vertex, inner_eps=inner_eps, eps=path.eps,
+        vertex=vertex, vertex_band=vertex_band, eps=path.eps,
     )
     return TriangularVFM(
         input_dim=input_dim,
@@ -625,6 +627,7 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         test_path=test_path,
         time=time,
         vertex=vertex,
+        test_vertex_band=flat_hp.get("test_vertex_band", 0.0),
         hidden_dim=flat_hp.get("hidden_dim", 256),
         n_hidden_layers=flat_hp.get("n_hidden_layers", 3),
         n_steps=flat_hp["n_steps"],
@@ -735,6 +738,7 @@ def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypo
         layernorm=flat_hp.get("layernorm", "off"),
         antithetic=flat_hp.get("antithetic", True),
         reweight=flat_hp.get("reweight", False),
+        precond=flat_hp.get("precond", False),
         div_method=flat_hp.get("div_method", "hutchinson"),
         div_noise=flat_hp.get("div_noise", "rademacher"),
         n_hutch_samples=flat_hp.get("n_hutch_samples", 1),
