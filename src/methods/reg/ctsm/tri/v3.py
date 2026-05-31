@@ -14,7 +14,7 @@ from ...common._cfgs import (
     make_optim, make_sched, make_ema,
 )
 from ...common._estimator_helpers import _validate_and_store_slots
-from ...common._weighting import resolve_outer_lambda
+from ...common._weighting import resolve_outer_lambda, outer_path_var_v3
 from ...common._paradigm_funcs import ctsm_regression_target_2d
 from ...common._predict_ldr import predict_ldr_via_curve
 from ....common._report import _make_report
@@ -262,9 +262,16 @@ class TriangularCTSM2D(ELDR):
             # forward
             pred = model(x_t, t1, t2)  # [B, 2]
 
-            # loss: weighted mse per-axis, aggregated
+            # loss: weighted mse per-axis, aggregated. when reweight=True we
+            # use the V3-correct 1/gamma^2(t1, t2) inverse-variance weight
+            # derived from the path's own noise schedule, not the 1D linear-
+            # interpolant (1 - t1^2) formula which was a category error for
+            # rect_2d paths.
             err = target - lambda_t * pred  # [B, 2]
-            outer = resolve_outer_lambda(reweight, t1)  # [B]
+            if reweight:
+                outer = outer_path_var_v3(t1, t2, path.gamma)  # [B]
+            else:
+                outer = resolve_outer_lambda(False, t1)  # ones
             loss = (iw.squeeze(-1) * outer * (err ** 2).sum(dim=1)).mean()  # scalar
 
             # backward + step

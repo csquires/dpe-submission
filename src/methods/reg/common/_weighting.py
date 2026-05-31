@@ -127,3 +127,42 @@ def resolve_outer_lambda(reweight: bool, tau: Tensor) -> Tensor:
     if reweight:
         return outer_path_var(tau)
     return torch.ones(tau.shape[0], device=tau.device, dtype=tau.dtype)
+
+
+def outer_path_var_v3(
+    t1: Tensor,
+    t2: Tensor,
+    gamma_fn,
+    gamma_eps: float = 1e-3,
+    normalize: bool = True,
+) -> Tensor:
+    """per-sample variance-inverse reweight derived from the *actual* V3 path gamma.
+
+    replaces the 1D linear-interpolant ``outer_path_var(tau) = 1 - tau^2`` for
+    V3-family methods, whose path is a 2D stacked interpolant (rect_2d). the
+    correct path-variance-inverse weight is ``1/gamma^2(t1, t2)``, where
+    gamma is the path's own noise schedule -- bridge_2d, stiff_2d, or any other.
+
+    normalization (default on) divides by the batch mean so the loss scale
+    matches the reweight=False baseline; this preserves the effective learning
+    rate, gradient-clip threshold, and EMA decay calibration.
+
+    Args:
+        t1: [B, 1] first time axis.
+        t2: [B, 1] second time axis.
+        gamma_fn: callable (t1, t2) -> [B, 1] noise schedule; typically
+            ``self.path.gamma``.
+        gamma_eps: floor on gamma to bound 1/gamma^2 below 1/gamma_eps^2;
+            keeps outer finite when the schedule vanishes.
+        normalize: if True, divide outer by its batch mean so mean(outer) = 1.
+
+    Returns:
+        [B] per-sample outer weight ``1/gamma(t1, t2)^2``, optionally batch-
+        normalized.
+    """
+    g = gamma_fn(t1, t2)  # [B, 1]
+    g2 = (g * g).clamp_min(gamma_eps * gamma_eps)
+    outer = (1.0 / g2).squeeze(-1)  # [B]
+    if normalize:
+        outer = outer / outer.mean().clamp_min(1e-12)
+    return outer

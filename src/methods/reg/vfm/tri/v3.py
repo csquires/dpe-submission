@@ -13,7 +13,7 @@ from ...common._cfgs import (
     OptimCfg, SchedCfg, EmaCfg,
     make_optim, make_sched, make_ema,
 )
-from ...common._weighting import resolve_outer_lambda
+from ...common._weighting import resolve_outer_lambda, outer_path_var_v3
 from ...common._estimator_helpers import _validate_and_store_slots
 from ...common._paradigm_funcs import vfm_velocity_target_2d, vfm_time_score_2d
 from ...common._predict_ldr import predict_ldr_via_curve
@@ -329,7 +329,8 @@ class TriangularVFM2D(ELDR):
                 # sample 2D time via self.time (replaces hardcoded torch.rand)
                 t1, t2, iw = self.time(self.batch_size, self.device)  # [B, 1] each
                 z = torch.randn_like(x0)  # [B, D]
-                outer = resolve_outer_lambda(reweight, t1)  # [B, 1]
+                outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
+                        else resolve_outer_lambda(False, t1)  # [B, 1]
 
                 # antithetic: build BOTH branches end-to-end via the helper.
                 # x_t_minus = mu - gamma*z, with v*_minus = dmu + dgamma*(-z).
@@ -348,22 +349,25 @@ class TriangularVFM2D(ELDR):
                 b2_p = net_b2(x_t_p, t1, t2)
                 b2_m = net_b2(x_t_m, t1, t2)
 
-                # per-sample b1 loss, 0.5 * (lp + lm) per V1/V2 convention
+                # per-sample b1 loss, 0.5 * (lp + lm) per V1/V2 convention.
+                # iw applied multiplicatively per the sampler's importance
+                # weight; identical to V3 CTSM and the existing 1D V1/V2 vfm.
                 lp_b1 = 0.5 * (b1_p ** 2).sum(dim=-1) - (v1_star_p * b1_p).sum(dim=-1)
                 lm_b1 = 0.5 * (b1_m ** 2).sum(dim=-1) - (v1_star_m * b1_m).sum(dim=-1)
-                per_b1 = 0.5 * (lp_b1 + lm_b1) * outer.squeeze(-1)  # [B]
+                per_b1 = 0.5 * (lp_b1 + lm_b1) * outer.squeeze(-1) * iw.squeeze(-1)
 
                 # per-sample b2 loss
                 lp_b2 = 0.5 * (b2_p ** 2).sum(dim=-1) - (v2_star_p * b2_p).sum(dim=-1)
                 lm_b2 = 0.5 * (b2_m ** 2).sum(dim=-1) - (v2_star_m * b2_m).sum(dim=-1)
-                per_b2 = 0.5 * (lp_b2 + lm_b2) * outer.squeeze(-1)
+                per_b2 = 0.5 * (lp_b2 + lm_b2) * outer.squeeze(-1) * iw.squeeze(-1)
 
                 return per_b1.mean() + per_b2.mean()
         else:
             def _compute_b(x0, x1, xstar):
                 t1, t2, iw = self.time(self.batch_size, self.device)
                 z = torch.randn_like(x0)
-                outer = resolve_outer_lambda(reweight, t1)
+                outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
+                        else resolve_outer_lambda(False, t1)
 
                 x_t, v1_star, v2_star = vfm_velocity_target_2d(
                     path, x0, x1, xstar, t1, t2, z
@@ -375,12 +379,12 @@ class TriangularVFM2D(ELDR):
                 per_b1 = (
                     0.5 * (b1_pred ** 2).sum(dim=-1)
                     - (v1_star * b1_pred).sum(dim=-1)
-                ) * outer.squeeze(-1)
+                ) * outer.squeeze(-1) * iw.squeeze(-1)
 
                 per_b2 = (
                     0.5 * (b2_pred ** 2).sum(dim=-1)
                     - (v2_star * b2_pred).sum(dim=-1)
-                ) * outer.squeeze(-1)
+                ) * outer.squeeze(-1) * iw.squeeze(-1)
 
                 return per_b1.mean() + per_b2.mean()
 
@@ -402,11 +406,12 @@ class TriangularVFM2D(ELDR):
             mu = w.alpha * x0 + w.beta * x1 + w.w_star * xstar
             gamma_t = path.gamma(t1, t2)
             x_t = (mu + gamma_t * z).detach()
-            outer = resolve_outer_lambda(reweight, t1)
+            outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
+                    else resolve_outer_lambda(False, t1)
             eta_pred = net_eta(x_t, t1, t2)
             per_sample = (
                 0.5 * (eta_pred ** 2).sum(dim=-1) - (z * eta_pred).sum(dim=-1)
-            ) * outer.squeeze(-1)
+            ) * outer.squeeze(-1) * iw.squeeze(-1)
             return per_sample.mean()
 
         # build grad-clip param lists
