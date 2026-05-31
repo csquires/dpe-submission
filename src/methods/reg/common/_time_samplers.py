@@ -80,8 +80,8 @@ class UniformSampler(TimeSampler):
     eps: float = 1e-3
 
     def __post_init__(self) -> None:
-        if self.eps <= 0:
-            raise ValueError(f"eps must be > 0; got {self.eps}")
+        if self.eps < 0:
+            raise ValueError(f"eps must be >= 0; got {self.eps}")
 
     def sample(self, batch_size: int, device) -> tuple[Tensor, Tensor]:
         """uniform tau in [eps, 1-eps]; iw is ones since q == p_target."""
@@ -114,8 +114,8 @@ class BetaSampler(TimeSampler):
     def __post_init__(self) -> None:
         if self.a <= 0 or self.b <= 0:
             raise ValueError(f"a, b must be > 0; got a={self.a}, b={self.b}")
-        if self.eps <= 0:
-            raise ValueError(f"eps must be > 0; got {self.eps}")
+        if self.eps < 0:
+            raise ValueError(f"eps must be >= 0; got {self.eps}")
 
     def sample(self, batch_size: int, device) -> tuple[Tensor, Tensor]:
         """sample Beta(a, b) tau and weight by p_uniform / q.
@@ -232,8 +232,8 @@ class _FuncSampler(TimeSampler):
     def __post_init__(self) -> None:
         if not callable(self.fn):
             raise TypeError(f"fn must be callable; got {type(self.fn).__name__}")
-        if self.eps <= 0:
-            raise ValueError(f"eps must be > 0; got {self.eps}")
+        if self.eps < 0:
+            raise ValueError(f"eps must be >= 0; got {self.eps}")
 
     def sample(self, batch_size: int, device) -> tuple[Tensor, Tensor]:
         """delegate to the wrapped functional sampler."""
@@ -301,14 +301,16 @@ def make_uniform(*, eps: float) -> TimeSampler1D:
     Returns a callable (B, device) -> (tau [B,1], iw [B,1]).
 
     Args:
-        eps: boundary margin in (0, 1). Sampling range is [eps, 1-eps].
+        eps: boundary margin in [0, 0.5). eps=0 yields the full open interval
+             [0, 1] and is intended for "clamp mode" where the downstream path
+             defends against the boundary via its own coord-clamp.
 
     Body: tau = torch.rand(B, 1, device=device) * (1 - 2*eps) + eps
           iw = torch.ones(B, 1, device=device)
           return tau, iw
     """
-    if eps <= 0 or eps >= 0.5:
-        raise ValueError(f"eps must be in (0, 0.5); got {eps}")
+    if eps < 0 or eps >= 0.5:
+        raise ValueError(f"eps must be in [0, 0.5); got {eps}")
 
     def sampler(B: int, device: torch.device) -> tuple[Tensor, Tensor]:
         tau = torch.rand(B, 1, device=device) * (1.0 - 2.0 * eps) + eps
@@ -339,8 +341,8 @@ def make_uniform_scaled(*, eps: float, max: float) -> TimeSampler1D:
     not uniform on [eps, 1-eps]. Callers using make_product treat the two
     axes as independent uniforms on their respective supports.
     """
-    if eps <= 0 or eps >= max:
-        raise ValueError(f"require 0 < eps < max; got eps={eps}, max={max}")
+    if eps < 0 or eps >= max:
+        raise ValueError(f"require 0 <= eps < max; got eps={eps}, max={max}")
 
     def sampler(B: int, device: torch.device) -> tuple[Tensor, Tensor]:
         tau = torch.rand(B, 1, device=device) * (max - eps) + eps
@@ -376,8 +378,8 @@ def make_beta(*, a: float, b: float, eps: float) -> TimeSampler1D:
     """
     if a <= 0 or b <= 0:
         raise ValueError(f"a, b must be > 0; got a={a}, b={b}")
-    if eps <= 0 or eps >= 0.5:
-        raise ValueError(f"eps must be in (0, 0.5); got {eps}")
+    if eps < 0 or eps >= 0.5:
+        raise ValueError(f"eps must be in [0, 0.5); got {eps}")
 
     def sampler(B: int, device: torch.device) -> tuple[Tensor, Tensor]:
         dist = Beta(
@@ -424,8 +426,8 @@ def make_sobol(
               return tau, iw
           return sampler
     """
-    if eps <= 0 or eps >= 0.5:
-        raise ValueError(f"eps must be in (0, 0.5); got {eps}")
+    if eps < 0 or eps >= 0.5:
+        raise ValueError(f"eps must be in [0, 0.5); got {eps}")
 
     engine = torch.quasirandom.SobolEngine(1, scramble=scramble, seed=seed)
 
@@ -499,8 +501,8 @@ def make_density_sampler(
     because inverse-CDF sampling rarely lands where g ~ 0; densities that diverge
     (stiff_inv) are evaluated only on the interior [eps, 1-eps], so g stays finite.
     """
-    if eps <= 0 or eps >= 0.5:
-        raise ValueError(f"eps must be in (0, 0.5); got {eps}")
+    if eps < 0 or eps >= 0.5:
+        raise ValueError(f"eps must be in [0, 0.5); got {eps}")
     if n_grid < 2:
         raise ValueError(f"n_grid must be >= 2; got {n_grid}")
 
@@ -902,13 +904,13 @@ def make_psb_mixture_sampler(
     time_dist: str,
     apply_iw: bool,
     vertex: float,
-    inner_eps: float,
+    vertex_band: float,
     eps: float,
 ) -> TimeSampler1D:
     """two-leg mixture time sampler for piecewise-Schroedinger-bridge paths.
 
-    samples tau in the allowed region [eps, vertex - inner_eps] U [vertex + inner_eps, 1 - eps],
-    excising the forbidden band of half-width inner_eps around the vertex. leg selection is
+    samples tau in the allowed region [eps, vertex - vertex_band] U [vertex + vertex_band, 1 - eps],
+    excising the forbidden band of half-width vertex_band around the vertex. leg selection is
     width-proportional; the chosen time_dist density is applied PER LEG (its local "piecewise"
     form), as opposed to the global default. any value in TIME_DISTS
     is supported -- uniform, the beta family, and the schedule-shaped density-builders
@@ -922,33 +924,34 @@ def make_psb_mixture_sampler(
                    allowed region; a schedule-shaped density is applied per-leg (piecewise).
         apply_iw: if False, wraps the returned sampler with make_no_iw (iw=1).
         vertex: forbidden-zone center (typically 0.5).
-        inner_eps: half-width of excised band around vertex; >= 0. at inner_eps == 0
-                   the two legs meet at the vertex (zero-width band) and the mixture
-                   is still per-leg.
-        eps: outer boundary margin in (0, 0.5).
+        vertex_band: half-width of excised band around vertex; >= 0. at vertex_band == 0
+                     the two legs meet at the vertex (zero-width band) and the mixture
+                     is still per-leg. distinct from a path's inner_eps -- this is a
+                     sampler-side excision, not a path-side clamp.
+        eps: outer boundary margin in [0, 0.5). eps=0 yields legs that extend to {0, 1}.
 
     Validation:
-        - eps must be in (0, 0.5).
-        - require eps < vertex - inner_eps (leg 1 width > 0).
-        - require vertex + inner_eps < 1 - eps (leg 2 width > 0).
+        - eps must be in [0, 0.5).
+        - require eps < vertex - vertex_band (leg 1 width > 0).
+        - require vertex + vertex_band < 1 - eps (leg 2 width > 0).
         raises ValueError with a clear message naming the offending quantities if any
         constraint is violated.
 
     Body pseudocode:
-        leg1 = [eps, vertex - inner_eps], width w1
-        leg2 = [vertex + inner_eps, 1 - eps], width w2
+        leg1 = [eps, vertex - vertex_band], width w1
+        leg2 = [vertex + vertex_band, 1 - eps], width w2
         allowed_width = w1 + w2
         p1 = w1 / allowed_width
 
-        leg1_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
-        leg2_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
+        leg1_base = time_sampler_from_legacy_cfg(time_dist, eps=eps_leg, apply_iw=apply_iw)
+        leg2_base = time_sampler_from_legacy_cfg(time_dist, eps=eps_leg, apply_iw=apply_iw)
 
         def sampler(B, device):
             pick = rand(B, 1) < p1
             u1, iw1 = leg1_base(B, device)
             u2, iw2 = leg2_base(B, device)
             tau1 = eps + u1 * w1
-            tau2 = (vertex + inner_eps) + u2 * w2
+            tau2 = (vertex + vertex_band) + u2 * w2
             tau = where(pick, tau1, tau2)
             iw = where(pick, iw1, iw2)
             return tau, iw
@@ -964,36 +967,38 @@ def make_psb_mixture_sampler(
         apply_iw=False yields iw=1 (the base make_no_iw wrapper handles this).
     """
     # validate eps
-    if eps <= 0 or eps >= 0.5:
-        raise ValueError(f"eps must be in (0, 0.5); got {eps}")
+    if eps < 0 or eps >= 0.5:
+        raise ValueError(f"eps must be in [0, 0.5); got {eps}")
 
     # compute leg boundaries and widths
     a1 = eps
-    b1 = vertex - inner_eps
+    b1 = vertex - vertex_band
     w1 = b1 - a1
 
-    a2 = vertex + inner_eps
+    a2 = vertex + vertex_band
     b2 = 1.0 - eps
     w2 = b2 - a2
 
     # validate leg widths
     if w1 <= 0:
         raise ValueError(
-            f"forbidden band too wide: w1={w1} must be > 0 (require eps < vertex - inner_eps); "
-            f"got vertex={vertex}, inner_eps={inner_eps}, eps={eps}"
+            f"forbidden band too wide: w1={w1} must be > 0 (require eps < vertex - vertex_band); "
+            f"got vertex={vertex}, vertex_band={vertex_band}, eps={eps}"
         )
     if w2 <= 0:
         raise ValueError(
-            f"forbidden band too wide: w2={w2} must be > 0 (require vertex + inner_eps < 1 - eps); "
-            f"got vertex={vertex}, inner_eps={inner_eps}, eps={eps}"
+            f"forbidden band too wide: w2={w2} must be > 0 (require vertex + vertex_band < 1 - eps); "
+            f"got vertex={vertex}, vertex_band={vertex_band}, eps={eps}"
         )
 
-    # build per-leg base samplers
-    leg1_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
-    leg2_base = time_sampler_from_legacy_cfg(time_dist, eps=eps, apply_iw=apply_iw)
+    # per-leg samplers need eps > 0 for log-density (eg beta, stiff_inv); fall
+    # back to a small defensive value when the outer sampler is in clamp mode.
+    eps_leg = eps if eps > 0 else 1e-6
+    leg1_base = time_sampler_from_legacy_cfg(time_dist, eps=eps_leg, apply_iw=apply_iw)
+    leg2_base = time_sampler_from_legacy_cfg(time_dist, eps=eps_leg, apply_iw=apply_iw)
 
     # precompute leg selection probability
-    allowed_width = (1.0 - 2.0 * eps) - 2.0 * inner_eps  # |A|
+    allowed_width = (1.0 - 2.0 * eps) - 2.0 * vertex_band  # |A|
     p1 = w1 / allowed_width
 
     def sampler(B: int, device: torch.device) -> tuple[Tensor, Tensor]:

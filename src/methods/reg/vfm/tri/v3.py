@@ -20,6 +20,7 @@ from ...common._predict_ldr import predict_ldr_via_curve
 from ...common._curves import Curve, LowArcCurve2D
 from ...common._integrators import Integrator, integrator_trapezoid
 from ...common._trainer import train_interleaved_3
+from ...common._precond import endpoint_moments, make_coeffs_2d, make_lambda_2d, wrap_2d
 from src.waypoints.dataclass_paths import TriangularPath2D
 from src.waypoints.path_builders import rect_vfm
 from src.methods.reg.common._time_samplers import TimeSampler2D, make_uniform, make_uniform_scaled, make_product
@@ -71,6 +72,7 @@ class TriangularVFM2D(ELDR):
         activation: str = "gelu",
         layernorm: str = "off",
         reweight: bool = False,
+        precond: bool = False,
     ) -> None:
         """initialize triangularvfm2d with four-slot surface and 2d-time sampling.
 
@@ -107,6 +109,8 @@ class TriangularVFM2D(ELDR):
           activation: mlp activation; one of {elu, gelu, silu}.
           layernorm: layer norm; one of {off, pre, post}.
           reweight: bool; apply path-variance reweighting to per-sample losses.
+          precond: bool; apply edm-style affine preconditioning to all three networks.
+                   defaults to False. when True, masks reweight setting (edm lambda replaces path variance).
 
         raises:
           typeerror: if path is not triangularpath2d, time is not callable,
@@ -184,6 +188,8 @@ class TriangularVFM2D(ELDR):
         self.activation = activation
         self.layernorm = layernorm
         self.reweight = reweight
+        self.precond = precond
+        self._moments = None  # populated in fit() if precond=True
 
         # validate scalars
         if activation not in ("elu", "gelu", "silu"):
@@ -284,6 +290,14 @@ class TriangularVFM2D(ELDR):
         samples_p1 = samples_p1.float().to(self.device)  # [n1, D]
         samples_pstar = samples_pstar.float().to(self.device)  # [n_star, D]
 
+        # compute endpoint moments if preconditioning enabled
+        if self.precond:
+            self._moments = endpoint_moments({
+                "x0": samples_p0,
+                "x1": samples_p1,
+                "xstar": samples_pstar,
+            })
+
         # initialize model
         self.init_model()
 
@@ -306,6 +320,29 @@ class TriangularVFM2D(ELDR):
         self.ema_b2 = ema_b2
         self.ema_eta = ema_eta
 
+        # build precond wrappers if enabled
+        if self.precond:
+            if self.reweight:
+                warnings.warn(
+                    "precond=True will mask reweight setting; "
+                    "EDM lambda replaces path-variance weighting.",
+                    UserWarning, stacklevel=2,
+                )
+            coeff_b1 = make_coeffs_2d(self.path, self._moments, "velocity_1")
+            coeff_b2 = make_coeffs_2d(self.path, self._moments, "velocity_2")
+            coeff_eta = make_coeffs_2d(self.path, self._moments, "noise")
+            lambda_b1 = make_lambda_2d(coeff_b1)
+            lambda_b2 = make_lambda_2d(coeff_b2)
+            lambda_eta = make_lambda_2d(coeff_eta)
+            b1_fwd = wrap_2d(self.net_b1, coeff_b1)
+            b2_fwd = wrap_2d(self.net_b2, coeff_b2)
+            eta_fwd = wrap_2d(self.net_eta, coeff_eta)
+        else:
+            lambda_b1 = lambda_b2 = lambda_eta = None
+            b1_fwd = self.net_b1
+            b2_fwd = self.net_b2
+            eta_fwd = self.net_eta
+
         # build eval_fn if both callbacks and eval data are provided
         eval_fn = None
         if step_cb is not None and eval_data is not None:
@@ -321,16 +358,28 @@ class TriangularVFM2D(ELDR):
         # build loss_b thunk: joint velocity loss from both net_b1 and net_b2
         n0, n1, n_star = samples_p0.shape[0], samples_p1.shape[0], samples_pstar.shape[0]
         path = self.path
-        net_b1, net_b2, net_eta = self.net_b1, self.net_b2, self.net_eta
         reweight = self.reweight
+        precond = self.precond
+
+        # lambda-asymmetry diagnostic state (only updated when precond=True).
+        # tracks running mean E[lambda_b1] / E[lambda_b2] across batches;
+        # emits a one-shot UserWarning if the ratio drifts outside [0.1, 10]
+        # after at least _LAM_WARN_AFTER steps. Flags potential gradient
+        # interference under the shared b-phase optimizer.
+        _lam_b1_sum = 0.0
+        _lam_b2_sum = 0.0
+        _lam_step_count = 0
+        _lam_warned = False
+        _LAM_WARN_AFTER = 100
+        _LAM_RATIO_HI = 10.0
+        _LAM_RATIO_LO = 0.1
 
         if self.antithetic:
             def _compute_b(x0, x1, xstar):
+                nonlocal _lam_b1_sum, _lam_b2_sum, _lam_step_count, _lam_warned
                 # sample 2D time via self.time (replaces hardcoded torch.rand)
                 t1, t2, iw = self.time(self.batch_size, self.device)  # [B, 1] each
                 z = torch.randn_like(x0)  # [B, D]
-                outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
-                        else resolve_outer_lambda(False, t1)  # [B, 1]
 
                 # antithetic: build BOTH branches end-to-end via the helper.
                 # x_t_minus = mu - gamma*z, with v*_minus = dmu + dgamma*(-z).
@@ -343,48 +392,100 @@ class TriangularVFM2D(ELDR):
                 )
 
                 # b1 predictions
-                b1_p = net_b1(x_t_p, t1, t2)  # [B, D]
-                b1_m = net_b1(x_t_m, t1, t2)
+                b1_p = b1_fwd(x_t_p, t1, t2)  # [B, D]
+                b1_m = b1_fwd(x_t_m, t1, t2)
                 # b2 predictions
-                b2_p = net_b2(x_t_p, t1, t2)
-                b2_m = net_b2(x_t_m, t1, t2)
+                b2_p = b2_fwd(x_t_p, t1, t2)
+                b2_m = b2_fwd(x_t_m, t1, t2)
 
                 # per-sample b1 loss, 0.5 * (lp + lm) per V1/V2 convention.
                 # iw applied multiplicatively per the sampler's importance
                 # weight; identical to V3 CTSM and the existing 1D V1/V2 vfm.
                 lp_b1 = 0.5 * (b1_p ** 2).sum(dim=-1) - (v1_star_p * b1_p).sum(dim=-1)
                 lm_b1 = 0.5 * (b1_m ** 2).sum(dim=-1) - (v1_star_m * b1_m).sum(dim=-1)
-                per_b1 = 0.5 * (lp_b1 + lm_b1) * outer.squeeze(-1) * iw.squeeze(-1)
+
+                if precond:
+                    out_b1 = lambda_b1(t1, t2)  # [B]
+                    out_b2 = lambda_b2(t1, t2)  # [B]
+                    # lambda-asymmetry diagnostic: track running mean ratio,
+                    # warn once if ratio drifts outside [_LAM_RATIO_LO, _LAM_RATIO_HI]
+                    # after at least _LAM_WARN_AFTER steps.
+                    _lam_b1_sum += out_b1.mean().item()
+                    _lam_b2_sum += out_b2.mean().item()
+                    _lam_step_count += 1
+                    if not _lam_warned and _lam_step_count >= _LAM_WARN_AFTER:
+                        e_b1 = _lam_b1_sum / _lam_step_count
+                        e_b2 = max(_lam_b2_sum / _lam_step_count, 1e-12)
+                        r = e_b1 / e_b2
+                        if r > _LAM_RATIO_HI or r < _LAM_RATIO_LO:
+                            warnings.warn(
+                                f"V3 precond lambda_b1/lambda_b2 ratio = {r:.3f} "
+                                f"after {_lam_step_count} steps; gradient "
+                                f"interference possible under shared b-optimizer. "
+                                f"Consider split optimizers or loss normalization.",
+                                UserWarning, stacklevel=2,
+                            )
+                            _lam_warned = True
+                else:
+                    outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
+                            else resolve_outer_lambda(False, t1)  # [B, 1]
+                    out_b1 = out_b2 = outer.squeeze(-1)  # [B]
+
+                per_b1 = 0.5 * (lp_b1 + lm_b1) * out_b1 * iw.squeeze(-1)
 
                 # per-sample b2 loss
                 lp_b2 = 0.5 * (b2_p ** 2).sum(dim=-1) - (v2_star_p * b2_p).sum(dim=-1)
                 lm_b2 = 0.5 * (b2_m ** 2).sum(dim=-1) - (v2_star_m * b2_m).sum(dim=-1)
-                per_b2 = 0.5 * (lp_b2 + lm_b2) * outer.squeeze(-1) * iw.squeeze(-1)
+                per_b2 = 0.5 * (lp_b2 + lm_b2) * out_b2 * iw.squeeze(-1)
 
                 return per_b1.mean() + per_b2.mean()
         else:
             def _compute_b(x0, x1, xstar):
+                nonlocal _lam_b1_sum, _lam_b2_sum, _lam_step_count, _lam_warned
                 t1, t2, iw = self.time(self.batch_size, self.device)
                 z = torch.randn_like(x0)
-                outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
-                        else resolve_outer_lambda(False, t1)
 
                 x_t, v1_star, v2_star = vfm_velocity_target_2d(
                     path, x0, x1, xstar, t1, t2, z
                 )
 
-                b1_pred = net_b1(x_t, t1, t2)
-                b2_pred = net_b2(x_t, t1, t2)
+                b1_pred = b1_fwd(x_t, t1, t2)
+                b2_pred = b2_fwd(x_t, t1, t2)
+
+                if precond:
+                    out_b1 = lambda_b1(t1, t2)  # [B]
+                    out_b2 = lambda_b2(t1, t2)  # [B]
+                    # lambda-asymmetry diagnostic (same as antithetic branch)
+                    _lam_b1_sum += out_b1.mean().item()
+                    _lam_b2_sum += out_b2.mean().item()
+                    _lam_step_count += 1
+                    if not _lam_warned and _lam_step_count >= _LAM_WARN_AFTER:
+                        e_b1 = _lam_b1_sum / _lam_step_count
+                        e_b2 = max(_lam_b2_sum / _lam_step_count, 1e-12)
+                        r = e_b1 / e_b2
+                        if r > _LAM_RATIO_HI or r < _LAM_RATIO_LO:
+                            warnings.warn(
+                                f"V3 precond lambda_b1/lambda_b2 ratio = {r:.3f} "
+                                f"after {_lam_step_count} steps; gradient "
+                                f"interference possible under shared b-optimizer. "
+                                f"Consider split optimizers or loss normalization.",
+                                UserWarning, stacklevel=2,
+                            )
+                            _lam_warned = True
+                else:
+                    outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
+                            else resolve_outer_lambda(False, t1)  # [B, 1]
+                    out_b1 = out_b2 = outer.squeeze(-1)  # [B]
 
                 per_b1 = (
                     0.5 * (b1_pred ** 2).sum(dim=-1)
                     - (v1_star * b1_pred).sum(dim=-1)
-                ) * outer.squeeze(-1) * iw.squeeze(-1)
+                ) * out_b1 * iw.squeeze(-1)
 
                 per_b2 = (
                     0.5 * (b2_pred ** 2).sum(dim=-1)
                     - (v2_star * b2_pred).sum(dim=-1)
-                ) * outer.squeeze(-1) * iw.squeeze(-1)
+                ) * out_b2 * iw.squeeze(-1)
 
                 return per_b1.mean() + per_b2.mean()
 
@@ -406,22 +507,28 @@ class TriangularVFM2D(ELDR):
             mu = w.alpha * x0 + w.beta * x1 + w.w_star * xstar
             gamma_t = path.gamma(t1, t2)
             x_t = (mu + gamma_t * z).detach()
-            outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
-                    else resolve_outer_lambda(False, t1)
-            eta_pred = net_eta(x_t, t1, t2)
+            eta_pred = eta_fwd(x_t, t1, t2)
+
+            if precond:
+                out_eta = lambda_eta(t1, t2)  # [B]
+            else:
+                outer = outer_path_var_v3(t1, t2, path.gamma) if reweight \
+                        else resolve_outer_lambda(False, t1)  # [B, 1]
+                out_eta = outer.squeeze(-1)  # [B]
+
             per_sample = (
                 0.5 * (eta_pred ** 2).sum(dim=-1) - (z * eta_pred).sum(dim=-1)
-            ) * outer.squeeze(-1) * iw.squeeze(-1)
+            ) * out_eta * iw.squeeze(-1)
             return per_sample.mean()
 
         # build grad-clip param lists
         grad_clip = self.optim.grad_clip_norm
-        b_params = list(net_b1.parameters()) + list(net_b2.parameters())
-        eta_params = list(net_eta.parameters())
+        b_params = list(self.net_b1.parameters()) + list(self.net_b2.parameters())
+        eta_params = list(self.net_eta.parameters())
 
         # train with interleaved optimization
         train_interleaved_3(
-            net_b1, net_b2, net_eta,
+            self.net_b1, self.net_b2, self.net_eta,
             loss_b, loss_eta,
             optim_b, optim_eta,
             n_steps=self.n_steps,
@@ -470,42 +577,57 @@ class TriangularVFM2D(ELDR):
 
         samples = xs.float().to(self.device)  # [n_samples, D]
 
-        # apply ema wrappers
-        if self.ema_b1 is not None:
-            self.ema_b1.apply_to(self.net_b1)
-        if self.ema_b2 is not None:
-            self.ema_b2.apply_to(self.net_b2)
-        if self.ema_eta is not None:
-            self.ema_eta.apply_to(self.net_eta)
-
-        # define time_score_fn callback
-        def time_score_fn(path, ts, samples):
-            """closure over net_b1, net_b2, net_eta, _div_fn.
-
-            args:
-                path: triangularpath2d (passed by predict_ldr_via_curve).
-                ts: [chunk_len, 2] curve points (t1, t2 coordinates).
-                samples: [n_samples, D] test points (broadcast).
-
-            returns:
-                [chunk_len, n_samples, 2] raw per-axis time-scores (s1, s2).
-                chain rule applied inside predict_ldr_via_curve.
-            """
-            # loop over chunk_len; vfm_time_score_2d expects t1, t2 [B,1]
-            # matching samples [B, D] batch dim.
-            m = samples.shape[0]
-            outs = []
-            for i in range(ts.shape[0]):
-                t1_i = ts[i:i+1, 0:1].expand(m, 1)
-                t2_i = ts[i:i+1, 1:2].expand(m, 1)
-                s1, s2 = vfm_time_score_2d(
-                    self.net_b1, self.net_b2, self.net_eta,
-                    path, samples, t1_i, t2_i, self._div_fn,
-                )
-                outs.append(torch.stack([s1, s2], dim=-1))
-            return torch.stack(outs, dim=0)  # [chunk_len, n_samples, 2]
-
         try:
+            # apply ema wrappers inside try for safe restoration
+            if self.ema_b1 is not None:
+                self.ema_b1.apply_to(self.net_b1)
+            if self.ema_b2 is not None:
+                self.ema_b2.apply_to(self.net_b2)
+            if self.ema_eta is not None:
+                self.ema_eta.apply_to(self.net_eta)
+
+            # build precond wrappers if enabled; rebuilt AFTER ema apply so
+            # wrappers see ema-averaged weights.
+            if self.precond:
+                coeff_b1 = make_coeffs_2d(self.path, self._moments, "velocity_1")
+                coeff_b2 = make_coeffs_2d(self.path, self._moments, "velocity_2")
+                coeff_eta = make_coeffs_2d(self.path, self._moments, "noise")
+                b1_use = wrap_2d(self.net_b1, coeff_b1)
+                b2_use = wrap_2d(self.net_b2, coeff_b2)
+                eta_use = wrap_2d(self.net_eta, coeff_eta)
+            else:
+                b1_use = self.net_b1
+                b2_use = self.net_b2
+                eta_use = self.net_eta
+
+            # define time_score_fn callback
+            def time_score_fn(path, ts, samples):
+                """closure over nets and _div_fn.
+
+                args:
+                    path: triangularpath2d (passed by predict_ldr_via_curve).
+                    ts: [chunk_len, 2] curve points (t1, t2 coordinates).
+                    samples: [n_samples, D] test points (broadcast).
+
+                returns:
+                    [chunk_len, n_samples, 2] raw per-axis time-scores (s1, s2).
+                    chain rule applied inside predict_ldr_via_curve.
+                """
+                # loop over chunk_len; vfm_time_score_2d expects t1, t2 [B,1]
+                # matching samples [B, D] batch dim.
+                m = samples.shape[0]
+                outs = []
+                for i in range(ts.shape[0]):
+                    t1_i = ts[i:i+1, 0:1].expand(m, 1)
+                    t2_i = ts[i:i+1, 1:2].expand(m, 1)
+                    s1, s2 = vfm_time_score_2d(
+                        b1_use, b2_use, eta_use,
+                        path, samples, t1_i, t2_i, self._div_fn,
+                    )
+                    outs.append(torch.stack([s1, s2], dim=-1))
+                return torch.stack(outs, dim=0)  # [chunk_len, n_samples, 2]
+
+            # existing inference call (UNCHANGED -- still inside try)
             ldr = predict_ldr_via_curve(
                 time_score_fn=time_score_fn,
                 path=self.test_path,
@@ -516,7 +638,7 @@ class TriangularVFM2D(ELDR):
             )
             return ldr  # [n_samples] on CPU
         finally:
-            # restore original weights if ema was applied
+            # restore original weights if ema was applied (UNCHANGED)
             if self.ema_b1 is not None:
                 self.ema_b1.restore(self.net_b1)
             if self.ema_b2 is not None:

@@ -129,6 +129,15 @@ Coeffs = NamedTuple('Coeffs', [
 ])
 
 
+Coeffs2D = NamedTuple('Coeffs2D', [
+    ('c_in', Tensor),        # [B, D] per-dim input gain
+    ('c_out', Tensor),       # [B, D] per-dim output gain
+    ('c_skip', Tensor),      # [B, D] per-dim skip connection
+    ('c_noise_1', Tensor),   # [B, 1] first axis log-time embedding
+    ('c_noise_2', Tensor),   # [B, 1] second axis log-time embedding
+])
+
+
 def make_coeffs(interp, moments: Moments, target_kind: str) -> Callable:
     """build closure tau -> Coeffs via the unifying EDM formula.
 
@@ -266,6 +275,103 @@ def make_coeffs(interp, moments: Moments, target_kind: str) -> Callable:
         return coeff_fn_vfm
 
 
+def make_coeffs_2d(path, moments: Moments, target_kind: str) -> Callable:
+    """build closure (t1, t2) -> Coeffs2D via TriangularPath2D.
+
+    unifying formula (all targets):
+    c_in = Var[x_t]^{-1/2}
+    c_skip = Cov[x_t, y] / Var[x_t]
+    c_out^2 = Var[y] - Cov[x_t, y]^2 / Var[x_t]
+    c_noise_1, c_noise_2 = separate 0.25 * ln(t1), 0.25 * ln(t2)
+
+    moments must contain keys "x0", "x1", "xstar" for all target kinds.
+    (unlike 1D, where xstar is optional). raises ValueError if any key missing.
+
+    Args:
+        path: TriangularPath2D with weights(t1, t2), gamma(t1, t2),
+              dgamma_dt1(t1, t2), dgamma_dt2(t1, t2).
+        moments: pre-computed Moments from endpoint_moments().
+                 keys: "x0", "x1", "xstar" (validate at build time).
+        target_kind: "velocity_1", "velocity_2", or "noise".
+
+    Returns:
+        closure (t1, t2) [B, 1] x [B, 1] -> Coeffs2D with all shapes [B, D] or [D].
+
+    arithmetic is plain tensor ops (no torch.no_grad, no .detach): coeffs remain
+    t1, t2-differentiable.
+    """
+
+    # validate at build time: moments must have all keys
+    required_keys = {"x0", "x1", "xstar"}
+    if not required_keys.issubset(moments.var.keys()):
+        missing = required_keys - moments.var.keys()
+        raise ValueError(f"make_coeffs_2d: moments missing keys {missing}; got {moments.var.keys()}")
+
+    def coeff_fn_2d(t1: Tensor, t2: Tensor) -> Coeffs2D:
+        """(t1, t2) [B, 1] x [B, 1] -> Coeffs2D."""
+        # extract weights: nt.alpha, nt.beta, nt.w_star, nt.d_alpha_dt1, nt.d_beta_dt1, nt.d_w_star_dt1, nt.d_alpha_dt2, etc
+        w_nt = path.weights(t1, t2)  # [B, 1] per component
+        gamma = path.gamma(t1, t2)  # [B, 1]
+        dgamma_dt1 = path.dgamma_dt1(t1, t2)  # [B, 1]
+        dgamma_dt2 = path.dgamma_dt2(t1, t2)  # [B, 1]
+
+        # weight dicts: {name: [B, 1]}
+        w_dict = {
+            "x0": w_nt.alpha,
+            "x1": w_nt.beta,
+            "xstar": w_nt.w_star,
+        }
+
+        # dispatch on target_kind to build dw_dict and var_y
+        if target_kind == "velocity_1":
+            dw_dict = {
+                "x0": w_nt.d_alpha_dt1,
+                "x1": w_nt.d_beta_dt1,
+                "xstar": w_nt.d_w_star_dt1,
+            }
+            dg = dgamma_dt1  # [B, 1]
+            cov_xt_y = _bilinear(w_dict, dw_dict, moments) + gamma * dg  # [D]
+            var_y = _bilinear(dw_dict, dw_dict, moments) + dg ** 2  # [D]
+
+        elif target_kind == "velocity_2":
+            dw_dict = {
+                "x0": w_nt.d_alpha_dt2,
+                "x1": w_nt.d_beta_dt2,
+                "xstar": w_nt.d_w_star_dt2,
+            }
+            dg = dgamma_dt2  # [B, 1]
+            cov_xt_y = _bilinear(w_dict, dw_dict, moments) + gamma * dg  # [D]
+            var_y = _bilinear(dw_dict, dw_dict, moments) + dg ** 2  # [D]
+
+        elif target_kind == "noise":
+            # Cov[x_t, y] = gamma, Var[y] = 1
+            cov_xt_y = gamma  # [B, 1]
+            var_y = 1.0  # scalar
+
+        else:
+            raise ValueError(f"unsupported target_kind for 2D: {target_kind}")
+
+        # always compute Var[x_t]
+        var_xt = _bilinear(w_dict, w_dict, moments) + gamma ** 2  # [D]
+
+        # unifying formula with two clamps
+        var_xt = torch.clamp(var_xt, min=_EPS_VAR)  # [D] or [B, D]
+        c_in = 1.0 / torch.sqrt(var_xt)  # [D] or [B, D]
+        c_skip = cov_xt_y / var_xt  # [D] or [B, D]
+        c_out_sq = var_y - cov_xt_y ** 2 / var_xt  # [D] or [B, D]
+        c_out_sq = torch.clamp(c_out_sq, min=_EPS_COUT2)
+        c_out = torch.sqrt(c_out_sq)  # [D] or [B, D]
+
+        # separate log-time embeddings for t1 and t2
+        c_noise_1 = 0.25 * torch.log(torch.clamp(t1, min=_EPS_VAR))  # [B, 1]
+        c_noise_2 = 0.25 * torch.log(torch.clamp(t2, min=_EPS_VAR))  # [B, 1]
+
+        return Coeffs2D(c_in=c_in, c_out=c_out, c_skip=c_skip,
+                        c_noise_1=c_noise_1, c_noise_2=c_noise_2)
+
+    return coeff_fn_2d
+
+
 def make_lambda(coeff_fn: Callable) -> Callable:
     """build closure tau -> lambda = 1 / mean_D(c_out^2).
 
@@ -286,6 +392,28 @@ def make_lambda(coeff_fn: Callable) -> Callable:
         return 1.0 / cout2_mean
 
     return lambda_fn
+
+
+def make_lambda_2d(coeff_fn: Callable) -> Callable:
+    """build closure (t1, t2) -> lambda = 1 / mean_D(c_out^2).
+
+    computes the per-sample EDM loss weight for 2D interpolants.
+    the mean over dimension D yields a uniform effective training weight across
+    the (t1, t2) domain (parallel to 1D uniform effective loss weight property).
+
+    Args:
+        coeff_fn: closure (t1, t2) -> Coeffs2D.
+
+    Returns:
+        closure (t1, t2) [B, 1] x [B, 1] -> [B] per-sample lambda values.
+    """
+    def lambda_fn_2d(t1: Tensor, t2: Tensor) -> Tensor:
+        coeffs = coeff_fn(t1, t2)
+        # c_out [B, D]; mean over D -> [B]
+        cout2_mean = (coeffs.c_out ** 2).mean(dim=-1)
+        return 1.0 / cout2_mean
+
+    return lambda_fn_2d
 
 
 def wrap(net: Callable, coeff_fn: Callable) -> Callable:
@@ -429,3 +557,30 @@ def wrap_fm(net: Callable, coeff_fn_v: Callable, coeff_fn_s: Callable, *,
             return self
 
     return FMWrapper()
+
+
+def wrap_2d(net: Callable, coeff_fn: Callable) -> Callable:
+    """precondition 2D network via D(x_t, t1, t2) = c_skip*x + c_out*F(c_in*x, c_noise_1, c_noise_2).
+
+    the wrapper is parameter-free and vmap-safe (all-or-nothing). forward_pass
+    reconstructs coefficients from (t1, t2) and runs the preconditioned network.
+
+    space-first: the wrapped callable has signature (x, t1, t2) -- a drop-in
+    replacement for the raw MLP2D nets, which are called net(x, t1, t2) by the
+    loss closures and by inference code. the inner net call is also space-first:
+    net(c_in*x, c_noise_1, c_noise_2).
+
+    Args:
+        net: callable (x_precond, c_noise_1, c_noise_2) -> F_theta(x_precond, c_noise_1, c_noise_2).
+        coeff_fn: closure (t1, t2) -> Coeffs2D.
+
+    Returns:
+        callable (x, t1, t2) -> D(x, t1, t2) with x [B, D], t1 [B, 1], t2 [B, 1].
+    """
+    def forward(x: Tensor, t1: Tensor, t2: Tensor) -> Tensor:
+        coeffs = coeff_fn(t1, t2)
+        x_in = coeffs.c_in * x  # [B, D]
+        f_out = net(x_in, coeffs.c_noise_1, coeffs.c_noise_2)  # [B, D]
+        return coeffs.c_skip * x + coeffs.c_out * f_out  # [B, D]
+
+    return forward
