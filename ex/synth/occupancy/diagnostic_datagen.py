@@ -471,29 +471,35 @@ def _first_full_cell(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
 
 
 def plot_discrete_vs_smoothed(ax,
-                              cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
-                              n_per_cell: int = 200) -> None:
-    """scatter discrete vs smoothed LDR samples across cells.
+                              cells: Dict[Tuple[int, int], List[Dict[str, Any]]]) -> None:
+    """hexbin density of discrete vs smoothed LDR samples, pooled over cells.
 
-    args:
-      ax: axes.
-      cells: per-cell records.
-      n_per_cell: subsample to keep plot manageable.
+    smoothing compresses the LDR scale (smoothed std typically << discrete
+    std); hexbin density reveals whether the relationship is tight or
+    spread, and where mass concentrates. no y=x reference -- smoothing is
+    not expected to be identity.
     """
-    rng = np.random.RandomState(0)
-    for (_, _), recs in cells.items():
+    discs, smos = [], []
+    for recs in cells.values():
         for r in recs:
-            disc = r.get("true_ldrs_discrete")
-            smo = r.get("true_ldrs_smoothed")
-            if disc is None or smo is None:
+            d = r.get("true_ldrs_discrete")
+            s = r.get("true_ldrs_smoothed")
+            if d is None or s is None:
                 continue
-            n = min(n_per_cell, len(disc))
-            idx = rng.choice(len(disc), n, replace=False)
-            ax.scatter(disc[idx], smo[idx], s=2, alpha=0.15, color="tab:blue")
-    ax.plot(ax.get_xlim(), ax.get_xlim(), "k--", alpha=0.4)
+            discs.append(d)
+            smos.append(s)
+    if not discs:
+        ax.text(0.5, 0.5, "no (discrete, smoothed) pairs available",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return
+    D = np.concatenate(discs)
+    S = np.concatenate(smos)
+    hb = ax.hexbin(D, S, gridsize=40, cmap="viridis", mincnt=1)
+    plt.colorbar(hb, ax=ax, fraction=0.046, label="cell count")
     ax.set_xlabel("discrete LDR")
     ax.set_ylabel("smoothed LDR")
-    ax.set_title("discrete vs smoothed LDR (encoding-dependent smoothing)")
+    ax.set_title("discrete vs smoothed LDR density")
 
 
 # ----------------------------------------------------------------------
