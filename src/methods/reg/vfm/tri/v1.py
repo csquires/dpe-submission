@@ -61,6 +61,7 @@ class TriangularVFMV1(ELDR):
         gamma_min: float = 0.0,
         test_inner_eps: float = 0.0,
         test_gamma_min: float = 0.0,
+        test_vertex_band: float = 0.0,
         precond: bool = False,
     ) -> None:
         """barycentric VFM on triangular path; defaults use k and vertex if path is None."""
@@ -80,16 +81,9 @@ class TriangularVFMV1(ELDR):
                 inner_eps=test_inner_eps, gamma_min=test_gamma_min, eps=1e-3,
             )
 
-        # f2/f3 sampler/path inner_eps consistency check
-        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
-        if (samp_ie > 0) != (inner_eps > 0):
-            warnings.warn(
-                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
-                "Probably unintentional.", UserWarning, stacklevel=2,
-            )
-        elif samp_ie > 0 and inner_eps > 0:
-            assert abs(samp_ie - inner_eps) < 1e-9, \
-                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
+        # note: the old sampler/path inner_eps consistency check was removed
+        # because sampler vertex_band and path inner_eps are now independent
+        # knobs (sampler-side vertex excision vs path-side local_tau clamp).
 
         # validate and store path/time/curve/integrator slots
         _validate_and_store_slots(
@@ -109,6 +103,9 @@ class TriangularVFMV1(ELDR):
         self.gamma_min = gamma_min
         self.test_inner_eps = test_inner_eps
         self.test_gamma_min = test_gamma_min
+        # vertex_band geometry: sampler/inference excision around the vertex,
+        # decoupled from the path's local_tau clamp (inner_eps).
+        self.test_vertex_band = test_vertex_band
 
         # store network hyperparameters for hpo introspection
         self.hidden_dim = hidden_dim
@@ -349,14 +346,14 @@ class TriangularVFMV1(ELDR):
                 out.append(vfm_time_score_1d(net_b_use, net_eta_use, path, x, tau_i, self._div_fn))
             return torch.stack(out, dim=0)
 
-        # excise the band around the vertex when the test path's coordinate
-        # clamp is active. mirrors the training sampler's excised band so we
-        # never query the net at tau values the train sampler excluded.
+        # excise the vertex band when the train sampler excised one. mirrors
+        # the training sampler's excised band so we never query the net at
+        # tau values the train sampler excluded.
         excise = None
-        if self.test_inner_eps > 0.0:
+        if self.test_vertex_band > 0.0:
             v = float(self.vertex)
-            lo = max(self.test_path.eps, v - self.test_inner_eps)
-            hi = min(1.0 - self.test_path.eps, v + self.test_inner_eps)
+            lo = max(self.test_path.eps, v - self.test_vertex_band)
+            hi = min(1.0 - self.test_path.eps, v + self.test_vertex_band)
             if lo < hi:
                 excise = (lo, hi)
 

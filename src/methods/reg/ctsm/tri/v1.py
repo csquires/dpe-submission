@@ -42,6 +42,7 @@ class TriangularCTSMV1(ELDR):
         gamma_min: float = 0.0,
         test_inner_eps: float = 0.0,
         test_gamma_min: float = 0.0,
+        test_vertex_band: float = 0.0,
         hidden_dim: int = 256,
         n_hidden_layers: int = 3,
         n_steps: int = 1000,
@@ -81,16 +82,9 @@ class TriangularCTSMV1(ELDR):
                 eps=1e-3
             )
 
-        # F2/F3: sampler/path inner_eps consistency
-        samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
-        if (samp_ie > 0) != (inner_eps > 0):
-            warnings.warn(
-                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
-                "Probably unintentional.", UserWarning, stacklevel=2,
-            )
-        elif samp_ie > 0 and inner_eps > 0:
-            assert abs(samp_ie - inner_eps) < 1e-9, \
-                f"sampler/path inner_eps mismatch: {samp_ie} vs {inner_eps}"
+        # note: the old sampler/path inner_eps consistency check was removed
+        # because sampler vertex_band and path inner_eps are now independent
+        # knobs (sampler-side vertex excision vs path-side local_tau clamp).
 
         # F4: inactive gamma_min warning (CTSM-style sigma paths only)
         if inner_eps > 0 and gamma_min > 0:
@@ -143,6 +137,9 @@ class TriangularCTSMV1(ELDR):
         self.gamma_min = gamma_min
         self.test_inner_eps = test_inner_eps
         self.test_gamma_min = test_gamma_min
+        # vertex_band geometry: sampler/inference excision around the vertex,
+        # decoupled from the path's local_tau clamp (inner_eps).
+        self.test_vertex_band = test_vertex_band
 
         # step 6: store network scalars
         self.hidden_dim = hidden_dim
@@ -262,16 +259,15 @@ class TriangularCTSMV1(ELDR):
                     results.append(self.model(samples, tau_batch))  # [n_samples, 1]
                 return torch.stack(results, dim=0).squeeze(-1)  # [chunk_len, n_samples]
 
-            # step 5: invoke unified integrator. when the test path has a
-            # non-zero coordinate clamp around the vertex, excise the same band
-            # from the inference linspace so we never query the net at tau values
-            # the train sampler excluded.
+            # step 5: invoke unified integrator. when the train sampler excises
+            # a vertex_band, mirror the same excision on the inference linspace
+            # so we never query the net at tau values the train sampler excluded.
             from ...common._predict_ldr import predict_ldr_via_curve
             excise = None
-            if self.test_inner_eps > 0.0:
+            if self.test_vertex_band > 0.0:
                 v = float(self.vertex)
-                lo = max(self.test_path.eps, v - self.test_inner_eps)
-                hi = min(1.0 - self.test_path.eps, v + self.test_inner_eps)
+                lo = max(self.test_path.eps, v - self.test_vertex_band)
+                hi = min(1.0 - self.test_path.eps, v + self.test_vertex_band)
                 if lo < hi:
                     excise = (lo, hi)
             ldr = predict_ldr_via_curve(
