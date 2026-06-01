@@ -89,11 +89,31 @@ class OccupancyAdapter(ExperimentAdapter):
         """return resolved encoding subdir path."""
         return self._data_dir
 
+    # historical fix: the seed=0 h5 at (k1_idx=0, beta_idx=0) was overwritten
+    # 2026-05-19 by a 10-sample smoke probe (legit datagen would write 5000
+    # samples + full attrs). seed=40 was generated 2026-06-01 with the proper
+    # step1_create_data.py as a same-(k1, beta) replacement, at the same
+    # position in the stratified-split input order so train/holdout assignments
+    # for other cells stay stable.
+    _SEED_SUBSTITUTIONS: dict[tuple[int, int], dict[int, int]] = {
+        (0, 0): {0: 40},
+    }
+
     def cell_pool(self) -> list[tuple[int, int, int]]:
-        """return [(k1, b, s)] for k1 in n_k1, b in n_beta, s in n_seeds."""
+        """return [(k1, b, s)] for k1 in n_k1, b in n_beta, s in n_seeds.
+
+        applies `_SEED_SUBSTITUTIONS` to swap out any specific (k1, b, s) cells
+        that are known to be bad on disk (see class-level note).
+        """
         n_k1 = len(self._k1_values)
         n_beta = len(self._beta_values)
-        return list(itertools.product(range(n_k1), range(n_beta), range(self._n_seeds)))
+        cells = []
+        for k1 in range(n_k1):
+            for b in range(n_beta):
+                subs = self._SEED_SUBSTITUTIONS.get((k1, b), {})
+                for s in range(self._n_seeds):
+                    cells.append((k1, b, subs.get(s, s)))
+        return cells
 
     def load_cell_data(self, cell: tuple[int, int, int], device: str) -> dict[str, torch.Tensor]:
         """load one (k1_idx, beta_idx, seed) cell from h5 file.
