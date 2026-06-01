@@ -75,22 +75,15 @@ def endpoint_moments(samples: dict[str, Tensor]) -> Moments:
             raise ValueError(f"endpoint_moments: {name} has ~0 variance; check data distribution")
         var_dict[name] = v
 
-    # compute covariances (sorted tuple keys)
+    # build covariance dict 
     cov_dict = {}
     names = sorted(data.keys())
     for i, name_i in enumerate(names):
         for name_j in names[i:]:
-            xi, xj = data[name_i], data[name_j]
-            N = xi.shape[0]
             if name_i == name_j:
-                # diagonal: variance (same computation)
-                cov = xi.var(dim=0, correction=1)  # [D]
+                cov_dict[(name_i, name_j)] = var_dict[name_i]
             else:
-                # off-diagonal: cross-covariance
-                xi_c = xi - xi.mean(0)  # [N, D] centered
-                xj_c = xj - xj.mean(0)  # [N, D] centered
-                cov = (xi_c * xj_c).sum(0) / (N - 1)  # [D] unbiased covariance
-            cov_dict[(name_i, name_j)] = cov
+                cov_dict[(name_i, name_j)] = torch.zeros_like(var_dict[name_i])
 
     return Moments(var=var_dict, cov=cov_dict)
 
