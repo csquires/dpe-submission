@@ -119,7 +119,7 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
     hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 2e-1, log=True)
 
     if psb:
         # V1-only: vertex_band controls sampler-side vertex excision and
@@ -162,9 +162,11 @@ def suggest_hp_v2(trial: optuna.Trial) -> dict[str, Any]:
 def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularCTSM V3 (2D stacked path + LowArcCurve2D).
 
-    no time-sampling knobs (the builder hardcodes a product of uniforms). adds
-    t2_max + path_height (path_height is inference-only). conditional: k
-    (stiff). gamma_min always searched.
+    reweight pinned to True (1/gamma^2 is the analytic answer for CTSM time-score
+    regression; no longer a search dimension). No precond (CTSM has no precond
+    plumbing). no time-sampling knobs (the builder hardcodes a product of uniforms).
+    adds t2_max + path_height (path_height is inference-only). conditional: k (stiff).
+    gamma_min always searched.
     """
     hp: dict[str, Any] = {}
     _common_optim(trial, hp)
@@ -175,7 +177,10 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     hp["sched"] = sched
     hp["t2_max"] = trial.suggest_float("t2_max", 0.6, 0.9)
     hp["path_height"] = trial.suggest_float("path_height", 1.0, 2.0)
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 2e-1, log=True)
+    hp["reweight"] = True  # pinned True for V3 CTSM (per user direction 2026-05-31):
+    # 1/gamma^2 is the analytically-correct outer weight for time-score regression
+    # targets. don't search.
 
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])

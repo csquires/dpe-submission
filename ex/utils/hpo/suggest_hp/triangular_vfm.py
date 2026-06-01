@@ -25,8 +25,8 @@ inertness edges (probe + static):
     sampler (every TIME_DISTS value applied per leg), so time_dist is
     unconditional (see notes/triangular_v1_time_dist_coupling.md).
   - apply_iw inert when time_dist == "uniform".
-  - reweight gated on precond == False (mirrors stock VFM: the precond=True
-    EDM-lambda path masks it). all three versions search precond.
+  - reweight pinned to False for all variants; precond is the principled
+    outer-weighting mechanism. all three versions search precond.
   - V3 (TriangularVFM2D) has no precond support and no time-sampling knobs;
     path_height is inference-only (curve used only in predict_ldr).
 
@@ -117,7 +117,7 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
     hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 2e-1, log=True)
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 
@@ -130,8 +130,9 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
 
-    if not precond:
-        hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
+    # reweight pinned to False for all TriangularVFM variants (user direction
+    # 2026-05-31); precond is the principled outer-weight mechanism.
+    hp["reweight"] = False
 
     time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
     hp["time_dist"] = time_dist
@@ -146,8 +147,8 @@ def suggest_hp_v1(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularVFM V1 (piecewise-SB path, searched vertex + vertex_band).
 
     switches: sched, time_dist, precond. always: vertex_band,
-    test_vertex_band_offset, gamma_min. conditional: k (stiff), reweight
-    (precond==False), apply_iw (time_dist != uniform).
+    test_vertex_band_frac, gamma_min. reweight pinned to False. conditional:
+    k (stiff), apply_iw (time_dist != uniform).
     """
     return _suggest_1d(trial, psb=True)
 
@@ -155,9 +156,8 @@ def suggest_hp_v1(trial: optuna.Trial) -> dict[str, Any]:
 def suggest_hp_v2(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularVFM V2 (barycentric path, searched vertex, searched precond).
 
-    switches: sched, time_dist, precond. always: vertex, gamma_min.
-    conditional: k (stiff), reweight (precond==False), apply_iw (time_dist !=
-    uniform).
+    switches: sched, time_dist, precond. always: vertex, gamma_min. reweight
+    pinned to False. conditional: k (stiff), apply_iw (time_dist != uniform).
     """
     return _suggest_1d(trial, psb=False)
 
@@ -165,10 +165,12 @@ def suggest_hp_v2(trial: optuna.Trial) -> dict[str, Any]:
 def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularVFM V3 (2D stacked path + LowArcCurve2D).
 
-    searches precond and gates reweight on not-precond (mirrors V1/V2 pattern).
+    precond searched (True/False); reweight pinned to False (no longer a
+    search dimension); gamma_min pinned to 0 (per user direction 2026-05-31:
+    V3 VFM doesn't need the floor since precond + outer_path_var_v3's own
+    gamma_eps cover the 1/gamma^2 stability concern).
     no time-sampling knobs (the builder hardcodes a product of uniforms).
-    adds t2_max + path_height (inference-only). conditional: k (stiff),
-    reweight (precond==False).
+    adds t2_max + path_height (inference-only). conditional: k (stiff).
     """
     hp: dict[str, Any] = {}
     _common(trial, hp)
@@ -177,11 +179,10 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     hp["sched"] = sched
     hp["t2_max"] = trial.suggest_float("t2_max", 0.6, 0.9)
     hp["path_height"] = trial.suggest_float("path_height", 1.0, 2.0)
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    hp["gamma_min"] = 0.0
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
-    if not precond:
-        hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
+    hp["reweight"] = False
 
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
