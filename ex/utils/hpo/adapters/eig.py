@@ -119,12 +119,14 @@ class EIGAdapter(ExperimentAdapter):
           1. load cell data if not cached.
           2. build joint=(theta, y), shuffled=independent-marginal product, and
              precompute true_ldrs at the joint samples.
-          3. derive a per-trial seed and split (joint, true_ldrs) for early
-             stopping; the unsplit pair is used for the final metric.
-          4. build the estimator. triangular methods (requires_pstar=True)
+          3. build the estimator. triangular methods (requires_pstar=True)
              use joint as pstar.
-          5. forward step_cb / eval_data / step_cb_interval to est.fit.
-          6. return MAE on the full joint sample.
+          4. forward step_cb / eval_data / step_cb_interval to est.fit. when
+             trial_number is set, eval_data uses the full (joint, true_ldrs);
+             we do not hold out a slice -- the trainer already touches every
+             joint row, so a fictional split adds nothing and only risks
+             size-misalignment downstream.
+          5. return MAE on the full joint sample.
         """
         if data is None:
             data = self.load_cell_data(cell, device=device)
@@ -134,13 +136,9 @@ class EIGAdapter(ExperimentAdapter):
             theta, y, data["mu_pi"], data["Sigma_pi"], data["xi"]
         )
 
-        # within-cell split for pruning eval_fn
         eval_data = None
         if trial_number is not None:
-            seed = hash((trial_number, cell)) & 0xFFFFFFFF
-            split_in = {"pstar": joint, "true_ldrs": true_ldrs}
-            _, eval_part = self.split_for_eval_seeded(split_in, seed=seed)
-            eval_data = {k: v.to(device) for k, v in eval_part.items()}
+            eval_data = {"pstar": joint, "true_ldrs": true_ldrs}
 
         nwp = hyperparams.get("num_waypoints", self.num_waypoints() or 0)
         flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}

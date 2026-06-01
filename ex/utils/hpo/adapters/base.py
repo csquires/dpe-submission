@@ -209,10 +209,13 @@ class ExperimentAdapter(abc.ABC):
         if data is provided (cpu_runner cache path), reuse it; else load
         from h5 via load_cell_data.
 
-        if trial_number is not None, compute a per-trial seed and split
-        eval data for early stopping / pruning. eval_data is moved to device
-        before forwarding to est.fit. else, eval_data=None and full data is
-        used for training.
+        the trainer receives the full cell tensors (no split). when
+        trial_number is set, eval_data for the pruning callback also uses
+        the same full pstar/true_ldrs -- triangular methods already train
+        on every pstar row (requires_pstar=True), so a "held-out" eval
+        slice is fictional anyway, and aligning pstar/p0/p1 sizes avoids
+        the broadcast surface in endpoint_moments-style preconditioners
+        (see src/methods/reg/common/_precond.py).
 
         step_cb and step_cb_interval are forwarded to est.fit for iterative
         methods (BDRE, FMDRE); tabular methods pass step_cb=None and ignore
@@ -220,34 +223,24 @@ class ExperimentAdapter(abc.ABC):
 
         plan:
           1. data = data or load_cell_data(cell, device).
-          2. if trial_number is not None:
-             - seed = hash((trial_number, cell)) & 0xFFFFFFFF
-             - train_data, eval_data = _split_for_eval(data, seed=seed)
-             - move every tensor in eval_data to device
-          3. else: train_data = data, eval_data = None
-          4. build estimator: pop num_waypoints from hp, pass remaining via **flat.
-          5. fit estimator:
-             - if requires_pstar: est.fit(train_data["p0"], train_data["p1"],
-               train_data["pstar"], step_cb=step_cb, eval_data=eval_data,
-               step_cb_interval=step_cb_interval)
-             - else: est.fit(train_data["p0"], train_data["p1"],
-               step_cb=step_cb, eval_data=eval_data, step_cb_interval=step_cb_interval)
-          6. predict_ldr(pstar) on FULL data (not eval_data) and mae vs true_ldrs.
+          2. eval_data = {"pstar": data["pstar"], "true_ldrs": data["true_ldrs"]}
+             if trial_number is not None else None.
+          3. build estimator: pop num_waypoints from hp, pass remaining via **flat.
+          4. fit estimator on the full data dict (no truncation):
+             - if requires_pstar: est.fit(data["p0"], data["p1"], data["pstar"],
+               step_cb=step_cb, eval_data=eval_data, step_cb_interval=...)
+             - else: est.fit(data["p0"], data["p1"], step_cb=step_cb,
+               eval_data=eval_data, step_cb_interval=...)
+          5. predict_ldr(data["pstar"]) and mae vs true_ldrs.
         """
         if data is None:
             data = self.load_cell_data(cell, device=device)
 
-        # derive eval split (within-cell held-out slice for early stopping)
         if trial_number is not None:
-            seed = hash((trial_number, cell)) & 0xFFFFFFFF
-            train_data, eval_data = _split_for_eval(data, seed=seed)
-            # adapter is responsible for device hop on eval_data
-            eval_data = {k: v.to(device) for k, v in eval_data.items()}
+            eval_data = {"pstar": data["pstar"], "true_ldrs": data["true_ldrs"]}
         else:
-            train_data = data
             eval_data = None
 
-        # build estimator
         nwp = hyperparams.get("num_waypoints", self.num_waypoints())
         flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
         est = builder(
@@ -257,26 +250,24 @@ class ExperimentAdapter(abc.ABC):
             **flat,
         )
 
-        # fit on training data (train_data has full p0, p1 but possibly truncated pstar/true_ldrs)
         if requires_pstar:
             est.fit(
-                train_data["p0"],
-                train_data["p1"],
-                train_data["pstar"],
+                data["p0"],
+                data["p1"],
+                data["pstar"],
                 step_cb=step_cb,
                 eval_data=eval_data,
                 step_cb_interval=step_cb_interval,
             )
         else:
             est.fit(
-                train_data["p0"],
-                train_data["p1"],
+                data["p0"],
+                data["p1"],
                 step_cb=step_cb,
                 eval_data=eval_data,
                 step_cb_interval=step_cb_interval,
             )
 
-        # evaluate on FULL pstar / true_ldrs (not eval_data)
         with torch.no_grad():
             predicted = est.predict_ldr(data["pstar"])
             return float(torch.abs(predicted.cpu() - data["true_ldrs"].cpu()).mean())
