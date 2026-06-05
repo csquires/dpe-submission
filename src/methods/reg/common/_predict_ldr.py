@@ -121,36 +121,33 @@ def _integrate_leg(
     inner kernel of predict_ldr_via_curve; identical math to the single-leg case but
     parameterised by explicit tau bounds so the two-leg excision case can reuse it.
     """
-    # build tau grid for this leg
-    tau = torch.linspace(
-        tau_lo,
-        tau_hi,
-        steps=n_points,
-        device=samples.device,
-        dtype=samples.dtype,
-    )
+    with torch.no_grad():
+        tau = torch.linspace(
+            tau_lo,
+            tau_hi,
+            steps=n_points,
+            device=samples.device,
+            dtype=samples.dtype,
+        )
 
-    # evaluate curve at tau
-    ts = curve.points(tau)        # [n_points, curve.dim]
-    dts = curve.derivatives(tau)  # [n_points, curve.dim]
+        ts = curve.points(tau)
+        dts = curve.derivatives(tau)
 
-    # compute chunked time-scores
-    n_samples = samples.shape[0]
-    chunk_size = max(1, 100000 // n_samples)
+        n_samples = samples.shape[0]
+        chunk_size = max(1, 100000 // n_samples)
 
-    scores_chunks = []
-    for i in range(0, n_points, chunk_size):
-        ts_chunk = ts[i : i + chunk_size]
-        chunk_out = time_score_fn(path, ts_chunk, samples)
-        scores_chunks.append(chunk_out)
+        scores_chunks = []
+        for i in range(0, n_points, chunk_size):
+            ts_chunk = ts[i : i + chunk_size]
+            chunk_out = time_score_fn(path, ts_chunk, samples)
+            scores_chunks.append(chunk_out)
 
-    scores = torch.cat(scores_chunks, dim=0)
+        scores = torch.cat(scores_chunks, dim=0)
 
-    # chain rule for 2D curves
-    if scores.dim() == 3:
-        combined = (scores * dts.unsqueeze(1)).sum(dim=-1)
-    else:
-        combined = scores
+        if scores.dim() == 3:
+            combined = (scores * dts.unsqueeze(1)).sum(dim=-1)
+        else:
+            combined = scores
 
-    integral = integrator(combined, tau)
-    return -integral.cpu()
+        integral = integrator(combined, tau)
+        return -integral.cpu()
