@@ -83,16 +83,14 @@ LANES: dict[str, LaneProfile] = {
     ),
     # holdout: same array partition + cores=1 shape as "array", but a smaller
     # 8-cpu/8-trial footprint so each slurm element backfills into scattered
-    # idle cores and the array_qos MaxTRESPU=cpu=256 cap admits 32 concurrent
-    # elements (256/8) instead of 8 (256/32). mem scaled to the proven ~4G/trial
-    # envelope (8*4=32G). only submit_holdout.sh reads this; the optuna worker
-    # stays on "array".
+    # idle cores. Only submit_holdout.sh reads this; the optuna worker stays
+    # on "array".
     "holdout": LaneProfile(
         partition="array",
         qos="",
         gpus=0,
         cpus_per_task=8,
-        mem="32G",
+        mem="64G",
         batch_size=8,
         worker_walltime="18:00:00",
         max_concurrent=96,
