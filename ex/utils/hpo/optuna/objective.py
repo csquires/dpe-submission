@@ -11,6 +11,30 @@ import optuna
 from ex.utils.hpo.suggest_hp import get_metadata, suggest_hp
 
 
+def _hyperband_rungs(pruner) -> frozenset[int]:
+    """geometric rung set {min*eta^k} clipped to [min, max] for HyperbandPruner.
+
+    union of all bracket rungs, since the estimator's step counter has no
+    knowledge of which bracket the trial belongs to. firing at non-rung
+    steps would still load eval_fn (the expensive part); firing only on
+    rungs is the right granularity for `should_prune`.
+
+    falls back to interval=50 (returned as a sentinel empty set means caller
+    should keep the int default) when pruner is not HyperbandPruner.
+    """
+    if not isinstance(pruner, optuna.pruners.HyperbandPruner):
+        return frozenset()
+    mn = pruner._min_resource
+    mx = pruner._max_resource
+    eta = pruner._reduction_factor
+    rungs = []
+    r = mn
+    while r <= mx:
+        rungs.append(int(r))
+        r *= eta
+    return frozenset(rungs)
+
+
 def stratified_pick(
     pool: list[tuple],
     stratify_fn: Optional[Callable],
@@ -127,6 +151,12 @@ def make_objective(adapter, method: str, builder, study_seed: int,
         else:
             step_cb = None
 
+        # 6b. only fire step_cb on Hyperband rung boundaries (eval_fn is
+        # expensive; non-rung reports are stored but never acted on).
+        # fall back to interval=50 if pruner is not HyperbandPruner.
+        rungs = _hyperband_rungs(trial.study.pruner)
+        step_cb_interval = rungs if rungs else 50
+
         # 7. call adapter.eval_cell
         try:
             metric = adapter.eval_cell(
@@ -138,7 +168,7 @@ def make_objective(adapter, method: str, builder, study_seed: int,
                 adapter.device(),
                 step_cb=step_cb,
                 trial_number=trial.number,
-                step_cb_interval=50,
+                step_cb_interval=step_cb_interval,
             )
         except (RuntimeError, ValueError, AttributeError) as e:
             # an OOM or missing-device crash is an infrastructure fault, not a
