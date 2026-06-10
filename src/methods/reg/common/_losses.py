@@ -466,7 +466,17 @@ def tri_tsm_loss(
     x_t = sqrt_t * x0 + t * x1
     x_tau = sqrt_tp * x_t + t_prime * xstar
 
-    score, dscore = _score_dt(model, x_tau, tau, t_prime)
+    # compute full chain-rule derivative d/dtau s(x_tau, t(tau), t'(tau)):
+    # d/dtau = (partial/partial_t) * (dt/dtau) + (partial/partial_t') * (dt'/dtau)
+    tau_g = tau.clone().detach().requires_grad_(True)
+    t_g = torch.clamp(tau_g, min=eps, max=1.0)
+    left_g = peak_max * (2.0 * (t_g / vertex) - (t_g / vertex) ** 2)
+    right_g = peak_max * (1.0 - ((t_g - vertex) / (1.0 - vertex)) ** 2)
+    t_prime_g = torch.clamp(torch.where(t_g <= vertex, left_g, right_g), min=0.0, max=1.0)
+    # x_tau detached from tau_g: IBP treats x_tau as evaluation point, not a function of tau
+    score = model(x_tau.detach(), t_g, t_prime_g)
+    dscore = autograd.grad(score.sum(), tau_g, create_graph=True)[0]
+
     term3 = (2 * dscore).squeeze(-1) * lam.lam_t
     term4 = score.squeeze(-1) * lam.lam_dt
     term5 = (score ** 2).squeeze(-1) * lam.lam_t
