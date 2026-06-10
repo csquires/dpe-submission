@@ -28,7 +28,11 @@ from pathlib import Path
 from ex.utils.step2_runner.load_winners import load_winners, list_methods
 
 WORKDIR = os.environ.get("DPE_WORKDIR") or os.getcwd()
-CONDA_ENV = os.environ.get("DPE_CONDA_ENV", "fac")
+CONDA_ENV = (
+    os.environ.get("DPE_CONDA_ENV")
+    or os.environ.get("CONDA_DEFAULT_ENV")
+    or "fac"
+)
 DEFAULT_PARTITION = "preempt"
 DEFAULT_RESOURCES = "--gpus=1 --cpus-per-task=4 --mem=24G"
 
