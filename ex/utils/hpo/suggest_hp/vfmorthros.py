@@ -24,11 +24,11 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the VFMOrthros search space.
 
-    emits n_steps as the fixed constant N_STEPS, plus 22 tuned params:
-    4 switch (sched, inner_eps, precond, time_dist), 4 conditional
-    (k, gamma_min, reweight, apply_iw -- each suggested only when its switch
-    condition holds), and 14 unconditional (incl. the VFMOrthros-specific
-    n_shared_layers).
+    emits n_steps as the fixed constant N_STEPS, plus tuned params:
+    2 switch (sched, time_dist), 2 conditional (k, apply_iw -- each suggested
+    only when its switch condition holds), and the rest unconditional (incl.
+    the VFMOrthros-specific n_shared_layers). inner_eps pinned to 0; precond
+    pinned True (masks reweight branch).
 
     not searched -- pinned: n_hidden_layers (per-experiment via
     StudyConfig.fixed_hp), div_method/div_noise/n_hutch_samples (provisionally
@@ -57,8 +57,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # holdout boundary analysis -- masks the reweight branch entirely.
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    inner_eps = trial.suggest_categorical("inner_eps", [0.0, 0.05, 0.1])
-    hp["inner_eps"] = inner_eps
+    hp["inner_eps"] = 0.0
     hp["precond"] = True
 
     # divergence estimator pinned to exact; div_noise / n_hutch_samples inert

@@ -7,9 +7,11 @@ uniform multi-fidelity resource axis).
 
 inertness edges (from static + scratch/ctsm_inertness_probe.py):
   - k inert when sched == "bridge" (bridge_noise doesn't read k)
-  - gamma_min inert when inner_eps > 0 (non-zero band clamps gamma above the
-    gamma_min floor and masks it -- mirrors the VFM/VFMOrthros edge)
   - apply_iw inert when time_dist == "uniform" (UniformSampler returns iw=1)
+
+inner_eps pinned to 0.0 (matches the triangular CTSM convention; the
+clamp-mode alternative was never selected by HPO in the prior eig sweep and
+shadowed gamma_min in compose order -- see notes/hpo_search_space_finalization.md).
 
 test-path knobs (test_sched, test_sigma, test_inner_eps, test_gamma_min,
 test_k) are derived from the train-side counterparts; only test_eps remains
@@ -38,9 +40,9 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the CTSM search space.
 
-    emits n_steps as the fixed constant N_STEPS, plus 3 switch (sched,
-    inner_eps, time_dist), 3 conditional (k, gamma_min, apply_iw -- each
-    suggested only when its switch condition holds), and 15 unconditional.
+    emits n_steps as the fixed constant N_STEPS, plus 2 switch (sched,
+    time_dist), 2 conditional (k, apply_iw -- each suggested only when its
+    switch condition holds), and 16 unconditional. inner_eps is pinned to 0.
 
     args:
         trial: optuna trial object
@@ -59,16 +61,17 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # switch params (suggest before any branch that reads them)
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    inner_eps = trial.suggest_categorical("inner_eps", [0.0, 0.05, 0.1])
-    hp["inner_eps"] = inner_eps
+    hp["inner_eps"] = 0.0
     time_dist = trial.suggest_categorical("time_dist", list(TIME_DISTS))
     hp["time_dist"] = time_dist
 
     # conditional params
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
-    if inner_eps == 0.0:
-        hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    # gamma_min lower bound dropped to 1e-6: prior eig winners landed at
+    # gamma_min ~ 0.1 (top of old [1e-2, 2e-1] range); widening lets HPO
+    # explore the low-noise regime where TSM (no gamma) dominates.
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-6, 2e-1, log=True)
     if time_dist != "uniform":
         hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])
 
@@ -92,8 +95,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
-    if "gamma_min" in hp:
-        hp["test_gamma_min"] = hp["gamma_min"]
+    hp["test_gamma_min"] = hp["gamma_min"]
     if "k" in hp:
         hp["test_k"] = hp["k"]
 

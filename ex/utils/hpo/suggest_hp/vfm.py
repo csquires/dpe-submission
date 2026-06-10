@@ -25,10 +25,11 @@ METADATA = {
 def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters from the VFM search space.
 
-    emits n_steps as the fixed constant N_STEPS, plus 21 tuned params:
-    4 switch (sched, inner_eps, precond, time_dist), 4 conditional
-    (k, gamma_min, reweight, apply_iw -- each suggested only when its switch
-    condition holds), and 13 unconditional.
+    emits n_steps as the fixed constant N_STEPS, plus tuned params:
+    3 switch (sched, precond, time_dist), 3 conditional (k, reweight, apply_iw
+    -- each suggested only when its switch condition holds), and the rest
+    unconditional. inner_eps is pinned to 0 (matches triangular VFM convention;
+    the clamp-mode alternative shadowed gamma_min in compose order).
 
     not searched -- pinned: n_hidden_layers (per-experiment via
     StudyConfig.fixed_hp), div_method/div_noise/n_hutch_samples (provisionally
@@ -54,8 +55,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # switch params (suggest before any branch that reads them)
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    inner_eps = trial.suggest_categorical("inner_eps", [0.0, 0.05, 0.1])
-    hp["inner_eps"] = inner_eps
+    hp["inner_eps"] = 0.0
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 
@@ -70,8 +70,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # conditional params
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
-    if inner_eps == 0.0:
-        hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
     if not precond:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 
@@ -104,8 +103,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
-    if "gamma_min" in hp:
-        hp["test_gamma_min"] = hp["gamma_min"]
+    hp["test_gamma_min"] = hp["gamma_min"]
     if "k" in hp:
         hp["test_k"] = hp["k"]
 
