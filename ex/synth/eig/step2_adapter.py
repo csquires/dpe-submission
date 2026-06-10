@@ -79,6 +79,27 @@ def bucket_for_cell(cell_idx: int, config: dict) -> None:
 # fit + eval
 # -----------------------------------------------------------------------------
 
+_METHOD_ALIAS = {p[0]: p[1] for p in __import__("ex.utils.hpo.method_specs",
+                                                fromlist=["ALIAS_PAIRS"]).ALIAS_PAIRS}
+
+# legacy holdout names -> current builder kwargs, applied PER METHOD because
+# different builders use different conventions (MDRE uses learning_rate +
+# latent_dim natively; VFM/CTSM use n_steps, not n_epochs).
+_HP_KEY_ALIAS_BY_METHOD = {
+    "VFM":           {"n_epochs": "n_steps"},
+    "VFMOrthros":    {"n_epochs": "n_steps"},
+    "CTSM":          {"n_epochs": "n_steps"},
+    "FMDRE":         {"n_epochs": "n_steps"},
+    "FMDRE_S2":      {"n_epochs": "n_steps"},
+}
+
+
+def _normalize_hp(method: str, hp: dict) -> dict:
+    """rename legacy hp keys to what the current builder expects, per method."""
+    alias = _HP_KEY_ALIAS_BY_METHOD.get(method, {})
+    return {alias.get(k, k): v for k, v in hp.items()}
+
+
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
     """build estimator with hp; fit on (joint, shuffled-marginals); return scalar
@@ -88,10 +109,11 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
     returns:
         est_ldrs: array (1,) holding the scalar EIG estimate
     """
-    if method not in METHOD_SPECS:
-        raise KeyError(f"method {method!r} not registered in METHOD_SPECS")
+    canonical = _METHOD_ALIAS.get(method, method)
+    if canonical not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} (canonical {canonical!r}) not registered in METHOD_SPECS")
 
-    spec = METHOD_SPECS[method]
+    spec = METHOD_SPECS[canonical]
     builder = spec["builder"]
     input_dim = config["data_dim"] + 1   # theta (D) || y (1)
     num_waypoints = spec.get("num_waypoints", None)
@@ -104,7 +126,7 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
         "input_dim": input_dim,
         "device": device,
         "num_waypoints": num_waypoints if num_waypoints is not None else 0,
-        **hp,
+        **_normalize_hp(method, hp),
     }
     dre = builder(**builder_kwargs)
 

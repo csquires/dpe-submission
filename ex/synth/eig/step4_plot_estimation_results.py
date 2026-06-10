@@ -1,9 +1,24 @@
+"""plot per-method normalised EIG regret vs design beta, split into 4 panels.
+
+line = median-of-medians regret per beta (see step3); shaded band = IQR of
+1000 bootstrap resamples (priors and designs drawn with replacement).
+
+styles + colors come from ex/utils/plot_style.py.
+"""
 import os
 
-import matplotlib.pyplot as plt
-import seaborn as sns
-import yaml
 import h5py
+import matplotlib.pyplot as plt
+import numpy as np
+import yaml
+
+from ex.utils.plot_style import (
+    apply as apply_style,
+    style_for,
+    METHOD_GROUPS,
+    GROUP_LABEL,
+    ERROR_BAND_ALPHA,
+)
 
 
 config = yaml.load(open('ex/synth/eig/config1.yaml', 'r'), Loader=yaml.FullLoader)
@@ -12,58 +27,51 @@ FIGURES_DIR = config['figures_dir']
 DATA_DIM = config['data_dim']
 NSAMPLES = config['nsamples']
 
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/mae_by_beta_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-# processed_results_filename = f'{PROCESSED_RESULTS_DIR}/updated_with_vfm.h5'
+processed_results_filename = f'{PROCESSED_RESULTS_DIR}/regret_by_beta_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+
 with h5py.File(processed_results_filename, 'r') as f:
     design_eig_percentages = f['design_eig_percentages'][:]
-    mae_by_beta = {key.replace('mae_by_beta_', ''): f[key][:] for key in f.keys() if key.startswith('mae_by_beta_')}
+    regret = {k[len('regret_by_beta_'):]: f[k][:]
+              for k in f.keys() if k.startswith('regret_by_beta_')}
+    lo = {k[len('regret_lo_by_beta_'):]: f[k][:]
+          for k in f.keys() if k.startswith('regret_lo_by_beta_')}
+    hi = {k[len('regret_hi_by_beta_'):]: f[k][:]
+          for k in f.keys() if k.startswith('regret_hi_by_beta_')}
 
-colors = {
-    "BDRE": "#1f77b4",
-    "TDRE_5": "#ff7f0e",
-    "MDRE_15": "#2ca02c",
-    "TSM": "#d62728",
-    "TriangularMDRE": "#aec7e8",
-    "VFM": "#9467bd",
-    "MultiHeadTriangularTDRE": "#bcbd22",
-    "TriangularCTSM_V1": "#17becf",
-    "TriangularVFM_V1": "#e377c2",
-}
-# legacy aliases for backward compatibility with old h5 datasets
-colors["MDRE"] = colors["MDRE_15"]
-colors["TDRE"] = colors["TDRE_5"]
+apply_style()
 
-legend_order = ["BDRE", "TDRE_5", "MDRE_15", "TSM", "TriangularMDRE", "MultiHeadTriangularTDRE", "TriangularCTSM_V1", "TriangularVFM_V1", "VFM"]
+# shared y-limits across panels for side-by-side comparison.
+all_hi = []
+for group_methods in METHOD_GROUPS.values():
+    for m in group_methods:
+        if m not in regret:
+            continue
+        all_hi.append(np.nanmax(hi.get(m, regret[m])))
+y_max = (max(all_hi) * 1.05) if all_hi else 1.0
 
-plt.clf()
-sns.set_style('whitegrid')
-plt.style.use('half-width.mplstyle')
-label_map = {
-    "TDRE_5": "TDRE_5",
-    "MDRE_15": "MDRE_15",
-    "TriangularMDRE": "TriangularMDRE",
-    "MultiHeadTriangularTDRE": "MultiHeadTriangularTDRE",
-    "TriangularCTSM_V1": "TriangularCTSM_V1",
-    "TriangularVFM_V1": "TriangularVFM_V1",
-    # legacy aliases
-    "TDRE": "TDRE_5",
-    "MDRE": "MDRE_15",
-}
 
-for alg_name, maes in mae_by_beta.items():
-    if alg_name in ['TriangularTSM']:
-        continue
-    color = colors.get(alg_name, None)
-    label = label_map.get(alg_name, alg_name)
-    plt.plot(design_eig_percentages, maes, label=label, color=color, linewidth=1.0)
-plt.xlabel(r"$\beta$ (Design Optimality Percentage)")
-plt.ylabel(r"EIG Estimation Error")
-handles, labels = plt.gca().get_legend_handles_labels()
-by_label = dict(zip(labels, handles))
-ordered_labels = [lbl for lbl in legend_order if lbl in by_label]
-ordered_labels += [lbl for lbl in by_label.keys() if lbl not in ordered_labels]
-plt.legend([by_label[lbl] for lbl in ordered_labels], ordered_labels, loc="upper left", fontsize=10)
-plt.tight_layout()
 os.makedirs(FIGURES_DIR, exist_ok=True)
-plt.savefig(f'{FIGURES_DIR}/eig_estimation_final.pdf', bbox_inches='tight')
-plt.savefig(f'{FIGURES_DIR}/eig_estimation_final.png', dpi=150, bbox_inches='tight')
+for group, methods in METHOD_GROUPS.items():
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for method in methods:
+        if method not in regret:
+            continue
+        r = regret[method]
+        if not np.any(np.isfinite(r)):
+            continue
+        kw = style_for(method)
+        ax.plot(design_eig_percentages, r, label=method, **kw)
+        ax.fill_between(design_eig_percentages, lo[method], hi[method],
+                        color=kw['color'], alpha=ERROR_BAND_ALPHA, linewidth=0)
+    ax.set_title(GROUP_LABEL[group])
+    ax.set_xlabel(r'Design optimality $\beta = \mathrm{EIG}(\xi) / \mathrm{EIG}_{\max}$')
+    ax.set_ylabel('Rel. EIG regret (MoM, IQR band)')
+    ax.legend(loc='best')
+    ax.set_ylim(0, y_max)
+    fig.tight_layout()
+    pdf_path = os.path.join(FIGURES_DIR, f'eig_estimation_{group}.pdf')
+    png_path = os.path.join(FIGURES_DIR, f'eig_estimation_{group}.png')
+    fig.savefig(pdf_path)
+    fig.savefig(png_path)
+    plt.close(fig)
+    print(f'  {group:9s} -> {png_path}')
