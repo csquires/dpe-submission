@@ -130,7 +130,7 @@ LANES: dict[str, LaneProfile] = {
         mem="64G",
         batch_size=32,
         worker_walltime="09:00:00",
-        max_concurrent=22,
+        max_concurrent=24,
     ),
 }
 

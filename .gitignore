@@ -72,3 +72,4 @@ scratch/*
 ex/utils/hpo/optuna/configs/eig_*.py
 ex/utils/hpo/optuna/configs/occupancy_*.py
 ex/utils/hpo/optuna/configs/pendulum_*.py
+ex/utils/drain_queue.sh
