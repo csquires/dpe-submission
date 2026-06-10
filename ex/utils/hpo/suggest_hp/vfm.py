@@ -70,7 +70,9 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # conditional params
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    # gamma_min pinned 0 (eig winner sat at 0.036, well below the natural
+    # floor g(eps)=0.31; HPO never used the clamp).
+    hp["gamma_min"] = 0.0
     if not precond:
         hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
 

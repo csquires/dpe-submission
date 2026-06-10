@@ -38,6 +38,7 @@ class TriangularTSM(ELDR):
         sched: SchedCfg = SchedCfg(),
         ema: EmaCfg = EmaCfg(),
         time: TimeCfg = TimeCfg(),
+        early_stop_cfg: dict | None = None,
         device: Optional[str] = None,
         # TriTSM-specific (explicit kwargs)
         reweight: bool = False,
@@ -58,6 +59,7 @@ class TriangularTSM(ELDR):
             sched: scheduler config (name, cosine_min_factor, etc). default SchedCfg().
             ema: exponential moving average config. default EmaCfg().
             time: time sampling config (eps, flavor). default TimeCfg().
+            early_stop_cfg: early stopping config (e.g., max_evals, patience). default None.
             device: torch device string. auto-detect if None.
             reweight: whether to reweight loss. default False.
             vertex: peak location in (0, 1). default 0.5.
@@ -92,6 +94,7 @@ class TriangularTSM(ELDR):
         self.sched = sched
         self.ema = ema
         self.time = time
+        self.early_stop_cfg = early_stop_cfg
 
         # device handling
         if device is None:
@@ -146,6 +149,8 @@ class TriangularTSM(ELDR):
         self._init_model()
         self.model.train()
 
+        meta_out: dict = {}
+
         # build optimizer, scheduler, ema, time_sampler from cfg
         optim_obj = make_optim(self.model.parameters(), self.optim)
         sched_obj = make_sched(optim_obj, self.n_steps, self.optim.lr, self.sched)
@@ -187,7 +192,12 @@ class TriangularTSM(ELDR):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """trapezoid-integrate -model(xs, t, t') over an integration_steps-point tau grid in [eps, 1]."""

@@ -17,6 +17,7 @@ class ExperimentAdapter(abc.ABC):
     """
 
     _train_holdout_cache: tuple[list, list] | None = None
+    _last_meta: dict | None = None
 
     @abc.abstractmethod
     def name(self) -> str:
@@ -259,6 +260,10 @@ class ExperimentAdapter(abc.ABC):
                 eval_data=eval_data,
                 step_cb_interval=step_cb_interval,
             )
+            self._last_meta = {
+                "final_step": getattr(est, "_final_step", None),
+                "stop_reason": getattr(est, "_stop_reason", None),
+            }
         else:
             est.fit(
                 data["p0"],
@@ -267,6 +272,10 @@ class ExperimentAdapter(abc.ABC):
                 eval_data=eval_data,
                 step_cb_interval=step_cb_interval,
             )
+            self._last_meta = {
+                "final_step": getattr(est, "_final_step", None),
+                "stop_reason": getattr(est, "_stop_reason", None),
+            }
 
         with torch.no_grad():
             predicted = est.predict_ldr(data["pstar"])

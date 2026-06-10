@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from typing import List, Callable, Any
 
 from src.methods.common._report import _make_report
+from src.methods.common.early_stop import make_early_stopper
 
 
 class MultiHeadBinaryClassifier(nn.Module):
@@ -160,6 +161,8 @@ class MultiHeadBinaryClassifier(nn.Module):
         step_cb: Callable[[int, float], None] | None = None,
         eval_fn: Callable[[Any], torch.Tensor] | None = None,
         step_cb_interval: int = 50,
+        early_stop_cfg: dict | None = None,
+        _meta_out: dict | None = None,
     ) -> None:
         """train shared backbone + per-head binary classifiers.
 
@@ -194,7 +197,14 @@ class MultiHeadBinaryClassifier(nn.Module):
         # construct reporting closure before training loop
         do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
 
-        def _step(xs_list, ys_list, sizes):
+        # early-stop is opt-in. when disabled, loop is byte-identical to pre-refactor.
+        es_enabled = early_stop_cfg is not None
+        if es_enabled:
+            observe, should_stop = make_early_stopper(early_stop_cfg)
+        final_step = self.n_steps
+        stop_reason = None
+
+        def _step(xs_list, ys_list, sizes) -> torch.Tensor:
             optimizer.zero_grad()
             xs_cat = torch.cat(xs_list, dim=0)
             features_cat = self.backbone(xs_cat)
@@ -211,13 +221,22 @@ class MultiHeadBinaryClassifier(nn.Module):
                 total_loss = total_loss + loss_fn(logits_i, ys_i.squeeze(-1))
             total_loss.backward()
             optimizer.step()
+            # return the scalar tensor; caller decides whether to .item() (which forces a sync).
+            return total_loss
 
         if bs == max_n:
-            for _ in range(self.n_steps):
-                _step(xs_per_head, ys_per_head, n_per_head)
+            for step in range(self.n_steps):
+                loss_tensor = _step(xs_per_head, ys_per_head, n_per_head)
                 do_report()
+                if es_enabled:
+                    observe(step + 1, loss_tensor.item())
+                    stop, reason = should_stop()
+                    if stop:
+                        final_step = step + 1
+                        stop_reason = reason
+                        break
         else:
-            for _ in range(self.n_steps):
+            for step in range(self.n_steps):
                 xs_batch, ys_batch = [], []
                 for i in range(num_heads):
                     idx = torch.randint(
@@ -225,8 +244,19 @@ class MultiHeadBinaryClassifier(nn.Module):
                     )
                     xs_batch.append(xs_per_head[i][idx])
                     ys_batch.append(ys_per_head[i][idx])
-                _step(xs_batch, ys_batch, [bs] * num_heads)
+                loss_tensor = _step(xs_batch, ys_batch, [bs] * num_heads)
                 do_report()
+                if es_enabled:
+                    observe(step + 1, loss_tensor.item())
+                    stop, reason = should_stop()
+                    if stop:
+                        final_step = step + 1
+                        stop_reason = reason
+                        break
+
+        if _meta_out is not None:
+            _meta_out["final_step"] = final_step
+            _meta_out["stop_reason"] = stop_reason
 
         self.eval()
 

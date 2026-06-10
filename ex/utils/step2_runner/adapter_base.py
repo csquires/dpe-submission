@@ -49,6 +49,7 @@ def make_adapter_module(spec: AdapterSpec, search_spaces: dict) -> dict[str, Cal
              fit_and_eval, walltime_per_cell_seconds, resources_for_method,
              is_cpu_eligible, method_label, gather_dataset_name, gather_output_path.
     """
+    _last_meta = {}
 
     def load_config(path: str) -> dict:
         """load and validate config from yaml file."""
@@ -117,6 +118,9 @@ def make_adapter_module(spec: AdapterSpec, search_spaces: dict) -> dict[str, Cal
         else:
             estimator.fit(p0, p1)
 
+        _last_meta["final_step"] = getattr(estimator, "_final_step", None)
+        _last_meta["stop_reason"] = getattr(estimator, "_stop_reason", None)
+
         with torch.no_grad():
             est = estimator.predict_ldr(pstar)
         return {"est_ldrs": est.detach().cpu().numpy().astype(np.float32)}
@@ -165,4 +169,5 @@ def make_adapter_module(spec: AdapterSpec, search_spaces: dict) -> dict[str, Cal
         "method_label": method_label,
         "gather_dataset_name": gather_dataset_name,
         "gather_output_path": gather_output_path,
+        "_last_meta": _last_meta,
     }

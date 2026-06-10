@@ -26,6 +26,7 @@ class TriangularTDRE(ELDR):
         midpoint_oversample: int = 0,
         gamma_power: float = 1.0,
         vertex: float = 0.5,
+        early_stop_cfg: dict | None = None,
     ):
         self.device = device
         self.classifiers = [classifier.to(self.device) for classifier in classifiers]
@@ -35,6 +36,7 @@ class TriangularTDRE(ELDR):
             vertex=vertex,
         )
         self.num_waypoints = num_waypoints
+        self.early_stop_cfg = early_stop_cfg
 
     def fit(
         self,
@@ -55,6 +57,8 @@ class TriangularTDRE(ELDR):
             p_den_labels = torch.zeros((b, 1), dtype=torch.float, device=self.device)
             ys = torch.cat([p_num_labels, p_den_labels], dim=0)
             self.classifiers[i].fit(xs, ys)
+        self._final_step = self.num_waypoints - 1
+        self._stop_reason = None
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         waypoint_ldrs = torch.zeros(xs.shape[0], self.num_waypoints - 1, device=self.device)

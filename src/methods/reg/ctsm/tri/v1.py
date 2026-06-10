@@ -54,6 +54,7 @@ class TriangularCTSMV1(ELDR):
         integration_steps: int = 200,
         reweight: bool = False,
         device: Optional[str] = None,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """construct estimator with four slots and network hyperparameters.
 
@@ -161,7 +162,8 @@ class TriangularCTSMV1(ELDR):
         self.sched = sched
         self.ema = ema
 
-        # step 9: initialize network and ema placeholders
+        # step 9: store early stopping config and initialize network/ema placeholders
+        self.early_stop_cfg = early_stop_cfg
         self.model = None
         self.ema_obj: Optional[EMA] = None
 
@@ -187,6 +189,9 @@ class TriangularCTSMV1(ELDR):
         """train the network via continuous-time score matching regression."""
         # step 1: initialize network
         self.init_model()
+
+        # prepare metadata dict for early stopping signals
+        meta_out: dict = {}
 
         # step 2: build optimizer and scheduler
         optim_obj = make_optim(self.model.parameters(), self.optim)
@@ -228,7 +233,13 @@ class TriangularCTSMV1(ELDR):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+
+        # capture final step count and early stopping reason
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
     def predict_ldr(self, xs: Tensor) -> Tensor:
         """predict log-density ratio via integration of the learned score."""

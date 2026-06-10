@@ -66,6 +66,7 @@ class CTSM(DRE):
         test_inner_eps: float = 0.0,
         test_gamma_min: float = 0.0,
         test_path: Optional["DirectPath1D"] = None,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """four-slot CTSM for DRE via SB loss; single regression head.
 
@@ -188,7 +189,10 @@ class CTSM(DRE):
             )
         self.activation = activation
 
-        # step 3d: network placeholder (frozen name for checkpoint compat)
+        # step 3d: early stopping config
+        self.early_stop_cfg = early_stop_cfg
+
+        # step 3e: network placeholder (frozen name for checkpoint compat)
         self.model = None
         self.ema_obj: Optional[EMA] = None
 
@@ -289,6 +293,7 @@ class CTSM(DRE):
                 return torch.abs(predicted - target).mean()
 
         # step 5d: call train_loop
+        meta_out: dict = {}
         train_loop(
             model=self.model,
             samples_p0=samples_p0,
@@ -306,7 +311,12 @@ class CTSM(DRE):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
         # step 5e: set to eval mode
         self.model.eval()

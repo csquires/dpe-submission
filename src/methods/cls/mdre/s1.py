@@ -13,12 +13,14 @@ class MDRE(DRE):
         self,
         classifier: MulticlassClassifier,
         waypoint_builder: WaypointBuilder1D = DefaultWaypointBuilder1D(),
-        device: str = "cuda"
+        device: str = "cuda",
+        early_stop_cfg: dict | None = None
     ):
         self.device = device
         self.classifier = classifier.to(self.device)
         self.waypoint_builder = waypoint_builder
         self.num_waypoints = self.classifier.num_classes
+        self.early_stop_cfg = early_stop_cfg
 
     def fit(
         self,
@@ -53,13 +55,18 @@ class MDRE(DRE):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
+        meta_out: dict = {}
         self.classifier.fit(
             xs,
             ys,
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
     def predict_ldr(
         self,

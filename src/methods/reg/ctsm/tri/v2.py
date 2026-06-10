@@ -59,6 +59,7 @@ class TriangularCTSMV2(ELDR):
         optim: OptimCfg = None,
         sched: SchedCfg = None,
         ema: EmaCfg = None,
+        early_stop_cfg: dict | None = None,
         device: Optional[str] = None,
         activation: str = "elu",
         integration_steps: int = 200,
@@ -183,6 +184,7 @@ class TriangularCTSMV2(ELDR):
         self.optim = optim
         self.sched = sched if sched is not None else SchedCfg()
         self.ema = ema if ema is not None else EmaCfg()
+        self.early_stop_cfg = early_stop_cfg
 
         # initialize network placeholders
         self.model: Optional[TimeScoreNetwork1D] = None
@@ -211,6 +213,8 @@ class TriangularCTSMV2(ELDR):
         """
         from ...common._trainer import train_loop
         from ...common._losses import make_sb_loss
+
+        meta_out: dict = {}
 
         # initialize network if not already done
         if self.model is None:
@@ -262,7 +266,12 @@ class TriangularCTSMV2(ELDR):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
         return self
 

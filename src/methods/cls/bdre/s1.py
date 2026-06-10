@@ -10,7 +10,8 @@ class BDRE(DRE):
     def __init__(
         self,
         classifier: BinaryClassifier,
-        device: str = "cuda"
+        device: str = "cuda",
+        early_stop_cfg: dict | None = None
     ):
         # extract input_dim from classifier's first layer
         if hasattr(classifier, 'input_dim'):
@@ -33,6 +34,7 @@ class BDRE(DRE):
         super().__init__(input_dim)
         self.device = device
         self.classifier = classifier.to(self.device)
+        self.early_stop_cfg = early_stop_cfg
 
     def fit(
         self,
@@ -64,13 +66,18 @@ class BDRE(DRE):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
+        meta_out: dict = {}
         self.classifier.fit(
             xs,
             ys,
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         return self.classifier.predict_logits(xs)

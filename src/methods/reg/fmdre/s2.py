@@ -51,6 +51,7 @@ class FMDRE_S2(DRE):
         sentinel_cond: float = -1.0,
         reweight: bool = False,
         precond: bool = False,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """construct an FMDRE_S2 estimator with cfg-based hyperparameters.
 
@@ -77,6 +78,7 @@ class FMDRE_S2(DRE):
             sentinel_cond: sentinel value for unconditional signal (default -1.0).
             reweight: whether to reweight loss (default False).
             precond: whether to apply Karras (EDM) preconditioning (default False).
+            early_stop_cfg: early stopping config dict or None (default None).
         """
         super().__init__(input_dim)
         self.hidden_dim = hidden_dim
@@ -96,6 +98,7 @@ class FMDRE_S2(DRE):
         self.sentinel_cond = sentinel_cond
         self.reweight = reweight
         self.precond = precond
+        self.early_stop_cfg = early_stop_cfg
         self._moments = None
 
         if not (0.0 <= p_uncond <= 1.0):
@@ -147,6 +150,7 @@ class FMDRE_S2(DRE):
             step_cb_interval: interval (in minibatch updates) for step_cb invocation
                 (default 50).
         """
+        meta_out: dict = {}
         self.init_model()
         samples_p0 = samples_p0.float()
         samples_p1 = samples_p1.float()
@@ -219,7 +223,11 @@ class FMDRE_S2(DRE):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
         self.model.eval()
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:

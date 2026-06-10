@@ -3,6 +3,7 @@
 trains two velocity heads (b_1, b_2) and one denoiser (eta) sequentially on a
 2D-time stacked interpolant; integrates the time-score along a curve at inference.
 """
+import functools
 from typing import Optional, Literal, Callable
 import warnings
 
@@ -20,6 +21,7 @@ from ...common._predict_ldr import predict_ldr_via_curve
 from ...common._curves import Curve, LowArcCurve2D
 from ...common._integrators import Integrator, integrator_trapezoid
 from ...common._trainer import train_interleaved_3
+from ...common._sequential import train_two_phase_3
 from ...common._precond import endpoint_moments, make_coeffs_2d, make_lambda_2d, wrap_2d
 from src.waypoints.dataclass_paths import TriangularPath2D
 from src.waypoints.path_builders import rect_vfm
@@ -41,6 +43,11 @@ class TriangularVFM2D(ELDR):
 
     contract: fit(samples_p0, samples_p1, samples_pstar) with three [n, d]
     tensors; predict_ldr(xs) returns log(p_0/p_1) as [n_samples] cpu tensor.
+
+    training_strategy controls whether b1/b2/eta are optimized together (interleaved,
+    default) or sequentially (b1+b2 first, then eta). when training_strategy='sequential',
+    optuna pruning (step_cb) is not supported; hyperband will raise notimplementederror.
+    use interleaved for hpo.
     """
 
     def __init__(
@@ -73,6 +80,9 @@ class TriangularVFM2D(ELDR):
         layernorm: str = "off",
         reweight: bool = False,
         precond: bool = False,
+        training_strategy: str = "interleaved",
+        strategy_cfg: dict | None = None,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """initialize triangularvfm2d with four-slot surface and 2d-time sampling.
 
@@ -218,6 +228,30 @@ class TriangularVFM2D(ELDR):
         self.ema_b2: Optional[object] = None
         self.ema_eta: Optional[object] = None
 
+        # store training strategy configuration
+        self.training_strategy = training_strategy
+        self.strategy_cfg = strategy_cfg or {}
+        self.early_stop_cfg = early_stop_cfg
+
+        # bind self._train based on training strategy
+        if training_strategy == "interleaved":
+            self._train = functools.partial(
+                train_interleaved_3,
+                n_steps=self.n_steps,
+                early_stop_cfg=self.early_stop_cfg,
+            )
+        elif training_strategy == "sequential":
+            n_steps_b = self.strategy_cfg.get("n_steps_b", self.n_steps // 2)
+            n_steps_eta = self.strategy_cfg.get("n_steps_eta", self.n_steps - n_steps_b)
+            self._train = functools.partial(
+                train_two_phase_3,
+                n_steps_b=n_steps_b,
+                n_steps_eta=n_steps_eta,
+                early_stop_cfg=self.early_stop_cfg,
+            )
+        else:
+            raise ValueError(f"unknown training_strategy: {training_strategy!r}")
+
     def init_model(self) -> None:
         """instantiate net_b1, net_b2, net_eta as mlp2d on self.device.
 
@@ -274,6 +308,7 @@ class TriangularVFM2D(ELDR):
             eval_data: optional dict with "pstar" and "true_ldrs" for eval_fn.
             step_cb_interval: call step_cb every n steps (default 50).
         """
+        meta_out: dict = {}
         n_star = samples_pstar.shape[0]
 
         if n_star < 1:
@@ -526,12 +561,11 @@ class TriangularVFM2D(ELDR):
         b_params = list(self.net_b1.parameters()) + list(self.net_b2.parameters())
         eta_params = list(self.net_eta.parameters())
 
-        # train with interleaved optimization
-        train_interleaved_3(
+        # train via strategy-specific trainer
+        self._train(
             self.net_b1, self.net_b2, self.net_eta,
             loss_b, loss_eta,
             optim_b, optim_eta,
-            n_steps=self.n_steps,
             scheduler_b=sched_b,
             scheduler_eta=sched_eta,
             ema_b1=ema_b1,
@@ -543,7 +577,12 @@ class TriangularVFM2D(ELDR):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            _meta_out=meta_out,
         )
+
+        # store training metadata for introspection
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
         # post-training cleanup
         self.net_b1.eval()

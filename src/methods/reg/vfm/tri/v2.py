@@ -11,6 +11,7 @@ inference uses test path; training uses train path.
 """
 from typing import Optional, Literal, Callable
 import warnings
+import functools
 
 import torch
 
@@ -20,7 +21,7 @@ from ...common._estimator_helpers import _validate_and_store_slots
 from ...common._paradigm_funcs import vfm_time_score_1d
 from ...common._predict_ldr import predict_ldr_via_curve
 from ...common._losses import make_velo_loss, make_denoiser_loss
-from ...common._trainer import train_interleaved
+from ...common._trainer import train_interleaved, train_two_phase
 from ...common._time_samplers import (
     TimeSampler1D, make_uniform, make_piecewise_sb_sampler,
 )
@@ -116,6 +117,9 @@ class TriangularVFMV2(ELDR):
         reweight: bool = False,
         test_path: Optional[TriangularPath1D] = None,
         precond: bool = False,
+        training_strategy: str = "interleaved",
+        strategy_cfg: dict | None = None,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """initialize triangular vfm v2 with dual paths (train/test).
 
@@ -148,6 +152,9 @@ class TriangularVFMV2(ELDR):
             layernorm: layernorm placement ("off", "pre", "post").
             reweight: whether to apply path-variance reweighting to losses.
             precond: enable Karras (EDM) preconditioning on velocity and noise targets.
+            training_strategy: training mode ("interleaved" or "sequential").
+            strategy_cfg: optional dict with strategy-specific config.
+            early_stop_cfg: optional early stopping configuration dict.
         """
         # step 1: resolve defaults before validation
         if path is None:
@@ -234,6 +241,11 @@ class TriangularVFMV2(ELDR):
         self.precond = precond
         self._moments = None
 
+        # step 7c: training strategy and early stopping
+        self.training_strategy = training_strategy
+        self.strategy_cfg = strategy_cfg or {}
+        self.early_stop_cfg = early_stop_cfg
+
         # step 7: build divergence estimator function
         self._div_fn = build_div_fn(
             method=div_method,
@@ -246,6 +258,25 @@ class TriangularVFMV2(ELDR):
         self.net_eta = None
         self.ema_b: Optional[object] = None
         self.ema_eta: Optional[object] = None
+
+        # step 9: bind training method via functools.partial
+        if training_strategy == "interleaved":
+            self._train = functools.partial(
+                train_interleaved,
+                n_steps=self.n_steps,
+                early_stop_cfg=self.early_stop_cfg,
+            )
+        elif training_strategy == "sequential":
+            n_steps_b = self.strategy_cfg.get("n_steps_b", self.n_steps // 2)
+            n_steps_eta = self.strategy_cfg.get("n_steps_eta", self.n_steps - n_steps_b)
+            self._train = functools.partial(
+                train_two_phase,
+                n_steps_b=n_steps_b,
+                n_steps_eta=n_steps_eta,
+                early_stop_cfg=self.early_stop_cfg,
+            )
+        else:
+            raise ValueError(f"unknown training_strategy: {training_strategy!r}")
 
     def init_model(self) -> None:
         """initialize velocity field and denoiser networks on device."""
@@ -297,6 +328,8 @@ class TriangularVFMV2(ELDR):
         ema_eta = make_ema(self.net_eta, self.ema)
         self.ema_b = ema_b
         self.ema_eta = ema_eta
+
+        meta_out: dict = {}
 
         # precond: compute endpoint moments once
         if self.precond:
@@ -357,7 +390,7 @@ class TriangularVFMV2(ELDR):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
-        train_interleaved(
+        self._train(
             model_b=wrapped_net_b,
             model_eta=wrapped_net_eta,
             model_module_b=self.net_b,
@@ -369,7 +402,6 @@ class TriangularVFMV2(ELDR):
             loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
-            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler_b=sched_b,
@@ -382,7 +414,11 @@ class TriangularVFMV2(ELDR):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            _meta_out=meta_out,
         )
+
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
         self.net_b.eval()
         self.net_eta.eval()

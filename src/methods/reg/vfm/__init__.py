@@ -73,6 +73,7 @@ class VFM(DRE):
         reweight: bool = False,
         precond: bool = False,
         n_t: Optional[int] = None,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         super().__init__(input_dim)
 
@@ -176,6 +177,9 @@ class VFM(DRE):
         self.net_eta = None
         self.ema_b = None
         self.ema_eta = None
+
+        # early stopping configuration
+        self.early_stop_cfg = early_stop_cfg
 
     def init_model(self) -> None:
         """instantiate net_b (velocity) and net_eta (denoiser) MLPs on device."""
@@ -328,6 +332,7 @@ class VFM(DRE):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
+        meta_out: dict = {}
         try:
             train_interleaved(
                 model_b=net_b_callable,
@@ -354,7 +359,11 @@ class VFM(DRE):
                 step_cb=step_cb,
                 eval_fn=eval_fn,
                 step_cb_interval=step_cb_interval,
+                early_stop_cfg=self.early_stop_cfg,
+                _meta_out=meta_out,
             )
+            self._final_step = meta_out.get("final_step", self.n_steps)
+            self._stop_reason = meta_out.get("stop_reason", None)
         finally:
             # invariant: outside fit, both networks are always in eval mode.
             self.net_b.eval()
@@ -493,6 +502,7 @@ class VFMOrthros(DRE):
         layernorm: str = "off",
         reweight: bool = False,
         precond: bool = False,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         super().__init__(input_dim)
 
@@ -588,6 +598,9 @@ class VFMOrthros(DRE):
         # network placeholders (single network + ema runtime object)
         self.net = None
         self.ema_net = None
+
+        # early stopping configuration
+        self.early_stop_cfg = early_stop_cfg
 
     def init_model(self) -> None:
         """instantiate self.net (OrthrosNet) on device."""
@@ -738,6 +751,7 @@ class VFMOrthros(DRE):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
+        meta_out: dict = {}
         train_loop(
             model=net_callable,
             model_module=self.net,
@@ -756,7 +770,11 @@ class VFMOrthros(DRE):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
         self.net.eval()
 

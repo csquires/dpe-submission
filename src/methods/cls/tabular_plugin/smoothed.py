@@ -20,6 +20,7 @@ class SmoothedTabularPluginDRE(DRE):
         encoding_cfg: dict,
         smoothing_alpha: float = 0.5,
         device: str = "cuda",
+        early_stop_cfg: dict | None = None,
     ):
         """initialize oracle estimator and validate encoding."""
         enc_type = encoding_cfg["type"]
@@ -32,6 +33,7 @@ class SmoothedTabularPluginDRE(DRE):
         self.encoding_cfg = encoding_cfg
         self.smoothing_alpha = smoothing_alpha
         self.device = device
+        self.early_stop_cfg = early_stop_cfg
         self._d_O_hat = None
         self._d_E_hat = None
         self._fitted = False
@@ -64,6 +66,8 @@ class SmoothedTabularPluginDRE(DRE):
         self._d_O_hat = count_and_smooth(s_O, a_O, self.n_states, self.n_actions, self.smoothing_alpha).cpu()
         self._d_E_hat = count_and_smooth(s_E, a_E, self.n_states, self.n_actions, self.smoothing_alpha).cpu()
 
+        self._final_step = 0
+        self._stop_reason = None
         self._fitted = True
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:

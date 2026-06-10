@@ -17,6 +17,7 @@ from torch import nn, optim
 
 from ._ema import EMA
 from ...common._report import _make_report, _make_report_pair
+from ...common.early_stop import make_early_stopper
 
 
 def _noop() -> None:
@@ -103,6 +104,8 @@ def train_loop(
     step_cb: Callable[[int, float], None] | None = None,
     eval_fn: Callable[[Any], torch.Tensor] | None = None,
     step_cb_interval: int = 50,
+    early_stop_cfg: dict | None = None,
+    _meta_out: dict | None = None,
 ) -> None:
     """train one network for `n_steps` mini-batch steps.
 
@@ -198,8 +201,16 @@ def train_loop(
     do_ema = (lambda: ema.update(model_module)) if ema is not None else _noop
     do_report = _make_report(step_cb, step_cb_interval, eval_fn, model, model_module)
 
+    # early-stop is opt-in. when disabled, the loop is byte-identical to pre-refactor
+    # (no extra .item() sync, no should_stop call).
+    es_enabled = early_stop_cfg is not None
+    if es_enabled:
+        observe, should_stop = make_early_stopper(early_stop_cfg)
+    final_step = n_steps
+    stop_reason = None
+
     try:
-        for _ in range(n_steps):
+        for step in range(n_steps):
             batch = build_batch()
             tau, iw = time_sampler(batch_size, device)
 
@@ -212,6 +223,16 @@ def train_loop(
             do_sched()
             do_ema()
             do_report()
+            if es_enabled:
+                observe(step + 1, loss.item())
+                stop, reason = should_stop()
+                if stop:
+                    final_step = step + 1
+                    stop_reason = reason
+                    break
+        if _meta_out is not None:
+            _meta_out["final_step"] = final_step
+            _meta_out["stop_reason"] = stop_reason
     finally:
         # restore eval mode even if do_report raises optuna.TrialPruned.
         if isinstance(model, nn.Module):
@@ -249,6 +270,8 @@ def train_two_phase(
     step_cb: Callable[[int, float], None] | None = None,
     eval_fn: Callable[[Any], torch.Tensor] | None = None,
     step_cb_interval: int = 50,
+    early_stop_cfg: dict | None = None,
+    _meta_out: dict | None = None,
 ) -> None:
     """train velocity then denoiser sequentially via two `train_loop` calls.
 
@@ -295,6 +318,9 @@ def train_two_phase(
     assert ob_ids == b_ids, "optim_b must own exactly model_b.parameters()"
     assert oe_ids == eta_ids, "optim_eta must own exactly model_eta.parameters()"
 
+    phase1_meta: dict = {}
+    phase2_meta: dict = {}
+
     mod_eta.eval()
     mod_b.train()
     train_loop(
@@ -313,6 +339,8 @@ def train_two_phase(
         eps=eps,
         loss_kwargs=loss_kwargs_b,
         model_module=mod_b,
+        early_stop_cfg=early_stop_cfg,
+        _meta_out=phase1_meta,
     )
 
     mod_b.eval()
@@ -336,7 +364,17 @@ def train_two_phase(
         step_cb=step_cb,
         eval_fn=eval_fn,
         step_cb_interval=step_cb_interval,
+        early_stop_cfg=early_stop_cfg,
+        _meta_out=phase2_meta,
     )
+
+    if _meta_out is not None:
+        p1_step = phase1_meta.get("final_step", n_steps_b)
+        p2_step = phase2_meta.get("final_step", n_steps_eta)
+        p1_reason = phase1_meta.get("stop_reason")
+        p2_reason = phase2_meta.get("stop_reason")
+        _meta_out["final_step"] = p1_step + p2_step
+        _meta_out["stop_reason"] = p1_reason if p1_reason is not None else p2_reason
 
     mod_b.eval()
     mod_eta.eval()
@@ -370,12 +408,16 @@ def train_interleaved(
     step_cb: Callable[[int, float], None] | None = None,
     eval_fn: Callable[[Any], torch.Tensor] | None = None,
     step_cb_interval: int = 50,
+    early_stop_cfg: dict | None = None,
+    _meta_out: dict | None = None,
 ) -> None:
     """train velocity (b) and denoiser (eta) jointly via one interleaved loop.
 
     loss_b and loss_eta are independent -- neither references the other network
-    -- so advancing both per step is algebraically identical to two sequential
-    train_loop calls: each net only ever sees its own loss and optimizer.
+    -- so advancing both per step is stationary-distribution equivalent in
+    expectation to two sequential train_loop calls; the two paths share
+    L_b and L_eta functional independence, but per-trajectory differ in
+    RNG consumption order, EMA step counters, and scheduler step counts.
     interleaving only changes WHEN the held-out eval (which needs both nets)
     becomes available. with both nets advancing together it is computable from
     the start, so do_report forwards a score to step_cb every step_cb_interval
@@ -446,16 +488,24 @@ def train_interleaved(
         step_cb, step_cb_interval, eval_fn, [mod_b, mod_eta],
     )
 
+    # early-stop is opt-in. when disabled, the loop is byte-identical to pre-refactor:
+    # no extra .item() syncs and no should_stop call.
+    es_enabled = early_stop_cfg is not None
+    if es_enabled:
+        observe, should_stop = make_early_stopper(early_stop_cfg)
+    final_step = n_steps
+    stop_reason = None
+
     mod_b.train()
     mod_eta.train()
     try:
-        for _ in range(n_steps):
+        for step in range(n_steps):
             # b-update
             batch_b = build_batch()
             tau_b, iw_b = time_sampler(batch_size, device)
-            loss = loss_b(model_b, batch_b, tau_b, iw_b, **loss_kw_b)
+            lb = loss_b(model_b, batch_b, tau_b, iw_b, **loss_kw_b)
             optim_b.zero_grad()
-            loss.backward()
+            lb.backward()
             do_clip_b()
             optim_b.step()
             do_sched_b()
@@ -463,15 +513,26 @@ def train_interleaved(
             # eta-update
             batch_eta = build_batch()
             tau_eta, iw_eta = time_sampler(batch_size, device)
-            loss = loss_eta(model_eta, batch_eta, tau_eta, iw_eta, **loss_kw_eta)
+            le = loss_eta(model_eta, batch_eta, tau_eta, iw_eta, **loss_kw_eta)
             optim_eta.zero_grad()
-            loss.backward()
+            le.backward()
             do_clip_eta()
             optim_eta.step()
             do_sched_eta()
             do_ema_eta()
             # report; may raise optuna.TrialPruned, caught by the finally below.
             do_report()
+            if es_enabled:
+                cycle_avg = (lb.item() + le.item()) / 2.0
+                observe(step + 1, cycle_avg)
+                stop, reason = should_stop()
+                if stop:
+                    final_step = step + 1
+                    stop_reason = reason
+                    break
+        if _meta_out is not None:
+            _meta_out["final_step"] = final_step
+            _meta_out["stop_reason"] = stop_reason
     finally:
         mod_b.eval()
         mod_eta.eval()
@@ -498,6 +559,8 @@ def train_interleaved_3(
     step_cb: Callable[[int, float], None] | None = None,
     eval_fn: Callable[[Any], torch.Tensor] | None = None,
     step_cb_interval: int = 50,
+    early_stop_cfg: dict | None = None,
+    _meta_out: dict | None = None,
 ) -> None:
     """train velocity (b1+b2 joint) and denoiser (eta) via interleaved 2-group updates.
 
@@ -536,12 +599,20 @@ def train_interleaved_3(
         step_cb, step_cb_interval, eval_fn, [net_b1, net_b2, net_eta],
     )
 
+    # early-stop is opt-in. when disabled, the loop is byte-identical to pre-refactor:
+    # no extra .item() syncs and no should_stop call.
+    es_enabled = early_stop_cfg is not None
+    if es_enabled:
+        observe, should_stop = make_early_stopper(early_stop_cfg)
+    final_step = n_steps
+    stop_reason = None
+
     net_b1.train()
     net_b2.train()
     net_eta.train()
 
     try:
-        for _ in range(n_steps):
+        for step in range(n_steps):
             # velocity group update (b1 + b2 joint)
             optim_b.zero_grad()
             lb = loss_b()
@@ -570,6 +641,17 @@ def train_interleaved_3(
 
             # report after both group updates
             do_report()
+            if es_enabled:
+                cycle_avg = (lb.item() + le.item()) / 2.0
+                observe(step + 1, cycle_avg)
+                stop, reason = should_stop()
+                if stop:
+                    final_step = step + 1
+                    stop_reason = reason
+                    break
+        if _meta_out is not None:
+            _meta_out["final_step"] = final_step
+            _meta_out["stop_reason"] = stop_reason
     finally:
         net_b1.eval()
         net_b2.eval()

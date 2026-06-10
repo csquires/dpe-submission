@@ -17,20 +17,22 @@ from src.waypoints.waypoints1d import WaypointBuilder1D, DefaultWaypointBuilder1
 
 class TDRE(DRE):
     def __init__(
-        self, 
+        self,
         classifiers: list[BinaryClassifier],
         waypoint_builder: WaypointBuilder1D = DefaultWaypointBuilder1D(),
         num_waypoints: int = 10,
-        device: str = "cuda"
+        device: str = "cuda",
+        early_stop_cfg: dict | None = None
     ):
         # note: the i-th classifier discrimates between waypoint i (in the numerator) and waypoint i+1 (in the denominator)
         self.device = device
         self.classifiers = [classifier.to(self.device) for classifier in classifiers]
         self.waypoint_builder = waypoint_builder
         self.num_waypoints = num_waypoints
+        self.early_stop_cfg = early_stop_cfg
         
     def fit(
-        self, 
+        self,
         samples_p0: torch.Tensor,  # [b0, dim]
         samples_p1: torch.Tensor   # [b1, dim]
     ) -> None:
@@ -42,6 +44,9 @@ class TDRE(DRE):
             p_den_labels = torch.zeros((b, 1), dtype=torch.float).to(self.device)
             ys = torch.cat([p_num_labels, p_den_labels], dim=0).to(self.device)
             self.classifiers[i].fit(xs, ys)
+        self.n_steps = self.num_waypoints - 1
+        self._final_step = self.n_steps
+        self._stop_reason = None
 
     def predict_ldr(
         self, 

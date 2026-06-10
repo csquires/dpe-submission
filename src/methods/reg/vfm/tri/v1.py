@@ -4,6 +4,7 @@ no inheritance from base; uses free functions + explicit path/time/curve/integra
 """
 from typing import Optional, Literal, Callable
 import warnings
+import functools
 
 import torch
 
@@ -12,7 +13,7 @@ from ...common._cfgs import (
     OptimCfg, SchedCfg, EmaCfg,
     make_optim, make_sched, make_ema,
 )
-from ...common._trainer import train_interleaved
+from ...common._trainer import train_interleaved, train_two_phase
 from ...common._losses import make_velo_loss, make_denoiser_loss
 from src.waypoints.dataclass_paths import TriangularPath1D
 from src.waypoints.path_builders import bary_vfm
@@ -63,6 +64,9 @@ class TriangularVFMV1(ELDR):
         test_gamma_min: float = 0.0,
         test_vertex_band: float = 0.0,
         precond: bool = False,
+        training_strategy: str = "interleaved",
+        strategy_cfg: dict | None = None,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """barycentric VFM on triangular path; defaults use k and vertex if path is None."""
         super().__init__(input_dim)
@@ -159,6 +163,30 @@ class TriangularVFMV1(ELDR):
         self.net_eta = None
         self.ema_b: Optional[object] = None
         self.ema_eta: Optional[object] = None
+
+        # store training strategy configuration
+        self.training_strategy = training_strategy
+        self.strategy_cfg = strategy_cfg or {}
+        self.early_stop_cfg = early_stop_cfg
+
+        # bind training function based on strategy
+        if training_strategy == "interleaved":
+            self._train = functools.partial(
+                train_interleaved,
+                n_steps=self.n_steps,
+                early_stop_cfg=self.early_stop_cfg,
+            )
+        elif training_strategy == "sequential":
+            n_steps_b = self.strategy_cfg.get("n_steps_b", self.n_steps // 2)
+            n_steps_eta = self.strategy_cfg.get("n_steps_eta", self.n_steps - n_steps_b)
+            self._train = functools.partial(
+                train_two_phase,
+                n_steps_b=n_steps_b,
+                n_steps_eta=n_steps_eta,
+                early_stop_cfg=self.early_stop_cfg,
+            )
+        else:
+            raise ValueError(f"unknown training_strategy: {training_strategy!r}")
 
     def init_model(self) -> None:
         """build net_b and net_eta as MLPs; EMA is constructed in fit."""
@@ -272,10 +300,10 @@ class TriangularVFMV1(ELDR):
                 target = eval_true_ldrs.to(predicted.device)
                 return torch.abs(predicted - target).mean()
 
-        # call shared training orchestrator. wrapped callables are model_b/model_eta;
-        # raw nets are model_module_b/model_module_eta (params, device, EMA, train/eval).
-        # train_interleaved gains model_module_b/eta per spec_trainer.md.
-        train_interleaved(
+        # create metadata dict and call training function via unified interface
+        meta_out: dict = {}
+
+        self._train(
             model_b=model_b_to_train,
             model_eta=model_eta_to_train,
             model_module_b=self.net_b,
@@ -287,7 +315,6 @@ class TriangularVFMV1(ELDR):
             loss_eta=loss_eta,
             optim_b=optim_b,
             optim_eta=optim_eta,
-            n_steps=self.n_steps,
             batch_size=self.batch_size,
             time_sampler=self.time,
             scheduler_b=sched_b,
@@ -300,7 +327,12 @@ class TriangularVFMV1(ELDR):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            _meta_out=meta_out,
         )
+
+        # extract metadata
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
         # finalize networks to eval mode
         self.net_b.eval()

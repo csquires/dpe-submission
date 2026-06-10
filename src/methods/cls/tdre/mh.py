@@ -22,11 +22,13 @@ class MultiHeadTDRE(DRE):
         waypoint_builder: WaypointBuilder1D = DefaultWaypointBuilder1D(),
         num_waypoints: int = 10,
         device: str = "cuda",
+        early_stop_cfg: dict | None = None,
     ) -> None:
         self.device = device
         self.num_waypoints = num_waypoints
         self.classifier = classifier.to(self.device)
         self.waypoint_builder = waypoint_builder
+        self.early_stop_cfg = early_stop_cfg
 
         if self.classifier.num_heads != num_waypoints - 1:
             raise ValueError(
@@ -52,6 +54,9 @@ class MultiHeadTDRE(DRE):
             eval_data: optional dict with keys "pstar" and "true_ldrs" for evaluation
             step_cb_interval: number of steps between callback invocations (default: 50)
         """
+        # initialize metadata container for early stopping info
+        meta_out: dict = {}
+
         # build waypoints: [num_waypoints, batch_size, dim]
         waypoint_samples = self.waypoint_builder.build_waypoints(
             samples_p0, samples_p1, self.num_waypoints
@@ -99,7 +104,13 @@ class MultiHeadTDRE(DRE):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+
+        # extract training metadata
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
     def predict_ldr(
         self,

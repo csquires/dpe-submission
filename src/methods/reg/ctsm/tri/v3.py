@@ -9,6 +9,7 @@ import warnings
 import torch
 
 from ....common.base import ELDR
+from ....common.early_stop import make_early_stopper
 from ...common._cfgs import (
     OptimCfg, SchedCfg, EmaCfg,
     make_optim, make_sched, make_ema,
@@ -62,6 +63,7 @@ class TriangularCTSM2D(ELDR):
         integration_steps: int = 200,
         activation: str = "elu",
         reweight: bool = False,
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """Construct TriangularCTSM2D with four-slot surface.
 
@@ -99,6 +101,7 @@ class TriangularCTSM2D(ELDR):
         self.integration_steps = integration_steps
         self.activation = activation
         self.reweight = reweight
+        self.early_stop_cfg = early_stop_cfg
 
         # resolve device
         if device is None:
@@ -237,8 +240,15 @@ class TriangularCTSM2D(ELDR):
         do_sched = scheduler.step if scheduler is not None else (lambda: None)
         do_ema = (lambda: ema_obj.update(model)) if ema_obj is not None else (lambda: None)
 
+        # early-stop is opt-in. when disabled, loop is byte-identical to pre-refactor.
+        es_enabled = self.early_stop_cfg is not None
+        if es_enabled:
+            observe, should_stop = make_early_stopper(self.early_stop_cfg)
+        final_step = self.n_steps
+        stop_reason = None
+
         # training loop
-        for epoch in range(self.n_steps):
+        for step in range(self.n_steps):
             # bootstrap minibatches
             idx0 = torch.randint(0, n0, (self.batch_size,), device=device)  # [B]
             idx1 = torch.randint(0, n1, (self.batch_size,), device=device)  # [B]
@@ -282,6 +292,16 @@ class TriangularCTSM2D(ELDR):
             do_sched()
             do_ema()
             do_report()
+            if es_enabled:
+                observe(step + 1, loss.item())
+                stop, reason = should_stop()
+                if stop:
+                    final_step = step + 1
+                    stop_reason = reason
+                    break
+
+        self._final_step = final_step
+        self._stop_reason = stop_reason
 
         self.model.eval()
         self.ema_obj = ema_obj

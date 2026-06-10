@@ -23,6 +23,7 @@ class TabularPluginDRE(DRE):
         decode: str = "argmax",
         smoothing_alpha: float = 0.5,
         device: str = "cuda",
+        early_stop_cfg: dict | None = None,
     ):
         """initialize estimator and validate configuration.
 
@@ -36,6 +37,7 @@ class TabularPluginDRE(DRE):
             decode: decoding strategy. argmax for onehot, "argmax" or "nn" for blobs/flows
             smoothing_alpha: laplace smoothing parameter (> 0)
             device: torch device
+            early_stop_cfg: early stopping configuration (unused for closed-form estimator)
         """
         enc_type = encoding_cfg["type"]
         if enc_type == "onehot_joint":
@@ -53,6 +55,7 @@ class TabularPluginDRE(DRE):
         self.decode = decode
         self.smoothing_alpha = smoothing_alpha
         self.device = device
+        self.early_stop_cfg = early_stop_cfg
         self._d_O_hat = None
         self._d_E_hat = None
         self._fitted = False
@@ -77,6 +80,8 @@ class TabularPluginDRE(DRE):
         self._d_E_hat = count_and_smooth(s_E, a_E, self.n_states, self.n_actions, self.smoothing_alpha).cpu()
 
         self._fitted = True
+        self._final_step = 0
+        self._stop_reason = None
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """compute log-density-ratio at query points."""

@@ -21,6 +21,7 @@ class MultiHeadTriangularTDRE(ELDR):
         waypoint_builder: TriangularWaypointBuilder1D | None = None,
         num_waypoints: int = 5,
         device: str = "cuda",
+        early_stop_cfg: dict | None = None,
     ) -> None:
         """
         Initialize MultiHeadTriangularTDRE.
@@ -30,10 +31,12 @@ class MultiHeadTriangularTDRE(ELDR):
             waypoint_builder: triangular waypoint builder (default: None, creates default)
             num_waypoints: number of waypoints in triangular path (default: 5)
             device: device to run classifier on (default: "cuda")
+            early_stop_cfg: early stopping config dict (default: None)
         """
         self.device = device
         self.num_waypoints = num_waypoints
         self.classifier = classifier.to(self.device)
+        self.early_stop_cfg = early_stop_cfg
 
         # validate head count
         if self.classifier.num_heads != num_waypoints - 1:
@@ -72,6 +75,9 @@ class MultiHeadTriangularTDRE(ELDR):
             eval_data: optional dict with keys "pstar" and "true_ldrs" for evaluation
             step_cb_interval: number of steps between callback invocations (default: 50)
         """
+        # initialize metadata dict for early stopping tracking
+        meta_out: dict = {}
+
         # build waypoints: [num_waypoints, batch_size, dim]
         waypoint_samples = self.waypoint_builder.build_waypoints(
             samples_p0=samples_p0,
@@ -123,7 +129,13 @@ class MultiHeadTriangularTDRE(ELDR):
             step_cb=step_cb,
             eval_fn=eval_fn,
             step_cb_interval=step_cb_interval,
+            early_stop_cfg=self.early_stop_cfg,
+            _meta_out=meta_out,
         )
+
+        # extract early stopping metadata
+        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._stop_reason = meta_out.get("stop_reason", None)
 
     def predict_ldr(self, xs: torch.Tensor) -> torch.Tensor:
         """

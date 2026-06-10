@@ -117,7 +117,9 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
     hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 2e-1, log=True)
+    # gamma_min pinned 0: eig V1 and V2 winners both fully inert (gmin << g(eps)).
+    # matches V3 convention; precond is the principled gamma-tail control.
+    hp["gamma_min"] = 0.0
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 

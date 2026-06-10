@@ -144,6 +144,8 @@ def main() -> None:
                     "elapsed_seconds": float(elapsed),
                     "error": err or "no result",
                     "ok": False,
+                    "final_step": -1,
+                    "stop_reason": "error",
                 },
             )
             print(f"[fail] cell={cell_idx} elapsed={elapsed:.1f}s err={(err or 'no result')[:80]}")
@@ -158,6 +160,7 @@ def main() -> None:
         if "true_ldrs" in result:
             payload["true_ldrs"] = np.asarray(result["true_ldrs"])
 
+        meta = getattr(adapter, "_last_meta", {}) or {}
         _atomic_h5_write(
             out_path,
             payload=payload,
@@ -169,6 +172,8 @@ def main() -> None:
                 "hyperparams": hp,
                 "elapsed_seconds": float(elapsed),
                 "ok": True,
+                "final_step": meta.get("final_step", -1) if meta.get("final_step") is not None else -1,
+                "stop_reason": meta.get("stop_reason") or "",
             },
         )
         n_done += 1

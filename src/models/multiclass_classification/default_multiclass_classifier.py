@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from src.models.multiclass_classification.multiclass_classifier import MulticlassClassifier
 from src.methods.common._report import _make_report
+from src.methods.common.early_stop import make_early_stopper
 
 
 class DefaultMulticlassClassifier(MulticlassClassifier):
@@ -57,6 +58,8 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         step_cb: Callable[[int, float], None] | None = None,
         eval_fn: Callable[[Any], torch.Tensor] | None = None,
         step_cb_interval: int = 50,
+        early_stop_cfg: dict | None = None,
+        _meta_out: dict | None = None,
     ) -> None:
         """train via AdamW + CrossEntropyLoss for self.n_steps optimizer updates.
 
@@ -72,7 +75,13 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
         n = xs.shape[0]
         bs = self.batch_size if (self.batch_size and self.batch_size < n) else n
         do_report = _make_report(step_cb, step_cb_interval, eval_fn, self, self)
-        for _ in range(self.n_steps):
+        # early-stop is opt-in. when disabled, loop is byte-identical to pre-refactor.
+        es_enabled = early_stop_cfg is not None
+        if es_enabled:
+            observe, should_stop = make_early_stopper(early_stop_cfg)
+        final_step = self.n_steps
+        stop_reason = None
+        for step in range(self.n_steps):
             if bs == n:
                 xb, yb = xs, ys
             else:
@@ -84,6 +93,16 @@ class DefaultMulticlassClassifier(MulticlassClassifier):
             l.backward()
             optimizer.step()
             do_report()
+            if es_enabled:
+                observe(step + 1, l.item())
+                stop, reason = should_stop()
+                if stop:
+                    final_step = step + 1
+                    stop_reason = reason
+                    break
+        if _meta_out is not None:
+            _meta_out["final_step"] = final_step
+            _meta_out["stop_reason"] = stop_reason
 
     def predict_logits(self, xs: torch.Tensor) -> torch.Tensor:
         self.eval()

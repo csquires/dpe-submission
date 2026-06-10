@@ -119,7 +119,9 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
     hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 2e-1, log=True)
+    # gamma_min pinned 0: eig V1 and V2 winners both landed at < 0.05 * g(eps),
+    # i.e. fully inert. matches TriVFM V3 convention.
+    hp["gamma_min"] = 0.0
 
     if psb:
         # V1-only: vertex_band controls sampler-side vertex excision and
@@ -177,7 +179,8 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     hp["sched"] = sched
     hp["t2_max"] = trial.suggest_float("t2_max", 0.6, 0.9)
     hp["path_height"] = trial.suggest_float("path_height", 1.0, 2.0)
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 2e-1, log=True)
+    # gamma_min pinned 0: eig V3 winner sat at 0.05 * g(eps), fully inert.
+    hp["gamma_min"] = 0.0
     hp["reweight"] = True  # pinned True for V3 CTSM (per user direction 2026-05-31):
     # 1/gamma^2 is the analytically-correct outer weight for time-score regression
     # targets. don't search.
