@@ -71,8 +71,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # conditional params (reweight branch removed: precond=True masks it).
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
-    if inner_eps == 0.0:
-        hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
 
     # unconditional always-active params
     hp["n_shared_layers"] = trial.suggest_categorical("n_shared_layers", [1, 2, 3])
@@ -94,8 +93,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
-    if "gamma_min" in hp:
-        hp["test_gamma_min"] = hp["gamma_min"]
+    hp["test_gamma_min"] = hp["gamma_min"]
     if "k" in hp:
         hp["test_k"] = hp["k"]
 
