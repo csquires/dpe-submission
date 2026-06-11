@@ -27,7 +27,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import rankdata
 
 from ex.utils.hpo.optuna.study_config import load_config
 
@@ -141,26 +140,28 @@ def aggregate_candidate(cand_dir: Path) -> dict | None:
 
 
 def pick_winner(summaries: list[dict]) -> tuple[dict | None, dict[int, dict]]:
-    """phase 2: rank candidates by Borda mean-rank over a shared cell set.
+    """phase 2: rank candidates by median normalised MAE regret over shared cells.
 
     procedure:
-        per_cell_at_best across candidates --> shared cells (>=COVERAGE_THRESHOLD
+        per_cell_at_best across candidates --> shared cells (>= COVERAGE_THRESHOLD
         of candidates).
         keep candidates that cover all shared cells.
         M[cand, cell] = MAE at cand's best_step on shared cells.
-        rank candidates per cell (rank 1 = lowest MAE).
-        mean_rank[cand] = mean across cells; tiebreak by median MAE on shared.
-        winner = argmin (mean_rank, median_on_shared).
+        per cell, normalise: regret[c, cell] = (M[c, cell] - min_c M) / (max - min).
+            ties (max == min, all candidates agree) collapse to 0.
+            non-finite MAE for a candidate maps to NaN.
+        per candidate, score = median over shared cells of regret.
+        winner = argmin score. tiebreak: median MAE on shared cells.
 
     args:
         summaries: list of candidate summary dicts from aggregate_candidate.
 
     returns:
         (winner_summary, per_candidate_metrics)
-        winner_summary is augmented with selection metadata; if no candidate
-        has cell data it falls back to argmin best_value_median.
-        per_candidate_metrics: {trial_number: {"mean_rank", "median_on_shared",
-        "n_shared_present"}} for joining onto the CSV.
+        winner_summary augmented with selection metadata; if no candidate has
+        cell data it falls back to argmin best_value_median.
+        per_candidate_metrics: {trial_number: {"median_regret",
+        "median_on_shared", "n_shared_present"}}.
     """
     metrics: dict[int, dict] = {}
     cands = [s for s in summaries if s.get("per_cell_at_best")]
@@ -201,32 +202,47 @@ def pick_winner(summaries: list[dict]) -> tuple[dict | None, dict[int, dict]]:
                       key=lambda s: -sum(1 for c in shared
                                          if c in s["per_cell_at_best"]))[:1]
 
-    mat = np.array([[s["per_cell_at_best"][c] for c in shared] for s in kept])
-    ranks = np.apply_along_axis(lambda col: rankdata(col, method="average"),
-                                axis=0, arr=mat)
-    mean_rank = ranks.mean(axis=1)
-    medians = np.median(mat, axis=1)
+    # M[cand, cell]: MAE at each candidate's own best_step on shared cells.
+    mat = np.array([[s["per_cell_at_best"][c] for c in shared] for s in kept],
+                   dtype=np.float64)
+    n_cand, n_cell = mat.shape
 
+    # per-cell normalisation across candidates.
+    finite_mask = np.isfinite(mat)
+    cell_min = np.where(finite_mask, mat,  np.inf).min(axis=0)   # (n_cell,)
+    cell_max = np.where(finite_mask, mat, -np.inf).max(axis=0)
+    span = cell_max - cell_min
+    denom = np.where(span > 0, span, np.nan)
+    regret = (mat - cell_min[None]) / denom[None]
+    tied = (span == 0) & np.isfinite(cell_min)
+    regret = np.where(np.broadcast_to(tied[None], regret.shape) & finite_mask,
+                      0.0, regret)
+
+    # median normalised regret per candidate across cells.
+    point = np.nanmedian(regret, axis=1)
+
+    medians = np.median(mat, axis=1)
     for i, s in enumerate(kept):
         tn = s["candidate_trial_number"]
         if tn is None:
             continue
         metrics[int(tn)] = {
-            "mean_rank": float(mean_rank[i]),
-            "median_on_shared": float(medians[i]),
-            "n_shared_present": len(shared),
+            "median_regret":     float(point[i]) if np.isfinite(point[i]) else None,
+            "median_on_shared":  float(medians[i]),
+            "n_shared_present":  len(shared),
         }
 
+    sortable = np.where(np.isfinite(point), point, np.inf)
     order = sorted(range(len(kept)),
-                   key=lambda i: (mean_rank[i], medians[i]))
+                   key=lambda i: (sortable[i], medians[i]))
     win = dict(kept[order[0]])
     win["selection"] = {
-        "metric": "borda_meanrank",
+        "metric": "median_normalised_regret",
         "coverage_threshold": COVERAGE_THRESHOLD,
         "n_shared_cells": len(shared),
-        "n_candidates_in_borda": len(kept),
-        "winner_mean_rank": float(mean_rank[order[0]]),
-        "winner_median_on_shared": float(medians[order[0]]),
+        "n_candidates_in_pool": len(kept),
+        "winner_median_regret":     float(point[order[0]]) if np.isfinite(point[order[0]]) else None,
+        "winner_median_on_shared":  float(medians[order[0]]),
         "tiebreak": "median_on_shared",
     }
     return win, metrics
@@ -287,16 +303,13 @@ def main() -> int:
         return 1
 
     df = pd.DataFrame(rows)
-    df["mean_rank"] = df["trial_number"].map(
-        lambda tn: per_cand_metrics.get(int(tn), {}).get("mean_rank")
-        if tn is not None else None
-    )
-    df["median_on_shared"] = df["trial_number"].map(
-        lambda tn: per_cand_metrics.get(int(tn), {}).get("median_on_shared")
-        if tn is not None else None
-    )
+    for col in ("median_regret", "median_on_shared"):
+        df[col] = df["trial_number"].map(
+            lambda tn, c=col: per_cand_metrics.get(int(tn), {}).get(c)
+            if tn is not None else None
+        )
     df = df.sort_values(
-        ["mean_rank", "median_on_shared", "best_value_median"],
+        ["median_regret", "median_on_shared", "best_value_median"],
         na_position="last",
     ).reset_index(drop=True)
     summary_csv = root / "aggregate_summary.csv"
