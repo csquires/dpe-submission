@@ -140,7 +140,7 @@ def aggregate_candidate(cand_dir: Path) -> dict | None:
 
 
 def pick_winner(summaries: list[dict]) -> tuple[dict | None, dict[int, dict]]:
-    """phase 2: rank candidates by median normalised MAE regret over shared cells.
+    """phase 2: rank candidates by median normalized MAE regret over shared cells.
 
     procedure:
         per_cell_at_best across candidates --> shared cells (>= COVERAGE_THRESHOLD
@@ -218,7 +218,7 @@ def pick_winner(summaries: list[dict]) -> tuple[dict | None, dict[int, dict]]:
     regret = np.where(np.broadcast_to(tied[None], regret.shape) & finite_mask,
                       0.0, regret)
 
-    # median normalised regret per candidate across cells.
+    # median normalized regret per candidate across cells.
     point = np.nanmedian(regret, axis=1)
 
     medians = np.median(mat, axis=1)
@@ -237,7 +237,7 @@ def pick_winner(summaries: list[dict]) -> tuple[dict | None, dict[int, dict]]:
                    key=lambda i: (sortable[i], medians[i]))
     win = dict(kept[order[0]])
     win["selection"] = {
-        "metric": "median_normalised_regret",
+        "metric": "median_normalized_regret",
         "coverage_threshold": COVERAGE_THRESHOLD,
         "n_shared_cells": len(shared),
         "n_candidates_in_pool": len(kept),
