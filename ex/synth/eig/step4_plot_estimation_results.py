@@ -1,4 +1,4 @@
-"""plot per-method normalised EIG regret vs design beta, split into 4 panels.
+"""plot per-method normalized EIG regret vs design beta, split into 4 panels.
 
 line = median-of-medians regret per beta (see step3); shaded band = IQR of
 1000 bootstrap resamples (priors and designs drawn with replacement).

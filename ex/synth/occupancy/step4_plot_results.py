@@ -2,7 +2,10 @@
 Step 4: Plot Results for SMODICE ELDR Estimation
 
 Line plots of MAE / ELDR error vs K1 for each beta panel, with translucent
-fill_between error bands (±1 SE). Colors match mnist_eldr_estimation step4.
+fill_between error bands. One line figure per METHOD_GROUPS family,
+styled via ex.utils.plot_style
+
+Box plots (unchanged) are also produced per metric.
 """
 import argparse
 import os
@@ -16,32 +19,14 @@ import yaml
 
 matplotlib.use("Agg")
 
-# Colors matching mnist_eldr_estimation/step4_plot_results.py for shared methods.
-# New smodice-only methods get distinct colors from the extended palette.
-METHOD_COLORS = {
-    # shared with mnist
-    "TriangularMDRE":           "blue",
-    "MultiHeadTriangularTDRE":  "orange",
-    "VFM":                      "green",
-    "TSM":                      "red",
-    "CTSM":                     "purple",
-    "TriangularCTSM_V1":        "brown",
-    "BDRE":                     "cyan",
-    "MDRE_15":                  "magenta",
-    "TriangularTSM":            "gray",
-    # smodice-specific
-    "MultiHeadTDRE":            "#f7b6d2",  # light pink
-    "FMDRE":                    "#ff9896",  # light red
-    "FMDRE_S2":                 "#aec7e8",  # light blue
-    "TriangularFMDRE":          "#c5b0d5",  # light purple
-    "TriangularCTSM_V2":        "#c7c7c7",  # light gray
-    "TriangularCTSM_V3":        "#9edae5",  # light cyan
-    "TriangularVFM_V1":         "#bcbd22",  # olive
-    "TriangularVFM_V2":         "#393b79",  # dark blue
-    "TriangularVFM_V3":         "#637939",  # dark green
-}
+from ex.utils.plot_style import (
+    apply as apply_style,
+    style_for,
+    METHOD_GROUPS,
+    GROUP_LABEL,
+    ERROR_BAND_ALPHA,
+)
 
-ERROR_BAND_ALPHA = 0.2
 FONT_SIZE = 12
 
 
@@ -72,68 +57,60 @@ def load_summary(h5_path, metric):
 
 
 def plot_metric(results, k1_values, beta_values, metric, figures_dir):
+    """one figure per METHOD_GROUPS family; within each, n_beta sharey subplots
+    plotting metric mean vs K1 with +/- SE bands. shared y-range across all
+    family figures so they are visually comparable side-by-side.
+    """
     n_beta = len(beta_values)
-    methods = sorted(results.keys())
+    apply_style()
 
-    style_path = "full-width.mplstyle"
-    if os.path.exists(style_path):
-        plt.style.use(style_path)
-    else:
-        sns.set_style("whitegrid")
-        matplotlib.rcParams["font.size"] = FONT_SIZE
+    # compute shared y_max across all methods present, all betas, mean + SE.
+    y_max = 0.0
+    for m, (mean, se) in results.items():
+        upper = np.nanmax(mean + se)
+        if np.isfinite(upper):
+            y_max = max(y_max, float(upper))
+    y_max *= 1.05 if y_max > 0 else 1.0
 
-    fig, axes = plt.subplots(
-        1, n_beta,
-        figsize=(5 * n_beta, 4),
-        constrained_layout=False,
-        sharey=True,
-    )
-    fig.subplots_adjust(bottom=0.32, wspace=0.08)
-
-    if n_beta == 1:
-        axes = [axes]
-
-    for beta_idx, ax in enumerate(axes):
-        beta_val = beta_values[beta_idx]
-        for method in methods:
-            mean, se = results[method]
-            y = mean[:, beta_idx]
-            y_lo = y - se[:, beta_idx]
-            y_hi = y + se[:, beta_idx]
-            color = METHOD_COLORS.get(method, "#888888")
-            ax.plot(k1_values, y, label=method, color=color,
-                    linewidth=1.5, marker="o", markersize=4)
-            ax.fill_between(k1_values, y_lo, y_hi, color=color, alpha=ERROR_BAND_ALPHA)
-
-        ax.set_xlabel("K1", fontsize=FONT_SIZE)
-        ax.set_title(f"beta = {beta_val:.2f}", fontsize=FONT_SIZE)
-        ax.set_xticks(k1_values)
-        ax.set_xticklabels([f"{k:.1f}" for k in k1_values])
-        ax.grid(True, alpha=0.3)
-        if beta_idx == 0:
-            ylabel = "Pointwise LDR MAE" if metric == "pointwise_mae" else "ELDR Error"
-            ax.set_ylabel(ylabel, fontsize=FONT_SIZE)
-
-    # shared legend below all panels
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles, labels,
-        loc="lower center",
-        ncol=6,
-        fontsize=9,
-        bbox_to_anchor=(0.5, 0.01),
-        framealpha=0.9,
-    )
-
-    title = "Pointwise LDR MAE" if metric == "pointwise_mae" else "ELDR Error"
-    fig.suptitle(f"SMODICE ELDR Estimation — {title}", fontsize=13, fontweight="bold")
-
+    metric_label = "Pointwise LDR MAE" if metric == "pointwise_mae" else "ELDR Error"
     os.makedirs(figures_dir, exist_ok=True)
-    for ext in ("pdf", "png"):
-        path = os.path.join(figures_dir, f"smodice_{metric}.{ext}")
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        print(f"Saved: {path}")
-    plt.close(fig)
+
+    for group, members in METHOD_GROUPS.items():
+        present = [m for m in members if m in results]
+        if not present:
+            continue
+        fig, axes = plt.subplots(
+            1, max(1, n_beta),
+            figsize=(5 * max(1, n_beta), 4),
+            sharey=True,
+        )
+        if n_beta == 1:
+            axes = [axes]
+        for beta_idx, ax in enumerate(axes):
+            for m in present:
+                mean, se = results[m]
+                y = mean[:, beta_idx]
+                lo = y - se[:, beta_idx]
+                hi = y + se[:, beta_idx]
+                kw = style_for(m)
+                ax.plot(k1_values, y, label=m, **kw)
+                ax.fill_between(k1_values, lo, hi,
+                                color=kw["color"], alpha=ERROR_BAND_ALPHA, linewidth=0)
+            ax.set_xlabel("K1")
+            ax.set_title(f"beta = {beta_values[beta_idx]:.2f}")
+            ax.set_xticks(k1_values)
+            ax.set_xticklabels([f"{k:.1f}" for k in k1_values])
+            ax.set_ylim(0, y_max)
+            if beta_idx == 0:
+                ax.set_ylabel(metric_label)
+            ax.legend(loc="best")
+        fig.suptitle(f"{GROUP_LABEL[group]} — {metric_label}")
+        fig.tight_layout()
+        for ext in ("pdf", "png"):
+            path = os.path.join(figures_dir, f"smodice_{metric}_{group}.{ext}")
+            fig.savefig(path)
+            print(f"Saved: {path}")
+        plt.close(fig)
 
 
 COLOR_NON_TRI = "#4878d0"   # steel blue

@@ -1,9 +1,9 @@
 """
 Step 4: Plot Results for Pendulum ELDR Estimation
 
-Load HDF5 summaries (flat key schema) and generate two publication-grade figures:
-1. K1 vs pointwise MAE (log-log line plot with translucent error bands)
-2. Integrated ELDR error by method (bar chart)
+Generate per-family line figures (K1 vs pointwise MAE with +/- SE band) using
+ex.utils.plot_style, plus the integrated ELDR error bar chart. The bar chart
+keeps its original styling; the line plot is split across METHOD_GROUPS.
 """
 import matplotlib
 matplotlib.use('Agg')
@@ -15,18 +15,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 
-
-# method colors: hex palette borrowed from smodice, mapped to pendulum methods
-METHOD_COLORS = {
-    'BDRE': '#2ca02c',                   # green
-    'MDRE': '#d62728',                   # red
-    'TriangularMDRE': '#ff7f0e',         # orange
-    'MultiHeadTriangularTDRE': '#9467bd', # purple
-    'TSM': '#8c564b',                    # brown
-    'CTSM': '#e377c2',                   # pink
-    'TriangularCTSM': '#7f7f7f',         # gray
-    'TriangularVFM': '#bcbd22',          # olive
-}
+from ex.utils.plot_style import (
+    apply as apply_style,
+    style_for,
+    METHOD_GROUPS,
+    GROUP_LABEL,
+    ERROR_BAND_ALPHA,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -157,70 +152,55 @@ def plot_k1_vs_mae(
     beta_value: float,
     out_dir: str
 ) -> None:
+    """one figure per METHOD_GROUPS family, log-log K1 vs MAE with +/- SE band.
+    shared y-range across all family figures so they are visually comparable
+    side-by-side.
     """
-    Plot K1 vs pointwise MAE (log-log, line+band per method).
+    apply_style()
 
-    Emits {out_dir}/k1_vs_mae.pdf and .png
+    # compute shared y range across all methods present (log scale, floor 1e-4).
+    y_max = 0.0
+    for m, d in results.items():
+        if 'mae_mean' not in d: continue
+        upper = np.nanmax(d['mae_mean'] + d['mae_se'])
+        if np.isfinite(upper):
+            y_max = max(y_max, float(upper))
+    y_max *= 1.2 if y_max > 0 else 1.0
+    y_floor = 1e-4
 
-    composition:
-      - x-axis: k1_values, log scale
-      - y-axis: pointwise_mae, log scale; floor at 1e-4
-      - one line per method; translucent ±SE band (alpha=0.2)
-      - title: f"Pointwise LDR MAE (beta = {beta_value})"
-      - legend: method names (sorted), positioned 'best'
-      - grid: alpha=0.3
-      - dpi: 300
-      - figsize: (8, 5)
-    """
-    fig, ax = plt.subplots(figsize=(8, 5))
-
-    # iterate over sorted methods
-    for method in sorted(results.keys()):
-        data = results[method]
-        if 'mae_mean' not in data:
+    os.makedirs(out_dir, exist_ok=True)
+    for group, members in METHOD_GROUPS.items():
+        present = [m for m in members if m in results and 'mae_mean' in results[m]]
+        if not present:
             continue
-
-        mae_mean = data['mae_mean']  # [G_k1]
-        mae_se = data['mae_se']  # [G_k1]
-
-        # check for all-NaN; skip if so
-        if np.all(np.isnan(mae_mean)):
-            warnings.warn(f'{method}: all-NaN mae_mean; skipping plot')
-            continue
-
-        # floor MAE at 1e-4 to prevent -inf on log scale
-        mae_floored = np.maximum(mae_mean, 1e-4)  # [G_k1]
-
-        # get color
-        color = METHOD_COLORS.get(method, 'gray')
-
-        # plot line
-        ax.plot(k1_values, mae_floored, label=method, color=color, linewidth=2)
-
-        # add error band if SE is not all-NaN
-        if not np.all(np.isnan(mae_se)):
-            ax.fill_between(k1_values, mae_floored - mae_se, mae_floored + mae_se,
-                           color=color, alpha=0.2)
-
-    # configure axes
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    ax.set_xlabel('K1', fontsize=12)
-    ax.set_ylabel('Pointwise MAE', fontsize=12)
-    ax.set_title(f'Pointwise LDR MAE (beta = {beta_value})', fontsize=12)
-    ax.legend(loc='best', fontsize=12)
-    ax.grid(True, alpha=0.3)
-
-    # save figures
-    pdf_path = os.path.join(out_dir, 'k1_vs_mae.pdf')
-    png_path = os.path.join(out_dir, 'k1_vs_mae.png')
-
-    fig.savefig(pdf_path, dpi=300, bbox_inches='tight')
-    fig.savefig(png_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-
-    print(f'Figure saved to: {pdf_path}')
-    print(f'PNG saved to: {png_path}')
+        fig, ax = plt.subplots(figsize=(6, 4))
+        for method in present:
+            data = results[method]
+            mae_mean = data['mae_mean']
+            mae_se = data['mae_se']
+            if np.all(np.isnan(mae_mean)):
+                continue
+            mae_floored = np.maximum(mae_mean, y_floor)
+            kw = style_for(method)
+            ax.plot(k1_values, mae_floored, label=method, **kw)
+            if not np.all(np.isnan(mae_se)):
+                lo = np.maximum(mae_floored - mae_se, y_floor)
+                hi = mae_floored + mae_se
+                ax.fill_between(k1_values, lo, hi,
+                                color=kw["color"], alpha=ERROR_BAND_ALPHA, linewidth=0)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('K1')
+        ax.set_ylabel('Pointwise LDR MAE')
+        ax.set_title(f'{GROUP_LABEL[group]} (beta = {beta_value})')
+        ax.set_ylim(y_floor, y_max)
+        ax.legend(loc='best')
+        fig.tight_layout()
+        for ext in ('pdf', 'png'):
+            path = os.path.join(out_dir, f'k1_vs_mae_{group}.{ext}')
+            fig.savefig(path)
+        print(f"saved k1_vs_mae_{group}.{{pdf,png}}")
+        plt.close(fig)
 
 
 def plot_eldr_err_bars(
@@ -272,7 +252,7 @@ def plot_eldr_err_bars(
     # create bar plot
     x_pos = np.arange(len(methods))
     for i, method in enumerate(methods):
-        color = METHOD_COLORS.get(method, 'gray')
+        color = style_for(method)["color"]
         ax.bar(x_pos[i], eldr_means[i], yerr=eldr_ses[i],
                color=color, capsize=5, alpha=0.8, edgecolor='black', linewidth=1)
 

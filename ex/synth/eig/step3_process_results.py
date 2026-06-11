@@ -1,4 +1,4 @@
-"""reduce raw eig estimates to per-method per-beta normalised regret.
+"""reduce raw eig estimates to per-method per-beta normalized regret.
 
 pipeline (per method m):
   1. per cell c = (prior p, beta b, design idx d): err[m, c] = |est_eig - true_eig|.
@@ -78,7 +78,7 @@ for m_idx, name in enumerate(method_names):
     cell_err[~np.isfinite(cell_err)] = np.nan
     err[m_idx] = cell_err.reshape(P, B, D)
 
-# per-cell best / worst across methods -> normalised regret.
+# per-cell best / worst across methods -> normalized regret.
 finite_mask = np.isfinite(err)
 err_for_min = np.where(finite_mask, err, np.inf)
 err_for_max = np.where(finite_mask, err, -np.inf)
