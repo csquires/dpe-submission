@@ -109,7 +109,7 @@ class MultiHeadTDRE(DRE):
         )
 
         # extract training metadata
-        self._final_step = meta_out.get("final_step", self.n_steps)
+        self._final_step = meta_out.get("final_step", self.classifier.n_steps)
         self._stop_reason = meta_out.get("stop_reason", None)
 
     def predict_ldr(
