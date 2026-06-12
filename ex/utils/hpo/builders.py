@@ -134,7 +134,7 @@ def build_TSM(input_dim: int, device: str | torch.device, num_waypoints: int, **
     explicitly via the cfg helpers, never forwarded raw.
     """
     eps = flat_hp.get("eps", 1e-3)
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return TSM(
         input_dim=input_dim,
         device=device,
@@ -176,7 +176,7 @@ def build_CTSM(input_dim: int, device: str | torch.device, num_waypoints: int, *
         flat_hp.get("time_dist", "uniform"), eps=path.eps,
         apply_iw=flat_hp.get("apply_iw", True),
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return CTSM(
         input_dim=input_dim,
         device=device,
@@ -219,7 +219,7 @@ def build_TriangularTSM(input_dim: int, device: str | torch.device, num_waypoint
     a noise schedule, so there is no sched/sigma wiring here.
     """
     eps = flat_hp.get("eps", 1e-3)
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return TriangularTSM(
         input_dim=input_dim,
         device=device,
@@ -264,7 +264,7 @@ def build_VFM(input_dim: int, device: str | torch.device, num_waypoints: int, **
         flat_hp.get("time_dist", "uniform"), eps=path.eps,
         apply_iw=flat_hp.get("apply_iw", True),
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return make_vfm(
         input_dim=input_dim,
         device=device,
@@ -300,7 +300,7 @@ def build_FMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, 
     """
     eps = flat_hp.get("eps", 1e-3)
     n_hidden_layers = flat_hp.get("n_hidden_layers", 3)
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return FMDRE(
         input_dim=input_dim,
         device=device,
@@ -334,7 +334,7 @@ def build_FMDRE_S2(input_dim: int, device: str | torch.device, num_waypoints: in
     """
     eps = flat_hp.get("eps", 1e-3)
     n_hidden_layers = flat_hp.get("n_hidden_layers", 3)
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return FMDRE_S2(
         input_dim=input_dim,
         device=device,
@@ -370,7 +370,7 @@ def build_TriangularFMDRE(input_dim: int, device: str | torch.device, num_waypoi
     """
     eps = flat_hp.get("eps", 1e-3)
     n_hidden_layers = flat_hp.get("n_hidden_layers", 3)
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return TriangularFMDRE(
         input_dim=input_dim,
         device=device,
@@ -411,7 +411,7 @@ def build_MHTTDRE(input_dim: int, device: str | torch.device, num_waypoints: int
     midpoint_oversample = flat_hp.pop("midpoint_oversample", 0)
     gamma_power = flat_hp.pop("gamma_power", 1.0)
     vertex = flat_hp.pop("vertex", 0.5)
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     classifier = make_multi_head_binary_classifier(
         input_dim=input_dim,
         num_heads=nwp - 1,
@@ -446,7 +446,7 @@ def build_MHTDRE(input_dim: int, device: str | torch.device, num_waypoints: int,
     nwp = flat_hp.pop("num_waypoints", num_waypoints)
     if nwp is None:
         nwp = 10
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     classifier = make_multi_head_binary_classifier(
         input_dim=input_dim,
         num_heads=nwp - 1,
@@ -499,7 +499,7 @@ def build_TriangularCTSM_V1(input_dim: int, device: str | torch.device, num_wayp
         apply_iw=flat_hp.get("apply_iw", True),
         vertex=vertex, vertex_band=vertex_band, eps=path.eps,
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return TriangularCTSM(
         input_dim=input_dim,
         path=path,
@@ -546,7 +546,7 @@ def build_TriangularCTSM_V2(input_dim: int, device: str | torch.device, num_wayp
         flat_hp.get("time_dist", "uniform"), eps=path.eps,
         apply_iw=flat_hp.get("apply_iw", True),
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return TriangularCTSM(
         input_dim=input_dim,
         path=path,
@@ -592,7 +592,7 @@ def build_TriangularCTSM_V3(input_dim: int, device: str | torch.device, num_wayp
         make_uniform(eps=path.eps),
         make_uniform_scaled(eps=path.eps, max=flat_hp["t2_max"]),
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return TriangularCTSM2D(
         input_dim=input_dim,
         path=path,
@@ -645,7 +645,7 @@ def build_TriangularVFM_V1(input_dim: int, device: str | torch.device, num_waypo
         apply_iw=flat_hp.get("apply_iw", True),
         vertex=vertex, vertex_band=vertex_band, eps=path.eps,
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     training_strategy = flat_hp.get("training_strategy", "interleaved")
     strategy_cfg = flat_hp.get("strategy_cfg")
     return TriangularVFM(
@@ -701,7 +701,7 @@ def build_TriangularVFM_V2(input_dim: int, device: str | torch.device, num_waypo
         flat_hp.get("time_dist", "uniform"), eps=path.eps,
         apply_iw=flat_hp.get("apply_iw", True),
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     training_strategy = flat_hp.get("training_strategy", "interleaved")
     strategy_cfg = flat_hp.get("strategy_cfg")
     return TriangularVFM(
@@ -756,7 +756,7 @@ def build_TriangularVFM_V3(input_dim: int, device: str | torch.device, num_waypo
         make_uniform(eps=path.eps),
         make_uniform_scaled(eps=path.eps, max=flat_hp["t2_max"]),
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     training_strategy = flat_hp.get("training_strategy", "interleaved")
     strategy_cfg = flat_hp.get("strategy_cfg")
     return TriangularVFM2D(
@@ -817,7 +817,7 @@ def build_VFMOrthros(input_dim: int, device: str | torch.device, num_waypoints: 
         flat_hp.get("time_dist", "uniform"), eps=path.eps,
         apply_iw=flat_hp.get("apply_iw", True),
     )
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return VFMOrthros(
         input_dim=input_dim,
         path=path,
@@ -852,7 +852,7 @@ def build_BDRE(input_dim: int, device: str | torch.device, num_waypoints: int, *
     classifier_name defaults to "default"; override via flat_hp["classifier_name"].
     """
     classifier_name = flat_hp.pop("classifier_name", "default")
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     classifier = make_binary_classifier(name=classifier_name, input_dim=input_dim, **flat_hp)
     return BDRE(classifier=classifier, device=device, early_stop_cfg=early_stop_cfg)
 
@@ -867,7 +867,7 @@ def build_MDRE(input_dim: int, device: str | torch.device, num_waypoints: int, *
     if nwp is None:
         nwp = 10
     classifier_name = flat_hp.pop("classifier_name", "default")
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     classifier = make_multiclass_classifier(
         name=classifier_name, input_dim=input_dim, num_classes=nwp, **flat_hp,
     )
@@ -893,7 +893,7 @@ def build_TriangularMDRE(input_dim: int, device: str | torch.device, num_waypoin
     # estimator-only HPs popped before forwarding to classifier factory.
     # max_train_samples is a TriangularMDRE data cap (not an HPO knob).
     max_train_samples = flat_hp.pop("max_train_samples", None)
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     classifier = make_multiclass_classifier(
         name=classifier_name, input_dim=input_dim, num_classes=nwp, **flat_hp,
     )
@@ -917,7 +917,7 @@ def build_TabularPluginDRE(input_dim: int, device: str | torch.device, num_waypo
     TabularPluginDRE is a counting-based method with no HPO-tunable continuous
     parameters. all config is passed as fixed kwargs set by the experiment.
     """
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return TabularPluginDRE(
         n_states=flat_hp["n_states"],
         n_actions=flat_hp["n_actions"],
@@ -936,7 +936,7 @@ def build_SmoothedTabularPluginDRE(input_dim: int, device: str | torch.device, n
     continuous parameters. all config is passed as fixed kwargs set by the
     experiment.
     """
-    early_stop_cfg = flat_hp.get("early_stop_cfg")
+    early_stop_cfg = flat_hp.pop("early_stop_cfg", None)
     return SmoothedTabularPluginDRE(
         n_states=flat_hp["n_states"],
         n_actions=flat_hp["n_actions"],
