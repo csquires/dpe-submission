@@ -30,7 +30,7 @@ LINE_WIDTH = 1.8
 # panel layout: which methods are drawn on which subplot.
 METHOD_GROUPS: dict[str, list[str]] = {
     "vfm":      ["VFM", "TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3"],
-    "tsm_ctsm": ["TSM", "CTSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3"],
+    "tsm_ctsm": ["TSM", "TriangularTSM", "CTSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3"],
     "cls":      ["BDRE", "MDRE", "MultiHeadTDRE", "TriangularMDRE", "MultiHeadTriangularTDRE"],
     "fmdre":    ["FMDRE", "FMDRE_S2", "TriangularFMDRE"],
 }
@@ -46,7 +46,7 @@ GROUP_LABEL: dict[str, str] = {
 # head method anchors at the dark end and variants sweep lighter.
 METHOD_FAMILIES: dict[str, list[str]] = {
     "vfm":   ["VFM", "TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3"],
-    "tsm":   ["TSM"],
+    "tsm":   ["TSM", "TriangularTSM"],
     "ctsm":  ["CTSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3"],
     "bdre":  ["BDRE"],
     "mdre":  ["MDRE", "TriangularMDRE"],
