@@ -52,16 +52,21 @@ def bucket_for_cell(cell_idx: int, config: dict) -> str:
     return f"k1_idx_{k1}"
 
 
+_METHOD_ALIAS = {p[0]: p[1] for p in __import__("ex.utils.hpo.method_specs",
+                                                fromlist=["ALIAS_PAIRS"]).ALIAS_PAIRS}
+
+
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
-    if method not in METHOD_SPECS:
-        raise KeyError(f"method {method!r} not in pendulum_eldr_estimation METHOD_SPECS")
+    canonical = _METHOD_ALIAS.get(method, method)
+    if canonical not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} (canonical {canonical!r}) not in pendulum_eldr_estimation METHOD_SPECS")
     k1, beta, seed = _decode(cell_idx, config)
     data_path = os.path.join(config["data_dir"], f"k1_{k1}_beta_{beta}_seed_{seed}.h5")
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"step1 data not found: {data_path}")
 
-    spec = METHOD_SPECS[method]
+    spec = METHOD_SPECS[canonical]
     builder = spec["builder"]
     requires_pstar = spec.get("requires_pstar", False)
 

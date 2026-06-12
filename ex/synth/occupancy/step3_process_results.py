@@ -121,7 +121,12 @@ def main():
                 continue
             with h5py.File(data_path, "r") as df:
                 true_ldrs = df["true_ldrs_smoothed"][:]
-                integrated_eldr = float(df.attrs["integrated_eldr"])
+                # newer datasets store integrated_eldr as an attr; older ones
+                # omit it, so derive from the mean of the per-sample LDRs.
+                if "integrated_eldr" in df.attrs:
+                    integrated_eldr = float(df.attrs["integrated_eldr"])
+                else:
+                    integrated_eldr = float(true_ldrs.mean())
 
             for method in methods:
                 key = f"est_ldrs_{method}"

@@ -156,17 +156,22 @@ def _attach_flow_module(encoding_cfg: dict, base_seed: int) -> dict:
     return enc
 
 
+_METHOD_ALIAS = {p[0]: p[1] for p in __import__("ex.utils.hpo.method_specs",
+                                                fromlist=["ALIAS_PAIRS"]).ALIAS_PAIRS}
+
+
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
     """fit on (p0, p1) (and pstar if triangular); predict_ldr on pstar samples."""
-    if method not in METHOD_SPECS:
-        raise KeyError(f"method {method!r} not registered in METHOD_SPECS")
+    canonical = _METHOD_ALIAS.get(method, method)
+    if canonical not in METHOD_SPECS:
+        raise KeyError(f"method {method!r} (canonical {canonical!r}) not registered in METHOD_SPECS")
     encoding_cfg = config["encoding"]
     encoding_type = encoding_cfg["type"]
-    if encoding_type not in SUPPORTED_ENCODINGS.get(method, set()):
-        raise ValueError(f"method {method!r} does not support encoding {encoding_type!r}")
+    if encoding_type not in SUPPORTED_ENCODINGS.get(canonical, set()):
+        raise ValueError(f"method {method!r} (canonical {canonical!r}) does not support encoding {encoding_type!r}")
 
-    spec = METHOD_SPECS[method]
+    spec = METHOD_SPECS[canonical]
     builder = spec["builder"]
     input_dim = _derive_input_dim(encoding_cfg)
     num_waypoints = spec.get("num_waypoints", None)
