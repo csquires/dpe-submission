@@ -16,7 +16,6 @@ from ex.utils.plot_style import (
     apply as apply_style,
     style_for,
     METHOD_GROUPS,
-    GROUP_LABEL,
     ERROR_BAND_ALPHA,
 )
 
@@ -63,7 +62,6 @@ for group, methods in METHOD_GROUPS.items():
         ax.plot(design_eig_percentages, r, label=method, **kw)
         ax.fill_between(design_eig_percentages, lo[method], hi[method],
                         color=kw['color'], alpha=ERROR_BAND_ALPHA, linewidth=0)
-    ax.set_title(GROUP_LABEL[group])
     ax.set_xlabel(r'Design optimality $\beta = \mathrm{EIG}(\xi) / \mathrm{EIG}_{\max}$')
     ax.set_ylabel('Rel. EIG regret (MoM, IQR band)')
     ax.legend(loc='best')

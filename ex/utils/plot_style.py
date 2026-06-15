@@ -26,20 +26,25 @@ FONT_SIZE = 11
 ERROR_BAND_ALPHA = 0.18
 LINE_WIDTH = 1.8
 
+# lightness sweep bounds for the family hue. the head method anchors at the
+# floor; the floor is kept off pure-dark so base methods stay legible.
+LIGHT_FLOOR = 0.32
+LIGHT_CEIL = 0.65
 
-# panel layout: which methods are drawn on which subplot.
+
+# panel layout: which methods are drawn on which subplot. vfm (blue) and
+# fmdre (purple) share a panel -- distinct hues keep them separable.
 METHOD_GROUPS: dict[str, list[str]] = {
-    "vfm":      ["VFM", "TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3"],
-    "tsm_ctsm": ["TSM", "TriangularTSM", "CTSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3"],
-    "cls":      ["BDRE", "MDRE", "MultiHeadTDRE", "TriangularMDRE", "MultiHeadTriangularTDRE"],
-    "fmdre":    ["FMDRE", "FMDRE_S2", "TriangularFMDRE"],
+    "vfm_fmdre": ["VFM", "TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3",
+                  "FMDRE", "FMDRE_S2", "TriangularFMDRE"],
+    "tsm_ctsm":  ["TSM", "TriangularTSM", "CTSM", "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3"],
+    "cls":       ["BDRE", "MDRE", "MultiHeadTDRE", "TriangularMDRE", "MultiHeadTriangularTDRE"],
 }
 
 GROUP_LABEL: dict[str, str] = {
-    "vfm":      "VFM family",
-    "tsm_ctsm": "TSM / CTSM family",
-    "cls":      "Classifier-based DRE",
-    "fmdre":    "FMDRE family",
+    "vfm_fmdre": "VFM / FMDRE family",
+    "tsm_ctsm":  "TSM / CTSM family",
+    "cls":       "Classifier-based DRE",
 }
 
 # color families: methods within a family share a base hue, ordered so the
@@ -57,10 +62,11 @@ METHOD_FAMILIES: dict[str, list[str]] = {
 # base hue per family (matplotlib named color). picked so families that
 # coexist on the same panel are visually distinct:
 #   cls panel: green / olive / cyan
-#   tsm_ctsm panel: orange / red
+#   tsm_ctsm panel: teal / red (cool vs warm, clearly separable)
+#   vfm_fmdre panel: blue / purple
 _FAMILY_BASE: dict[str, str] = {
     "vfm":   "tab:blue",
-    "tsm":   "tab:orange",
+    "tsm":   "teal",
     "ctsm":  "tab:red",
     "bdre":  "tab:green",
     "mdre":  "tab:olive",
@@ -85,19 +91,20 @@ def _shade(base_color: str, lightness: float) -> tuple[float, float, float]:
 def _build_color_marker_tables():
     """build per-method color + marker maps from METHOD_FAMILIES.
 
-    within each family, lightness sweeps over [0.20, 0.65] so the head method
-    (idx 0) anchors at the dark end and the last variant sits a touch lighter
-    than the base hue; the 0.65 ceiling keeps variants well-saturated so the
+    within each family, lightness sweeps over [LIGHT_FLOOR, LIGHT_CEIL] so the
+    head method (idx 0) anchors at the floor and the last variant sits a touch
+    lighter than the base hue; the ceiling keeps variants well-saturated so the
     family hue stays recognisable.
     a singleton family resolves to lightness 0.45 (almost the base hue).
     """
     colors: dict[str, tuple[float, float, float]] = {}
     markers: dict[str, str] = {}
+    span = LIGHT_CEIL - LIGHT_FLOOR
     for family, methods in METHOD_FAMILIES.items():
         base = _FAMILY_BASE[family]
         n = len(methods)
         for idx, m in enumerate(methods):
-            light = 0.20 + (0.45 * idx / max(1, n - 1)) if n > 1 else 0.45
+            light = LIGHT_FLOOR + (span * idx / max(1, n - 1)) if n > 1 else 0.45
             colors[m] = _shade(base, light)
             markers[m] = "^" if m.startswith("Triangular") or m.startswith("MultiHeadTriangular") else "o"
     return colors, markers

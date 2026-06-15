@@ -23,7 +23,6 @@ from ex.utils.plot_style import (
     apply as apply_style,
     style_for,
     METHOD_GROUPS,
-    GROUP_LABEL,
     ERROR_BAND_ALPHA,
 )
 
@@ -97,14 +96,12 @@ def plot_metric(results, k1_values, beta_values, metric, figures_dir):
                 ax.fill_between(k1_values, lo, hi,
                                 color=kw["color"], alpha=ERROR_BAND_ALPHA, linewidth=0)
             ax.set_xlabel("K1")
-            ax.set_title(f"beta = {beta_values[beta_idx]:.2f}")
             ax.set_xticks(k1_values)
             ax.set_xticklabels([f"{k:.1f}" for k in k1_values])
             ax.set_ylim(0, y_max)
             if beta_idx == 0:
                 ax.set_ylabel(metric_label)
             ax.legend(loc="best")
-        fig.suptitle(f"{GROUP_LABEL[group]} — {metric_label}")
         fig.tight_layout()
         for ext in ("pdf", "png"):
             path = os.path.join(figures_dir, f"smodice_{metric}_{group}.{ext}")
@@ -218,12 +215,6 @@ def plot_boxplot(h5_path, metric, figures_dir):
     # place legend outside top-right to avoid covering boxes
     ax.legend(handles=legend_handles, fontsize=9, loc="upper left",
               bbox_to_anchor=(1.01, 1.0), borderaxespad=0, framealpha=0.9)
-
-    title = "Pointwise LDR MAE" if metric == "pointwise_mae" else "ELDR Error"
-    ax.set_title(
-        f"SMODICE — {title}: triangular variants superimposed on base method",
-        fontsize=12,
-    )
 
     os.makedirs(figures_dir, exist_ok=True)
     for ext in ("pdf", "png"):
