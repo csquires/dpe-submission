@@ -48,10 +48,10 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # fixed constant + mandatory builder keys
     hp["n_steps"] = N_STEPS
-    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 3e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
+    hp["integration_steps"] = trial.suggest_categorical("integration_steps", [400, 1200, 2600])
 
     # switch params (suggest before any branch). precond pinned True per
     # holdout boundary analysis -- masks the reweight branch entirely.
@@ -75,10 +75,13 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # unconditional always-active params
     hp["n_shared_layers"] = trial.suggest_categorical("n_shared_layers", [1, 2, 3])
-    hp["ema_decay"] = 0.999
+    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
-    hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
-    hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)
+    hp["sigma"] = trial.suggest_float("sigma", 0.02, 10.0, log=True)
+    # inference margin sealed to the trained tau domain: test_eps = eps * factor,
+    # factor log-uniform [0.8, 10] (see ctsm.py for rationale).
+    hp["test_eps"] = max(hp["eps"], hp["inner_eps"]) * trial.suggest_float(
+        "test_eps_factor", 0.8, 10.0, log=True)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["time_dist"] = trial.suggest_categorical("time_dist", list(TIME_DISTS))

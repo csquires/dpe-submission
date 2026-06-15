@@ -48,7 +48,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # fixed constant + mandatory builder keys
     hp["n_steps"] = N_STEPS
-    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 3e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 
     # switch params (suggest before any branch that reads them)
@@ -67,13 +67,13 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # per OOR TriangularFMDRE eps=0.15 optimum); score_weight lower to 1e-3 (OOR -14%);
     # triangular_p_uncond upper clipped to 0.1 (OOR: it strictly hurts above small values).
     hp["eps"] = trial.suggest_float("eps", 1e-4, 2e-1, log=True)
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
+    hp["integration_steps"] = trial.suggest_categorical("integration_steps", [400, 1200, 2600])
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     # n_shared_layers in [1, n_hidden_layers]; 5 == fully shared (pre-split TriangularFMDRE).
     hp["n_shared_layers"] = trial.suggest_categorical("n_shared_layers", [1, 2, 3, 4, 5])
     hp["score_weight"] = trial.suggest_float("score_weight", 1e-3, 3.0, log=True)
     hp["triangular_p_uncond"] = trial.suggest_float("triangular_p_uncond", 0.0, 0.1)
-    hp["ema_decay"] = 0.999
+    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
 

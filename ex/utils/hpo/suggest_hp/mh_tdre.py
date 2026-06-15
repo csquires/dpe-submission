@@ -22,7 +22,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """suggest hyperparameters for MultiHeadTDRE.
 
     translate method_specs.py base_search_space to optuna calls:
-    - learning_rate: log-uniform [1e-4, 1e-2]
+    - learning_rate: log-uniform [1e-4, 3e-2]
     - hidden_dim: categorical [64, 128, 256]
     - head_dim: categorical [10, 20, 40]
     - num_shared_layers: categorical [1, 2, 3]
@@ -42,7 +42,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["n_steps"] = N_STEPS
 
     # log-uniform continuous
-    hp["learning_rate"] = trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True)
+    hp["learning_rate"] = trial.suggest_float("learning_rate", 1e-4, 3e-2, log=True)
 
     # categorical discrete
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])

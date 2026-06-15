@@ -26,8 +26,10 @@ excision is strictly wider than the training one.
 
 inertness edges (probe + static):
   - k inert when sched == "bridge" (bridge_noise ignores k).
-  - gamma_min always searched (we are in sampler mode; the path is not
-    coord-clamped, so the floor is meaningful).
+  - gamma_min searched for V1/V2 (the 2026-06 audit showed the gamma floor is
+    the mechanism that protects the inference integrand near the path's
+    gamma-zeros; the earlier 0.0 pin was based on circular winner evidence).
+    V3 keeps the pin: its low-arc curve never approaches a gamma-zero.
   - apply_iw inert when time_dist == "uniform" (iw == 1).
   - V1 always samples time per-leg via a width-proportional two-leg mixture
     sampler (every TIME_DISTS value applied per leg), so time_dist is
@@ -38,9 +40,11 @@ inertness edges (probe + static):
 
 test-path knobs (test_sched, test_sigma, test_inner_eps, test_gamma_min,
 test_k, test_vertex_band) are derived from the train-side counterparts.
-test_eps = max(eps, inner_eps) * (1 + test_eps_frac); the fractional offset
-makes the safety margin scale with the base knob. test_vertex_band =
-vertex_band * (1 + test_vertex_band_frac) (V1 only); same reasoning.
+test_eps = max(eps, inner_eps) * test_eps_factor with test_eps_factor
+log-uniform [0.8, 10]: a factor (not independent) seals the inference domain
+to a subset of the trained tau range; the bound is widened from the old 2x cap
+to 10x so methods can trim the lambda->0 endpoints as aggressively as stock.
+test_vertex_band = vertex_band * (1 + test_vertex_band_frac) (V1 only).
 
 not searched -- pinned: n_hidden_layers (per-experiment via StudyConfig.fixed_hp).
 """
@@ -62,35 +66,34 @@ METADATA_V3 = {"uses_pruning": True, "requires_pstar": True, "builder": "build_T
 def _common_optim(trial: optuna.Trial, hp: dict) -> None:
     """suggest the optimizer + regulariser knobs shared by all three versions."""
     hp["n_steps"] = N_STEPS
-    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 3e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
-    hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
-    hp["ema_decay"] = 0.999
+    hp["sigma"] = trial.suggest_float("sigma", 0.02, 10.0, log=True)
+    hp["integration_steps"] = trial.suggest_categorical("integration_steps", [400, 1200, 2600])
+    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["activation"] = trial.suggest_categorical("activation", ["elu", "gelu", "silu"])
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["cosine_min_factor"] = 0.0
-    hp["test_eps_frac"] = trial.suggest_float(
-        "test_eps_frac", 1e-4, 1.0, log=True,
-    )
+    hp["test_eps_factor"] = trial.suggest_float("test_eps_factor", 0.8, 10.0, log=True)
 
 
 def _derive_test(hp: dict) -> None:
     """derive the test-path schedule from the train-side knobs.
 
-    test_eps and test_vertex_band are multiplicatively offset from their
-    train-side counterparts: a *fractional* margin makes the safety shift
-    scale-invariant w.r.t. the base knob (a 1e-2 shift means very different
-    things when eps=1e-4 vs eps=1e-2; a 1% fractional shift is consistent).
+    test_eps is a multiplicative factor on the train boundary, NOT independent:
+    this seals the inference domain [test_eps, 1-test_eps] to a subset of the
+    trained [eps, 1-eps] (factor >= 1) so we never integrate where the score was
+    unsupervised. factor log-uniform [0.8, 10]: up to 10x trim for methods that
+    want to avoid the lambda->0 endpoints, plus a small sub-1 ood slack.
 
-    test_eps         = max(eps, inner_eps) * (1 + test_eps_frac)
+    test_eps         = max(eps, inner_eps) * test_eps_factor
     test_vertex_band = vertex_band * (1 + test_vertex_band_frac)        [V1 only]
     """
     boundary = max(hp["eps"], hp["inner_eps"])
-    hp["test_eps"] = boundary * (1.0 + hp["test_eps_frac"])
+    hp["test_eps"] = boundary * hp["test_eps_factor"]
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
@@ -118,10 +121,10 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
 
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
-    # gamma_min pinned 0: eig V1 and V2 winners both landed at < 0.05 * g(eps),
-    # i.e. fully inert. matches TriVFM V3 convention.
-    hp["gamma_min"] = 0.0
+    hp["vertex"] = trial.suggest_float("vertex", 0.1, 0.9)
+    # gamma floor searched: bounds the inference integrand target/gamma^2 near
+    # the path's gamma-zeros (vertex + leg endpoints for psb, endpoints for bary).
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 0.5, log=True)
 
     if psb:
         # V1-only: vertex_band controls sampler-side vertex excision and
@@ -168,7 +171,7 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     regression; no longer a search dimension). No precond (CTSM has no precond
     plumbing). no time-sampling knobs (the builder hardcodes a product of uniforms).
     adds t2_max + path_height (path_height is inference-only). conditional: k (stiff).
-    gamma_min always searched.
+    gamma_min pinned 0 (the low-arc inference curve never approaches a gamma-zero).
     """
     hp: dict[str, Any] = {}
     _common_optim(trial, hp)

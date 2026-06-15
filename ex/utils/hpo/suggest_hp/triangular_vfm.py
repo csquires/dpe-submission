@@ -20,7 +20,8 @@ than the training one.
 
 inertness edges (probe + static):
   - k inert when sched == "bridge".
-  - gamma_min always searched in sampler mode (the path is not coord-clamped).
+  - gamma_min searched for V1/V2 (load-bearing inference floor; see 2026-06
+    audit). V3 keeps the pin (low-arc curve avoids gamma-zeros).
   - V1 always samples time per-leg via a width-proportional two-leg mixture
     sampler (every TIME_DISTS value applied per leg), so time_dist is
     unconditional (see notes/triangular_v1_time_dist_coupling.md).
@@ -30,10 +31,11 @@ inertness edges (probe + static):
   - V3 (TriangularVFM2D) has no precond support and no time-sampling knobs;
     path_height is inference-only (curve used only in predict_ldr).
 
-test-path knobs are derived from train-side counterparts. test_eps = max(eps,
-inner_eps) * (1 + test_eps_frac); test_vertex_band = vertex_band *
-(1 + test_vertex_band_frac) (V1 only). Fractional offsets make the safety
-margin scale with the base knob.
+test-path knobs are derived from train-side counterparts. test_eps =
+max(eps, inner_eps) * test_eps_factor, factor log-uniform [0.8, 10] -- a factor
+(not independent) seals the inference domain to a subset of the trained tau
+range; widened from the old 2x cap to 10x. test_vertex_band = vertex_band *
+(1 + test_vertex_band_frac) (V1 only).
 """
 
 from typing import Any
@@ -54,22 +56,20 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
     """suggest the knobs shared by all three versions, including the pinned
     divergence/activation knobs (mirrors stock VFM)."""
     hp["n_steps"] = N_STEPS
-    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 3e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
-    hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
+    hp["sigma"] = trial.suggest_float("sigma", 0.02, 10.0, log=True)
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
     hp["inner_eps"] = 0.0
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
-    hp["ema_decay"] = 0.999
+    hp["integration_steps"] = trial.suggest_categorical("integration_steps", [400, 1200, 2600])
+    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["layernorm"] = "off"
     hp["antithetic"] = trial.suggest_categorical("antithetic", [False, True])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
     hp["cosine_min_factor"] = 0.0
-    hp["test_eps_frac"] = trial.suggest_float(
-        "test_eps_frac", 1e-4, 1.0, log=True,
-    )
+    hp["test_eps_factor"] = trial.suggest_float("test_eps_factor", 0.8, 10.0, log=True)
 
     # divergence estimator pinned to exact; div_noise / n_hutch_samples inert
     # under method=="exact" but kept set for downstream validation. activation
@@ -83,15 +83,14 @@ def _common(trial: optuna.Trial, hp: dict) -> None:
 def _derive_test(hp: dict) -> None:
     """derive the test-path schedule from the train-side knobs.
 
-    test_eps and test_vertex_band are multiplicatively offset from their
-    train-side counterparts: a *fractional* margin makes the safety shift
-    scale-invariant w.r.t. the base knob.
+    test_eps is a multiplicative factor on the train boundary (NOT independent),
+    sealing the inference domain to a subset of the trained [eps, 1-eps]:
 
-    test_eps         = max(eps, inner_eps) * (1 + test_eps_frac)
+    test_eps         = max(eps, inner_eps) * test_eps_factor   (factor [0.8, 10])
     test_vertex_band = vertex_band * (1 + test_vertex_band_frac)        [V1 only]
     """
     boundary = max(hp["eps"], hp["inner_eps"])
-    hp["test_eps"] = boundary * (1.0 + hp["test_eps_frac"])
+    hp["test_eps"] = boundary * hp["test_eps_factor"]
     hp["test_sched"] = hp["sched"]
     hp["test_sigma"] = hp["sigma"]
     hp["test_inner_eps"] = hp["inner_eps"]
@@ -116,10 +115,11 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
 
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
-    hp["vertex"] = trial.suggest_float("vertex", 0.25, 0.75)
-    # gamma_min pinned 0: eig V1 and V2 winners both fully inert (gmin << g(eps)).
-    # matches V3 convention; precond is the principled gamma-tail control.
-    hp["gamma_min"] = 0.0
+    hp["vertex"] = trial.suggest_float("vertex", 0.1, 0.9)
+    # gamma floor searched: the pre-pin winners carried nonzero gamma_min
+    # (eig V1 0.174, occ V1 0.018) flooring the 1/gamma divisor in
+    # vfm_time_score_1d -- load-bearing, not inert (2026-06 audit).
+    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 0.5, log=True)
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 

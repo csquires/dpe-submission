@@ -29,13 +29,13 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters for TriangularMDRE.
 
     emits n_steps as the fixed constant N_STEPS, plus 7 tuned params:
-    - learning_rate: log-uniform [1e-4, 1e-2]
+    - learning_rate: log-uniform [1e-4, 3e-2]
     - latent_dim: categorical [64, 128, 256]
     - batch_size: categorical [64, 128, 256, 512]
-    - num_waypoints: categorical [3, 5, 7, 9]
+    - num_waypoints: categorical [3, 5, 9, 15]
     - midpoint_oversample: categorical [0, 3, 5, 7]
-    - gamma_power: uniform [1.0, 5.0]
-    - vertex: uniform [0.2, 0.8]
+    - gamma_power: uniform [0.3, 5.0]
+    - vertex: uniform [0.1, 0.9]
 
     not searched -- pinned per-experiment via StudyConfig.fixed_hp:
     - n_hidden_layers (mirrors VFM's convention)
@@ -53,7 +53,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["n_steps"] = N_STEPS
 
     hp["learning_rate"] = trial.suggest_float(
-        "learning_rate", 1e-4, 1e-2, log=True
+        "learning_rate", 1e-4, 3e-2, log=True
     )
     hp["latent_dim"] = trial.suggest_categorical(
         "latent_dim", [64, 128, 256]
@@ -62,14 +62,14 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
         "batch_size", [64, 128, 256, 512]
     )
     hp["num_waypoints"] = trial.suggest_categorical(
-        "num_waypoints", [3, 5, 7, 9]
+        "num_waypoints", [3, 5, 9, 15]
     )
 
     hp["midpoint_oversample"] = trial.suggest_categorical(
         "midpoint_oversample", [0, 3, 5, 7]
     )
-    hp["gamma_power"] = trial.suggest_float("gamma_power", 1.0, 5.0)
-    hp["vertex"] = trial.suggest_float("vertex", 0.2, 0.8)
+    hp["gamma_power"] = trial.suggest_float("gamma_power", 0.3, 5.0)
+    hp["vertex"] = trial.suggest_float("vertex", 0.1, 0.9)
     hp["weight_decay"] = trial.suggest_categorical(
         "weight_decay", [0.0, 1e-5, 1e-4, 1e-3]
     )

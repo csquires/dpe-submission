@@ -55,7 +55,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # fixed constant + mandatory builder keys
     hp["n_steps"] = N_STEPS
-    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 3e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 
     # switch params (suggest before any branch that reads them)
@@ -77,14 +77,20 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # unconditional always-active params. eps NOT widened (path method; the
     # (1e-4, 2e-1) eps widening is FMDRE-family-only). activation kept searchable.
-    hp["sigma"] = trial.suggest_float("sigma", 0.1, 5.0, log=True)
+    hp["sigma"] = trial.suggest_float("sigma", 0.02, 10.0, log=True)
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
-    hp["test_eps"] = trial.suggest_float("test_eps", 1e-3, 3e-1, log=True)
+    hp["integration_steps"] = trial.suggest_categorical("integration_steps", [400, 1200, 2600])
+    # inference margin sealed to the trained tau domain: test_eps = eps * factor,
+    # factor log-uniform [0.8, 10]. factor >= 1 keeps [test_eps, 1-test_eps] a
+    # strict subset of the trained [eps, 1-eps] (never integrate where the score
+    # was unsupervised); the sub-1 tail [0.8, 1) gives a small ood slack in case
+    # endpoint extrapolation is genuinely free (cf. eig).
+    hp["test_eps"] = max(hp["eps"], hp["inner_eps"]) * trial.suggest_float(
+        "test_eps_factor", 0.8, 10.0, log=True)
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["activation"] = trial.suggest_categorical("activation", ["elu", "gelu", "silu"])
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
-    hp["ema_decay"] = 0.999
+    hp["ema_decay"] = trial.suggest_categorical("ema_decay", [None, 0.999, 0.9999])
     hp["grad_clip_norm"] = trial.suggest_categorical("grad_clip_norm", [None, 1.0, 5.0])
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
 

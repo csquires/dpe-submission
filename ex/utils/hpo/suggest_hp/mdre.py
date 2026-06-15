@@ -27,7 +27,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     """sample hyperparameters for MDRE.
 
     emits n_steps as the fixed constant N_STEPS, plus 4 tuned params:
-    - learning_rate: log-uniform [1e-4, 1e-2]
+    - learning_rate: log-uniform [1e-4, 3e-2]
     - latent_dim: categorical [64, 128, 256]
     - batch_size: categorical [64, 128, 256, 512]
     - num_waypoints: categorical [3, 5, 7, 9] (= classifier num_classes)
@@ -48,7 +48,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["n_steps"] = N_STEPS
 
     hp["learning_rate"] = trial.suggest_float(
-        "learning_rate", 1e-4, 1e-2, log=True
+        "learning_rate", 1e-4, 3e-2, log=True
     )
     hp["latent_dim"] = trial.suggest_categorical(
         "latent_dim", [64, 128, 256]

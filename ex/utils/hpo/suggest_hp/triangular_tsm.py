@@ -5,17 +5,17 @@ translates the tuple-format search space from method_specs.py to trial.suggest_*
 calls. mirrors the structure of `tsm.py` for the optimizer/regulariser block
 (TriangularTSM shares the score-matching core and the same TSM-family knobs)
 and adopts the vertex range from `triangular_ctsm.py`/`triangular_vfm.py`
-(0.2, 0.8). pins n_steps at N_STEPS (uniform multi-fidelity resource axis).
+(0.1, 0.9). pins n_steps at N_STEPS (uniform multi-fidelity resource axis).
 
 unique to TriangularTSM:
-  - vertex in (0, 1): bell peak location; mirrored to (0.2, 0.8) per the
+  - vertex in (0, 1): bell peak location; mirrored to (0.1, 0.9) per the
     TriangularCTSM/VFM convention to avoid degenerate endpoint kinks.
   - peak_max in (0, 1]: bell peak height. lower bound 0.05 inherited from the
     legacy method_specs ablation (D=14 gaussian, 2 seeds): peak_max=0.05
     matches plain TSM's MAE while 0.5/1.0 was materially worse. the
     constructor enforces peak_max <= 1.0, so 1.0 is the open upper bound.
 
-integration_steps: searched in [100, 2600] like TSM/CTSM/VFM (predict_ldr now
+integration_steps: categorical {400, 1200, 2600} like TSM/CTSM/VFM (predict_ldr now
 reads self.integration_steps instead of a hardcoded 100-point grid). a step-700
 fit-once grid sweep on eig found MAE flat across 100..2000, so 100 suffices
 there; the knob is exposed for parity and so HPO can probe other regimes.
@@ -65,7 +65,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # fixed constant + mandatory builder keys (mirrors tsm.py)
     hp["n_steps"] = N_STEPS
-    hp["lr"] = trial.suggest_float("lr", 3e-5, 1e-2, log=True)
+    hp["lr"] = trial.suggest_float("lr", 3e-5, 3e-2, log=True)
     hp["batch_size"] = trial.suggest_categorical("batch_size", [64, 128, 256, 512])
 
     # switch param (suggest before its dependent branch)
@@ -78,7 +78,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
 
     # unconditional shared-with-TSM knobs.
     hp["eps"] = trial.suggest_float("eps", 1e-4, 1e-2, log=True)
-    hp["integration_steps"] = trial.suggest_int("integration_steps", 100, 2600)
+    hp["integration_steps"] = trial.suggest_categorical("integration_steps", [400, 1200, 2600])
     hp["hidden_dim"] = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     hp["activation"] = trial.suggest_categorical("activation", ["elu", "gelu", "silu"])
     hp["reweight"] = trial.suggest_categorical("reweight", [False, True])
@@ -87,7 +87,7 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     hp["weight_decay"] = trial.suggest_categorical("weight_decay", [0.0, 1e-5, 1e-4, 1e-3, 1e-2])
 
     # bell-path knobs unique to TriangularTSM.
-    hp["vertex"] = trial.suggest_float("vertex", 0.2, 0.8)
+    hp["vertex"] = trial.suggest_float("vertex", 0.1, 0.9)
     hp["peak_max"] = trial.suggest_float("peak_max", 0.05, 1.0)
 
     # pinned (mirrors tsm.py: cosine_min_factor=0 won 5/6 holdout boundary).
