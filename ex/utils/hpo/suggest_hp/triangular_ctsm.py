@@ -122,9 +122,12 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
     hp["vertex"] = trial.suggest_float("vertex", 0.1, 0.9)
-    # gamma floor searched: bounds the inference integrand target/gamma^2 near
-    # the path's gamma-zeros (vertex + leg endpoints for psb, endpoints for bary).
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 0.5, log=True)
+    # gamma floor as a FRACTION of sigma, not absolute: the bridge noise peaks at
+    # sigma*sqrt(2)*0.5 ~= 0.707*sigma, so an absolute gamma_min can exceed the
+    # natural noise when sigma is small and flatten the whole path (degenerate,
+    # broke occ TriCTSM_V2 2026-06-14). frac <= 0.5 keeps gamma_min < the peak so
+    # it only floors the gamma-zeros (vertex + endpoints), never the bulk.
+    hp["gamma_min"] = trial.suggest_float("gamma_min_frac", 1e-3, 0.5, log=True) * hp["sigma"]
 
     if psb:
         # V1-only: vertex_band controls sampler-side vertex excision and

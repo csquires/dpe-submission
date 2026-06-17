@@ -322,6 +322,7 @@ def build_FMDRE(input_dim: int, device: str | torch.device, num_waypoints: int, 
         integration_steps=flat_hp.get("integration_steps", 10000),
         reweight=flat_hp.get("reweight", False),
         precond=flat_hp.get("precond", False),
+        infer_eps=flat_hp.get("infer_eps") or min(eps, 2e-3),  # cap inference eps to recover the upper slab
         early_stop_cfg=early_stop_cfg,
     )
 
@@ -358,6 +359,7 @@ def build_FMDRE_S2(input_dim: int, device: str | torch.device, num_waypoints: in
         # sentinel_cond: FMDRE_S2 internal CFG sentinel (not an HPO knob)
         reweight=flat_hp.get("reweight", False),
         precond=flat_hp.get("precond", False),
+        infer_eps=flat_hp.get("infer_eps") or min(eps, 2e-3),  # cap inference eps to recover the upper slab
         early_stop_cfg=early_stop_cfg,
     )
 
@@ -394,6 +396,7 @@ def build_TriangularFMDRE(input_dim: int, device: str | torch.device, num_waypoi
         layernorm=flat_hp.get("layernorm", "off"),
         reweight=flat_hp.get("reweight", False),
         precond=flat_hp.get("precond", False),
+        infer_eps=flat_hp.get("infer_eps") or min(eps, 2e-3),  # cap inference eps to recover the upper slab
         early_stop_cfg=early_stop_cfg,
     )
 

@@ -110,10 +110,12 @@ _SLOW = {"VFM", "VFMOrthros", "FMDRE", "FMDRE_S2", "TriangularVFM_V1", "Triangul
 
 
 def walltime_per_cell_seconds(method: str, config: dict) -> int:
-    if method in _FAST: return 60
-    if method in _MEDIUM: return 120
-    if method in _SLOW: return 240
-    return 120
+    # bumped 2026-06-14: high-divergence (k1=36) cells exceeded the old budget and
+    # got CANCELLED DUE TO TIME LIMIT, leaving the chunk tail unwritten.
+    if method in _FAST: return 120
+    if method in _MEDIUM: return 600
+    if method in _SLOW: return 900
+    return 300
 
 
 def resources_for_method(method: str) -> str:

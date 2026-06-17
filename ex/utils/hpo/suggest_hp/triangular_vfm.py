@@ -116,10 +116,10 @@ def _suggest_1d(trial: optuna.Trial, *, psb: bool) -> dict[str, Any]:
     sched = trial.suggest_categorical("sched", ["stiff", "bridge"])
     hp["sched"] = sched
     hp["vertex"] = trial.suggest_float("vertex", 0.1, 0.9)
-    # gamma floor searched: the pre-pin winners carried nonzero gamma_min
-    # (eig V1 0.174, occ V1 0.018) flooring the 1/gamma divisor in
-    # vfm_time_score_1d -- load-bearing, not inert (2026-06 audit).
-    hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-4, 0.5, log=True)
+    # gamma floor as a FRACTION of sigma (frac <= 0.5 -> below the 0.707*sigma
+    # bridge-noise peak), so it floors only the gamma-zeros and can't flatten the
+    # whole path when sigma is small (the degeneracy that broke occ TriCTSM_V2).
+    hp["gamma_min"] = trial.suggest_float("gamma_min_frac", 1e-3, 0.5, log=True) * hp["sigma"]
     precond = trial.suggest_categorical("precond", [False, True])
     hp["precond"] = precond
 

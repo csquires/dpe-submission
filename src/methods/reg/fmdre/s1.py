@@ -46,6 +46,7 @@ class FMDRE(DRE):
         integration_steps: int = 10000,
         reweight: bool = False,
         precond: bool = False,
+        infer_eps: float | None = None,
         early_stop_cfg: dict | None = None,
     ) -> None:
         """construct an FMDRE estimator with cfg-based hyperparameters.
@@ -89,6 +90,7 @@ class FMDRE(DRE):
         self.reweight = reweight
         self.integration_steps = integration_steps
         self.precond = precond
+        self.infer_eps = infer_eps  # inference-only ratio-ODE eps; None -> time.eps
         self.early_stop_cfg = early_stop_cfg
         self._moments = None
 
@@ -232,7 +234,7 @@ class FMDRE(DRE):
             model_to_infer,
             samples,
             steps=self.integration_steps,
-            eps=self.time.eps,
+            eps=self.infer_eps if self.infer_eps is not None else self.time.eps,
             device=str(self.device),
             div_method=self.div_method,
             n_hutch_samples=self.n_hutch_samples,

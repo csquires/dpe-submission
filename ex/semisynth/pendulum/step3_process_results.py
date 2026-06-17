@@ -46,46 +46,31 @@ def parse_args():
     return parser.parse_args()
 
 
-def compute_metrics_for_seed(data_path, results_path, method):
+def compute_metrics_for_seed(data_path, est_ldrs, method):
     """
-    load one per-cell file pair and return (pointwise_mae, eldr_err) or None.
+    given a per-cell data file and the est_ldrs row for one (method, cell),
+    return (pointwise_mae, eldr_err) or None.
 
-    logic:
-      1. check both files exist; if not, return None
-      2. load data_path:
-         - read log_p_pstar (shape [N, 3])
-         - compute true_ldrs = log_p_pstar[:, 2] - log_p_pstar[:, 1]
-         - read attr integrated_eldr
-      3. load results_path:
-         - read est_ldrs_{method} (shape [N])
-         - compute pointwise_mae = mean(abs(est_ldrs - true_ldrs))
-         - compute eldr_err = abs(mean(est_ldrs) - integrated_eldr)
-      4. return (pointwise_mae, eldr_err)
-      5. on exception: log warning, return None
+    ported 2026-06-15 to read est_ldrs from the step2_runner gathered
+    results_all_cells.h5 (one row per cell) instead of per-seed result files.
+    true_ldrs / integrated_eldr still come from the per-cell data file.
     """
-    if not os.path.exists(data_path) or not os.path.exists(results_path):
+    if not os.path.exists(data_path) or est_ldrs is None:
         return None
-
     try:
         with h5py.File(data_path, 'r') as f:
             log_p_pstar = f['log_p_pstar'][:]  # shape [N, 3]
             true_ldrs = log_p_pstar[:, 2] - log_p_pstar[:, 1]  # E - O
             integrated_eldr = float(f.attrs['integrated_eldr'])
 
-        with h5py.File(results_path, 'r') as f:
-            key = f'est_ldrs_{method}'
-            if key not in f:
-                return None
-            est_ldrs = f[key][:]  # shape [N]
-
+        est_ldrs = np.asarray(est_ldrs)
+        if est_ldrs.shape[0] != true_ldrs.shape[0] or not np.isfinite(est_ldrs).all():
+            return None
         pointwise_mae = np.mean(np.abs(est_ldrs - true_ldrs))
-        eldr_est = np.mean(est_ldrs)
-        eldr_err = np.abs(eldr_est - integrated_eldr)
-
+        eldr_err = np.abs(np.mean(est_ldrs) - integrated_eldr)
         return (pointwise_mae, eldr_err)
-
     except Exception as e:
-        logging.warning(f'error processing {data_path}/{results_path}: {e}')
+        logging.warning(f'error processing {data_path} [{method}]: {e}')
         return None
 
 
@@ -120,42 +105,39 @@ def aggregate_cells(config):
     results = [[{method: [] for method in algorithms} for _ in range(G_beta)] for _ in range(G_k1)]
 
     missing_data_files = set()
-    missing_results_files = set()
     missing_method_keys = set()
+
+    # read the step2_runner gathered file (one est_ldrs_<method> row per cell).
+    # cell_idx = (k1_idx*G_beta + beta_idx)*seeds_default + seed (matches the
+    # adapter's _decode_cell). this replaces the old per-seed result files.
+    gathered = os.path.join(raw_results_dir, "results_all_cells.h5")
+    if not os.path.exists(gathered):
+        raise FileNotFoundError(f"gathered results not found: {gathered} (run step2_runner.gather)")
+    with h5py.File(gathered, 'r') as gf:
+        est_all = {m: gf[f'est_ldrs_{m}'][:] for m in algorithms if f'est_ldrs_{m}' in gf}
+    for m in algorithms:
+        if m not in est_all:
+            missing_method_keys.add(m)
 
     for k1_idx in range(G_k1):
         for beta_idx in range(G_beta):
             for seed in range(seeds_default):
                 data_path = f"{data_dir}/k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
-                results_path = f"{raw_results_dir}/k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
-
-                # check files exist
                 if not os.path.exists(data_path):
                     missing_data_files.add(data_path)
                     continue
-                if not os.path.exists(results_path):
-                    missing_results_files.add(results_path)
-                    continue
-
+                cell_idx = (k1_idx * G_beta + beta_idx) * seeds_default + seed
                 for method in algorithms:
-                    metrics = compute_metrics_for_seed(data_path, results_path, method)
+                    arr = est_all.get(method)
+                    row = arr[cell_idx] if (arr is not None and cell_idx < arr.shape[0]) else None
+                    metrics = compute_metrics_for_seed(data_path, row, method)
                     if metrics is not None:
                         results[k1_idx][beta_idx][method].append(metrics)
-                    else:
-                        # track missing method keys
-                        try:
-                            with h5py.File(results_path, 'r') as f:
-                                if f'est_ldrs_{method}' not in f:
-                                    missing_method_keys.add((method, results_path))
-                        except:
-                            pass
 
     if missing_data_files:
         logging.warning(f'missing {len(missing_data_files)} data files (skipped)')
-    if missing_results_files:
-        logging.warning(f'missing {len(missing_results_files)} results files (skipped)')
     if missing_method_keys:
-        logging.warning(f'missing {len(missing_method_keys)} method keys in results files (skipped)')
+        logging.warning(f'methods absent from gathered file (skipped): {sorted(missing_method_keys)}')
 
     return results
 

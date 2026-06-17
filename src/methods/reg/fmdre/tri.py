@@ -52,6 +52,7 @@ class TriangularFMDRE(ELDR):
         layernorm: str = "off",
         reweight: bool = False,
         precond: bool = False,
+        infer_eps: float | None = None,
         early_stop_cfg: dict | None = None,
     ) -> None:
         """construct estimator with cfg-based optimizer, scheduler, EMA, time-sampler.
@@ -108,6 +109,11 @@ class TriangularFMDRE(ELDR):
         self.layernorm = layernorm
         self.reweight = reweight
         self.precond = precond
+        # inference-only integration eps for the upper (data-side) boundary of the
+        # ratio-ODE. decoupled from time.eps (training) so we can integrate closer
+        # to t=1 and recover the dropped [1-eps,1] slab that biases the integrated
+        # ldr (2026-06 eps-sweep). None -> falls back to time.eps (legacy).
+        self.infer_eps = infer_eps
         self.early_stop_cfg = early_stop_cfg
         self._moments = None
 
@@ -271,7 +277,7 @@ class TriangularFMDRE(ELDR):
             model_for_inference,
             samples,
             steps=self.integration_steps,
-            eps=self.time.eps,
+            eps=self.infer_eps if self.infer_eps is not None else self.time.eps,
             device=str(self.device),
             div_method=self.div_method,
             n_hutch_samples=self.n_hutch_samples,

@@ -51,6 +51,7 @@ class FMDRE_S2(DRE):
         sentinel_cond: float = -1.0,
         reweight: bool = False,
         precond: bool = False,
+        infer_eps: float | None = None,
         early_stop_cfg: dict | None = None,
     ) -> None:
         """construct an FMDRE_S2 estimator with cfg-based hyperparameters.
@@ -98,6 +99,7 @@ class FMDRE_S2(DRE):
         self.sentinel_cond = sentinel_cond
         self.reweight = reweight
         self.precond = precond
+        self.infer_eps = infer_eps  # inference-only ratio-ODE eps; None -> time.eps
         self.early_stop_cfg = early_stop_cfg
         self._moments = None
 
@@ -256,7 +258,7 @@ class FMDRE_S2(DRE):
             model_to_infer,
             samples,
             steps=self.integration_steps,
-            eps=self.time.eps,
+            eps=self.infer_eps if self.infer_eps is not None else self.time.eps,
             device=str(self.device),
             div_method=self.div_method,
             n_hutch_samples=self.n_hutch_samples,

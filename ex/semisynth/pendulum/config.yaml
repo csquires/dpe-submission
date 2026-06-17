@@ -57,12 +57,22 @@ seed: 1729                 # int; global reproducibility seed
 algorithms:
   - BDRE
   - MDRE
-  - TriangularMDRE
+  - MultiHeadTDRE
   - MultiHeadTriangularTDRE
+  - TriangularMDRE
   - TSM
+  - TriangularTSM
   - CTSM
-  - TriangularCTSM
-  - TriangularVFM
+  - TriangularCTSM_V1
+  - TriangularCTSM_V2
+  - TriangularCTSM_V3
+  - VFM
+  - TriangularVFM_V1
+  - TriangularVFM_V2
+  - TriangularVFM_V3
+  - FMDRE
+  - FMDRE_S2
+  - TriangularFMDRE
 num_waypoints: 15          # int >= 3; linear interpolation schedule for triangular methods
 # NOTE: trajectory experiment may support a different algorithm subset than smodice.
 #       these 10 are over-specified for now; downstream step2 filters by trajectory support.
