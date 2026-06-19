@@ -112,14 +112,18 @@ def plot_metric(results, k1_values, beta_values, metric, figures_dir):
 
 COLOR_NON_TRI = "#4878d0"   # steel blue
 COLOR_TRI     = "#ee854a"   # coral orange
+S2_COLOR      = "#9467bd"   # purple (sigma2 sibling, nested on its base column)
+
+# base method -> its sigma2 sibling, drawn as an extra nested box on the same column.
+S2_OF = {"FMDRE": "FMDRE_S2"}
 
 # Each family: (base_method_or_None, [triangular_variants])
-# Families are shown as grouped adjacent boxes; base=blue, variants=orange.
+# Families are shown as grouped adjacent boxes; base=blue, variants=orange/green/red.
+# a base with an S2_OF entry also gets its sigma2 sibling nested on top (purple).
 METHOD_FAMILIES = [
     ("BDRE",           []),
     ("CTSM",           ["TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3"]),
     ("FMDRE",          ["TriangularFMDRE"]),
-    ("FMDRE_S2",       []),
     ("MDRE_15",        ["TriangularMDRE"]),
     ("MultiHeadTDRE",  ["MultiHeadTriangularTDRE"]),
     ("TSM",            ["TriangularTSM"]),
@@ -151,7 +155,8 @@ def plot_boxplot(h5_path, metric, figures_dir):
 
     # count families that have at least one member in data
     valid_families = [(b, vs) for b, vs in METHOD_FAMILIES
-                      if (b and b in data) or any(v in data for v in vs)]
+                      if (b and b in data) or any(v in data for v in vs)
+                      or (S2_OF.get(b) in data)]
     n_fam = len(valid_families)
 
     fig, ax = plt.subplots(figsize=(max(10, n_fam * 1.4), 5),
@@ -172,8 +177,8 @@ def plot_boxplot(h5_path, metric, figures_dir):
                             markerfacecolor=color, markeredgecolor=color,
                             linestyle="none"),
             medianprops=dict(color="black", linewidth=1.5, zorder=zorder + 1),
-            whiskerprops=dict(linewidth=1.0, zorder=zorder),
-            capprops=dict(linewidth=1.0, zorder=zorder),
+            whiskerprops=dict(color=color, linewidth=1.2, zorder=zorder),
+            capprops=dict(color=color, linewidth=1.2, zorder=zorder),
             manage_ticks=False,
             zorder=zorder,
         )
@@ -189,13 +194,19 @@ def plot_boxplot(h5_path, metric, figures_dir):
 
         # base box: wide, blue, behind
         if base and base in data:
-            _draw_box(data[base], pos, width=0.65, color=COLOR_NON_TRI, alpha=0.65, zorder=2)
+            _draw_box(data[base], pos, width=0.65, color=COLOR_NON_TRI, alpha=0.6, zorder=2)
 
-        # triangular variant(s): narrower, orange shade(s), on top
+        # triangular variant(s): narrower, colored shade(s), on top
         avail = [v for v in variants if v in data]
         for vi, v in enumerate(avail):
             color = TRI_COLORS[vi % len(TRI_COLORS)]
-            _draw_box(data[v], pos, width=0.38, color=color, alpha=0.75, zorder=3 + vi)
+            _draw_box(data[v], pos, width=0.38, color=color, alpha=0.7, zorder=3 + vi)
+
+        # sigma2 sibling: narrowest, purple, nested on the same column
+        s2 = S2_OF.get(base)
+        if s2 and s2 in data:
+            _draw_box(data[s2], pos, width=0.20, color=S2_COLOR, alpha=0.78,
+                      zorder=3 + len(avail))
 
     ax.set_xticks(xticks)
     ax.set_xticklabels(xlabels, rotation=40, ha="right", fontsize=10)
@@ -207,10 +218,11 @@ def plot_boxplot(h5_path, metric, figures_dir):
 
     from matplotlib.patches import Patch
     legend_handles = [
-        Patch(facecolor=COLOR_NON_TRI, alpha=0.65, label="Base (non-triangular)"),
-        Patch(facecolor=TRI_COLORS[0], alpha=0.75, label="Triangular V1 (orange)"),
-        Patch(facecolor=TRI_COLORS[1], alpha=0.75, label="Triangular V2 (green)"),
-        Patch(facecolor=TRI_COLORS[2], alpha=0.75, label="Triangular V3 (red)"),
+        Patch(facecolor=COLOR_NON_TRI, alpha=0.6, label="Base (non-triangular)"),
+        Patch(facecolor=TRI_COLORS[0], alpha=0.7, label="Triangular V1 (orange)"),
+        Patch(facecolor=TRI_COLORS[1], alpha=0.7, label="Triangular V2 (green)"),
+        Patch(facecolor=TRI_COLORS[2], alpha=0.7, label="Triangular V3 (red)"),
+        Patch(facecolor=S2_COLOR, alpha=0.78, label="FMDRE S2 (purple)"),
     ]
     # place legend outside top-right to avoid covering boxes
     ax.legend(handles=legend_handles, fontsize=9, loc="upper left",

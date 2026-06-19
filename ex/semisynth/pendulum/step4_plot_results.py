@@ -23,6 +23,27 @@ from ex.utils.plot_style import (
     ERROR_BAND_ALPHA,
 )
 
+COLOR_NON_TRI = "#4878d0"   # steel blue (base methods)
+TRI_COLORS = ["#ff7f0e", "#2ca02c", "#d62728"]  # V1 orange, V2 green, V3 red
+S2_COLOR = "#9467bd"        # purple (sigma2 sibling, nested on its base column)
+BOX_ALPHA = 0.6             # translucent boxes so nested overlaps show through
+
+# base method -> its sigma2 sibling, drawn as an extra nested box on the same column.
+S2_OF = {"FMDRE": "FMDRE_S2"}
+
+# each family: (base_method_or_None, [triangular_variants]). base = wide blue
+# box behind; variants = narrower colored box(es) overlaid at the same x. a base
+# with an S2_OF entry also gets its sigma2 sibling nested on top (purple).
+METHOD_FAMILIES = [
+    ("BDRE",          []),
+    ("MDRE",          ["TriangularMDRE"]),
+    ("MultiHeadTDRE", ["MultiHeadTriangularTDRE"]),
+    ("TSM",           ["TriangularTSM"]),
+    ("CTSM",          ["TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3"]),
+    ("VFM",           ["TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3"]),
+    ("FMDRE",         ["TriangularFMDRE"]),
+]
+
 
 def parse_args() -> argparse.Namespace:
     """
@@ -84,7 +105,7 @@ def load_summary_h5(path: str) -> tuple[np.ndarray, dict[str, dict[str, np.ndarr
 
         # scan all keys for pointwise_mae_* and eldr_err_* datasets
         for key in f.keys():
-            if key.startswith('pointwise_mae_') and not key.endswith('_se') and not key.endswith('_n'):
+            if key.startswith('pointwise_mae_') and not key.endswith('_se') and not key.endswith('_n') and not key.endswith('_seed_values'):
                 # extract method name from pointwise_mae_{method}
                 method = key[len('pointwise_mae_'):]
                 mae_key = f'pointwise_mae_{method}'
@@ -117,7 +138,7 @@ def load_summary_h5(path: str) -> tuple[np.ndarray, dict[str, dict[str, np.ndarr
                 results[method]['mae_mean'] = mae_mean
                 results[method]['mae_se'] = mae_se
 
-            elif key.startswith('eldr_err_') and not key.endswith('_se') and not key.endswith('_n'):
+            elif key.startswith('eldr_err_') and not key.endswith('_se') and not key.endswith('_n') and not key.endswith('_seed_values'):
                 # extract method from eldr_err_{method}
                 method = key[len('eldr_err_'):]
                 eldr_key = f'eldr_err_{method}'
@@ -276,6 +297,126 @@ def plot_eldr_err_bars(
     print(f'PNG saved to: {png_path}')
 
 
+def _shade(hex_color: str, frac: float) -> tuple:
+    """blend hex_color toward white. frac in [0,1]: 1 -> full color (large K1),
+    smaller frac -> lighter (small K1). used to encode K1 as box lightness while
+    hue still encodes base/variant identity.
+    """
+    import matplotlib.colors as mcolors
+    rgb = np.array(mcolors.to_rgb(hex_color))
+    return tuple(1.0 - frac * (1.0 - rgb))
+
+
+def plot_boxplot(h5_path: str, metric: str, k1_values: np.ndarray, out_dir: str) -> None:
+    """family-grouped box plot of per-seed metric values, one box per K1 within
+    each method, K1 encoded by lightness (light = small K1, dark = large K1).
+
+    reads /{metric}_{method}_seed_values [G_k1, seeds] (NaN-padded) from step3.
+    per family: base = wide box (blue hue), triangular variant(s) = nested
+    narrower boxes (V1 orange / V2 green / V3 red) overlaid at each of the G_k1
+    sub-positions. hue -> identity, lightness -> K1. y-axis log-scaled.
+
+    emits {out_dir}/{metric}_boxplot.{pdf,png}
+    """
+    suffix = '_seed_values'
+    with h5py.File(h5_path, 'r') as f:
+        data = {
+            k[len(metric) + 1:-len(suffix)]: np.atleast_2d(f[k][:])
+            for k in f.keys()
+            if k.startswith(f'{metric}_') and k.endswith(suffix)
+        }
+    # drop methods with no finite seeds anywhere
+    data = {m: v for m, v in data.items() if np.isfinite(v).any()}
+
+    apply_style()
+
+    valid = [(b, vs) for b, vs in METHOD_FAMILIES
+             if (b and b in data) or any(v in data for v in vs)
+             or (S2_OF.get(b) in data)]
+    if not valid:
+        warnings.warn(f'no seed_values for {metric}; skipping boxplot')
+        return
+    n_fam = len(valid)
+    n_k1 = len(k1_values)
+    offsets = np.linspace(-0.26, 0.26, n_k1) if n_k1 > 1 else np.array([0.0])
+    fracs = np.linspace(0.45, 1.0, n_k1) if n_k1 > 1 else np.array([1.0])
+
+    fig, ax = plt.subplots(figsize=(max(11, n_fam * 1.6), 5))
+
+    def _draw_box(values, pos, width, color, zorder):
+        vals = values[np.isfinite(values)]
+        if vals.size == 0:
+            return
+        bp = ax.boxplot(
+            vals, positions=[pos], widths=width, patch_artist=True,
+            showfliers=True,
+            flierprops=dict(marker='.', markersize=2, alpha=0.2,
+                            markerfacecolor=color, markeredgecolor=color,
+                            linestyle='none'),
+            medianprops=dict(color='black', linewidth=1.2, zorder=zorder + 1),
+            whiskerprops=dict(color=color, linewidth=1.1, zorder=zorder),
+            capprops=dict(color=color, linewidth=1.1, zorder=zorder),
+            boxprops=dict(edgecolor='black', linewidth=0.6),
+            manage_ticks=False, zorder=zorder,
+        )
+        bp['boxes'][0].set_facecolor(color)
+        bp['boxes'][0].set_alpha(BOX_ALPHA)
+        bp['boxes'][0].set_zorder(zorder)
+
+    base_w = 0.20
+    xticks, xlabels = [], []
+    for fam_idx, (base, variants) in enumerate(valid):
+        pos = fam_idx + 1
+        xticks.append(pos)
+        xlabels.append((base or variants[0]).replace('Triangular', 'Tri').replace('MultiHead', 'MH'))
+        # overlays nested on the base box, widest-first: tri variants then s2 sibling
+        overlays = [(v, TRI_COLORS[vi % len(TRI_COLORS)])
+                    for vi, v in enumerate(variants) if v in data]
+        s2 = S2_OF.get(base)
+        if s2 and s2 in data:
+            overlays.append((s2, S2_COLOR))
+        for ki in range(n_k1):
+            xk = pos + offsets[ki]
+            if base and base in data:
+                _draw_box(data[base][ki], xk, base_w,
+                          _shade(COLOR_NON_TRI, fracs[ki]), zorder=2)
+            for oi, (m, c) in enumerate(overlays):
+                _draw_box(data[m][ki], xk, base_w * (0.7 - 0.18 * oi),
+                          _shade(c, fracs[ki]), zorder=3 + oi)
+
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xlabels, rotation=40, ha='right', fontsize=10)
+    ax.set_xlim(0.4, n_fam + 0.6)
+    ax.set_ylabel('Pointwise LDR MAE' if metric == 'pointwise_mae' else 'ELDR Error', fontsize=12)
+    ax.set_yscale('log')
+    ax.grid(True, axis='y', alpha=0.3)
+
+    from matplotlib.patches import Patch
+    hue_handles = [
+        Patch(facecolor=COLOR_NON_TRI, alpha=BOX_ALPHA, label='Base'),
+        Patch(facecolor=TRI_COLORS[0], alpha=BOX_ALPHA, label='Tri V1'),
+        Patch(facecolor=TRI_COLORS[1], alpha=BOX_ALPHA, label='Tri V2'),
+        Patch(facecolor=TRI_COLORS[2], alpha=BOX_ALPHA, label='Tri V3'),
+        Patch(facecolor=S2_COLOR, alpha=BOX_ALPHA, label='FMDRE S2'),
+    ]
+    k1_handles = [Patch(facecolor=_shade(COLOR_NON_TRI, fracs[ki]), alpha=BOX_ALPHA,
+                        label=f'K1 = {k1_values[ki]:g}') for ki in range(n_k1)]
+    leg1 = ax.legend(handles=hue_handles, title='Method (hue)', fontsize=9,
+                     loc='upper left', bbox_to_anchor=(1.005, 1.0),
+                     borderaxespad=0, framealpha=0.9)
+    ax.add_artist(leg1)
+    ax.legend(handles=k1_handles, title='K1 (lightness)', fontsize=9,
+              loc='upper left', bbox_to_anchor=(1.005, 0.5),
+              borderaxespad=0, framealpha=0.9)
+
+    os.makedirs(out_dir, exist_ok=True)
+    for ext in ('pdf', 'png'):
+        path = os.path.join(out_dir, f'{metric}_boxplot.{ext}')
+        fig.savefig(path, dpi=150, bbox_inches='tight')
+    print(f'saved {metric}_boxplot.{{pdf,png}}')
+    plt.close(fig)
+
+
 def main() -> None:
     """
     Orchestrate: parse args → load config → load h5 → plot two figures.
@@ -316,6 +457,8 @@ def main() -> None:
     # emit figures
     plot_k1_vs_mae(k1_values, results, beta_value, figures_dir)
     plot_eldr_err_bars(results, beta_value, figures_dir)
+    for metric in ('pointwise_mae', 'eldr_err'):
+        plot_boxplot(h5_path, metric, k1_values, figures_dir)
 
     print(f'Both figures saved to {figures_dir}')
 

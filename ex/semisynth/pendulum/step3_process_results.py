@@ -59,8 +59,10 @@ def compute_metrics_for_seed(data_path, est_ldrs, method):
         return None
     try:
         with h5py.File(data_path, 'r') as f:
-            log_p_pstar = f['log_p_pstar'][:]  # shape [N, 3]
-            true_ldrs = log_p_pstar[:, 2] - log_p_pstar[:, 1]  # E - O
+            # use the canonical true_ldrs field: it matches the sign convention of
+            # est_ldrs (predict_ldr) and integrated_eldr. log_p_pstar[:,2]-[:,1] is
+            # the NEGATED convention (bug in the old per-seed reader).
+            true_ldrs = f['true_ldrs'][:]
             integrated_eldr = float(f.attrs['integrated_eldr'])
 
         est_ldrs = np.asarray(est_ldrs)
@@ -148,6 +150,9 @@ def write_summary_h5(out_path, k1_values, beta_value, beta_count, per_method):
 
     per_method[method] is dict with pre-aggregated 1D arrays of shape [G_k1]:
       keys: mae_mean, mae_se, mae_n, eldr_mean, eldr_se, eldr_n
+    plus per-seed arrays of shape [G_k1, seeds_default], NaN-padded over the
+    seed axis (so the step4 boxplot can split boxes by K1):
+      keys: mae_seed_values, eldr_seed_values
 
     logic:
       1. create output directory if needed
@@ -185,6 +190,12 @@ def write_summary_h5(out_path, k1_values, beta_value, beta_count, per_method):
             f.create_dataset(f'eldr_err_n_{method}',
                            data=method_data['eldr_n'], dtype=np.int32)
 
+            # flattened per-seed values for the step4 boxplot overlay
+            f.create_dataset(f'pointwise_mae_{method}_seed_values',
+                           data=method_data['mae_seed_values'], dtype=np.float32)
+            f.create_dataset(f'eldr_err_{method}_seed_values',
+                           data=method_data['eldr_seed_values'], dtype=np.float32)
+
 
 def main():
     """
@@ -202,6 +213,11 @@ def main():
 
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
+
+    # expand ${DPE_DATA_ROOT} etc. (yaml.safe_load leaves them literal)
+    for _k in ('data_dir', 'raw_results_dir', 'processed_results_dir'):
+        if _k in config:
+            config[_k] = os.path.expandvars(config[_k])
 
     data_dir = config['data_dir']
     raw_results_dir = config['raw_results_dir']
@@ -249,6 +265,20 @@ def main():
                 eldr_ses[method][k1_idx] = eldr_se
                 eldr_ns[method][k1_idx] = eldr_n
 
+    # per-seed arrays shaped [G_k1, seeds_default], NaN-padded over the seed
+    # axis (beta is singleton, idx 0). lets step4 split boxes by K1.
+    seeds_default = kl_targets['seeds_default']
+    seed_mae = {method: np.full((G_k1, seeds_default), np.nan, dtype=np.float32)
+                for method in algorithms}
+    seed_eldr = {method: np.full((G_k1, seeds_default), np.nan, dtype=np.float32)
+                 for method in algorithms}
+    for method in algorithms:
+        for k1_idx in range(G_k1):
+            vals = results[k1_idx][0][method]
+            for s, (mae, eldr) in enumerate(vals[:seeds_default]):
+                seed_mae[method][k1_idx, s] = mae
+                seed_eldr[method][k1_idx, s] = eldr
+
     # construct per_method dict for write_summary_h5
     per_method = {}
     for method in algorithms:
@@ -259,6 +289,8 @@ def main():
             'eldr_mean': eldr_means[method],
             'eldr_se': eldr_ses[method],
             'eldr_n': eldr_ns[method],
+            'mae_seed_values': seed_mae[method],
+            'eldr_seed_values': seed_eldr[method],
         }
 
     # write output
