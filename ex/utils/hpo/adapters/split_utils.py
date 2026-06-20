@@ -121,6 +121,113 @@ def stratified_split(
     return (sorted(train_all), sorted(holdout_all))
 
 
+def stratified_split_3way(
+    pool: list[tuple],
+    stratify_fn: Callable[[tuple], Hashable | None] | None,
+    n_train_per_stratum: int,
+    n_holdout_per_stratum: int,
+    n_step2_per_stratum: int,
+    seed: int,
+) -> tuple[list[tuple], list[tuple], list[tuple]]:
+    """split pool into (train, holdout, step2) by absolute per-stratum counts.
+
+    each stratum is drawn from independently with a per-key deterministic rng
+    (seed XOR (hash(key) & 0xffffffff)), matching the contract used by
+    stratified_split. cells per stratum MUST be at least
+    n_train_per_stratum + n_holdout_per_stratum + n_step2_per_stratum;
+    leftover cells (if the stratum has more) go to step2.
+
+    args:
+        pool: list of hashable cell tuples (deduplicated internally).
+        stratify_fn: cell -> hashable key. None falls back to a single global
+            stratum (mirrors stratified_split's unstratified mode).
+        n_train_per_stratum: trial-pool size per stratum (Optuna training).
+        n_holdout_per_stratum: holdout-pool size per stratum.
+        n_step2_per_stratum: step2-pool size per stratum. set to a sentinel
+            value of -1 to assign ALL non-train/non-holdout cells to step2
+            (used by adapters that don't reserve a separate step2 bucket and
+            instead evaluate step2 on every cell).
+
+    returns:
+        (train, holdout, step2): three disjoint sorted lists. when
+        n_step2_per_stratum >= 0, step2 has exactly n_step2_per_stratum cells
+        per stratum (others discarded with a warning). when -1, step2 holds
+        every remaining cell.
+
+    raises:
+        ValueError: pool is empty, or any stratum has fewer cells than
+            n_train_per_stratum + n_holdout_per_stratum (the HPO floor).
+    """
+    if not pool:
+        raise ValueError("pool cannot be empty")
+    if n_train_per_stratum <= 0 or n_holdout_per_stratum <= 0:
+        raise ValueError(
+            f"n_train_per_stratum ({n_train_per_stratum}) and "
+            f"n_holdout_per_stratum ({n_holdout_per_stratum}) must both be > 0"
+        )
+
+    pool_sorted = sorted(set(pool))
+
+    # group by stratify key (single-stratum if stratify_fn is None)
+    strata: dict[Hashable, list] = {}
+    if stratify_fn is None:
+        strata[None] = pool_sorted
+    else:
+        for cell in pool_sorted:
+            key = stratify_fn(cell)
+            strata.setdefault(key, []).append(cell)
+
+    logger = logging.getLogger(__name__)
+    train_all: list = []
+    holdout_all: list = []
+    step2_all: list = []
+
+    for key in sorted(strata.keys(), key=lambda k: (k is None, repr(k))):
+        cells = strata[key]
+        n = len(cells)
+        floor = n_train_per_stratum + n_holdout_per_stratum
+        if n < floor:
+            raise ValueError(
+                f"stratum {key!r} has {n} cells < hpo floor "
+                f"{n_train_per_stratum} train + {n_holdout_per_stratum} holdout "
+                f"= {floor}"
+            )
+
+        per_seed = seed ^ (hash(key) & 0xFFFFFFFF)
+        rng = random.Random(per_seed)
+        shuffled = list(cells)
+        rng.shuffle(shuffled)
+
+        train_cells = sorted(shuffled[:n_train_per_stratum])
+        holdout_cells = sorted(
+            shuffled[n_train_per_stratum:n_train_per_stratum + n_holdout_per_stratum]
+        )
+        remainder = shuffled[floor:]
+
+        if n_step2_per_stratum < 0:
+            # sentinel: every remaining cell goes to step2
+            step2_cells = sorted(remainder)
+        else:
+            if len(remainder) < n_step2_per_stratum:
+                raise ValueError(
+                    f"stratum {key!r} has {len(remainder)} cells after hpo "
+                    f"split but step2 needs {n_step2_per_stratum}"
+                )
+            if len(remainder) > n_step2_per_stratum:
+                logger.warning(
+                    "stratum %r has %d cells beyond hpo+step2 budget; "
+                    "discarding %d", key, len(remainder),
+                    len(remainder) - n_step2_per_stratum,
+                )
+            step2_cells = sorted(remainder[:n_step2_per_stratum])
+
+        train_all.extend(train_cells)
+        holdout_all.extend(holdout_cells)
+        step2_all.extend(step2_cells)
+
+    return (sorted(train_all), sorted(holdout_all), sorted(step2_all))
+
+
 def validate_disjoint_union(train: list, holdout: list, full_pool: list) -> None:
     """
     validate that train and holdout are disjoint and their union equals full_pool.

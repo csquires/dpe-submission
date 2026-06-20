@@ -60,9 +60,19 @@ def make_adapter_module(spec: AdapterSpec, search_spaces: dict) -> dict[str, Cal
         return config
 
     def list_cells(config: dict) -> list[int]:
-        """enumerate all flat cell indices in this experiment."""
-        n = len(config["alphas"]) * config["num_pairs_per_alpha"]
-        return list(range(n))
+        """flat ints for (alpha_idx, pair_idx) tuples reserved for step2.
+
+        delegates to the hpo adapter's step2_pool() so step2 runs only on
+        the cells NOT seen during hpo. encoding mirrors the historical
+        layout: flat_idx = alpha_idx * num_pairs_per_alpha + pair_idx.
+        """
+        from ex.utils.hpo.adapters import get_adapter
+        adapter = get_adapter(spec.name)
+        n_pairs = config["num_pairs_per_alpha"]
+        return [
+            alpha_idx * n_pairs + pair_idx
+            for (alpha_idx, pair_idx) in adapter.step2_pool()
+        ]
 
     def bucket_for_cell(cell_idx: int, config: dict) -> str:
         """assign cell to alpha-indexed bucket for parallelization."""

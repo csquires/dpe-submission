@@ -64,10 +64,16 @@ def _open_dataset(config: dict) -> h5py.File:
 # -----------------------------------------------------------------------------
 
 def list_cells(config: dict) -> list[int]:
-    """all design_arr row indices."""
-    with _open_dataset(config) as f:
-        nrows = f["design_arr"].shape[0]
-    return list(range(nrows))
+    """flat row indices reserved for step2.
+
+    delegates to the hpo adapter's step2_pool() so the train/holdout/step2
+    three-way stratified split is the single source of truth. eig keeps the
+    32/8/all convention — step2_pool() returns cell_pool() (every design
+    row), so this list_cells matches the historical full-pool behavior.
+    """
+    from ex.utils.hpo.adapters import get_adapter
+    adapter = get_adapter("eig")
+    return [int(cell[0]) for cell in adapter.step2_pool()]
 
 
 def bucket_for_cell(cell_idx: int, config: dict) -> None:

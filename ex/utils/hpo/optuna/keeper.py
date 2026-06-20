@@ -25,13 +25,14 @@ import os
 import subprocess
 import sys
 import time
+from typing import Hashable
 
 from optuna.trial import TrialState
 
 from ex.utils.hpo.optuna.cores_registry import get_cores_for_method
 from ex.utils.hpo.optuna.lanes import get_lane, LaneProfile
 from ex.utils.hpo.optuna.study_config import load_config
-from ex.utils.hpo.optuna.storage import create_or_load
+from ex.utils.hpo.optuna.storage import create_or_load, _serialize_slice
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 _BUDGET_STATES = (TrialState.COMPLETE,)
 
 
-def count_complete(experiment: str, method: str, attempts: int = 3) -> int:
+def count_complete(experiment: str, method: str, slice=None, attempts: int = 3) -> int:
     """count COMPLETE trials in a study (the target_trials metric).
 
     PRUNED/FAIL trials do not count: target_trials is a budget of full-length
@@ -50,7 +51,7 @@ def count_complete(experiment: str, method: str, attempts: int = 3) -> int:
     last_err: Exception | None = None
     for attempt in range(attempts):
         try:
-            study = create_or_load(experiment, method)
+            study = create_or_load(experiment, method, slice=slice)
             return sum(1 for t in study.trials if t.state in _BUDGET_STATES)
         except Exception as e:  # torn read; retry
             last_err = e
@@ -72,13 +73,17 @@ def squeue_count(
     return sum(1 for line in out.splitlines() if line.strip())
 
 
-def job_name(experiment: str, method: str, lane_name: str) -> str:
-    """slurm job-name for a keeper-dispatched worker, embedding the lane.
+def job_name(experiment: str, method: str, lane_name: str, slice=None) -> str:
+    """slurm job-name for a keeper-dispatched worker, embedding the lane and slice.
 
-    format: optk_{experiment}_{method}_{lane_name}. the lane is included so
-    per-lane squeue -n counts never collide across lanes.
+    format without slice: optk_{experiment}_{method}_{lane_name}.
+    format with slice: optk_{experiment}_{method}_slice_{serialize(slice)}_{lane_name}.
+    the lane is included so per-lane squeue -n counts never collide across lanes.
     """
-    return f"optk_{experiment}_{method}_{lane_name}"
+    if slice is None:
+        return f"optk_{experiment}_{method}_{lane_name}"
+    serialized = _serialize_slice(slice)
+    return f"optk_{experiment}_{method}_slice_{serialized}_{lane_name}"
 
 
 def lane_b(lane: LaneProfile, method: str) -> int:
@@ -94,9 +99,9 @@ def lane_b(lane: LaneProfile, method: str) -> int:
 
 
 def estimate_in_flight(
-    experiment: str, method: str, lanes: list[str], user: str | None
+    experiment: str, method: str, lanes: list[str], user: str | None, slice=None
 ) -> int:
-    """estimate concurrent trials in the journal for (experiment, method).
+    """estimate concurrent trials in the journal for (experiment, method[, slice]).
 
     sum lane_b(lane) * squeue_count(lane, name) across `lanes`. drops the
     contributions of lanes whose squeue lookup fails so a single transient
@@ -108,7 +113,7 @@ def estimate_in_flight(
             lane = get_lane(lane_name)
             n_jobs = squeue_count(
                 partition=lane.partition, user=user,
-                name=job_name(experiment, method, lane_name),
+                name=job_name(experiment, method, lane_name, slice=slice),
             )
         except Exception:
             continue
@@ -117,7 +122,7 @@ def estimate_in_flight(
 
 
 def cull_study_jobs(experiment: str, method: str, lanes: list[str],
-                    user: str | None, dry_run: bool) -> int:
+                    user: str | None, dry_run: bool, slice=None) -> int:
     """scancel all in-flight worker jobs for an at-target study, across lanes.
 
     once a study reaches target_trials the keeper stops dispatching to it, but
@@ -133,7 +138,7 @@ def cull_study_jobs(experiment: str, method: str, lanes: list[str],
     """
     n = 0
     for lane_name in lanes:
-        name = job_name(experiment, method, lane_name)
+        name = job_name(experiment, method, lane_name, slice=slice)
         try:
             partition = get_lane(lane_name).partition
             live = squeue_count(partition, user=user, name=name)
@@ -161,7 +166,7 @@ def cull_study_jobs(experiment: str, method: str, lanes: list[str],
 
 def dispatch(config_module: str, combo_index: int, experiment: str,
              method: str, lane_name: str, lane: LaneProfile, workdir: str,
-             log_dir: str, dry_run: bool) -> str:
+             log_dir: str, dry_run: bool, slice=None) -> str:
     """sbatch one optuna worker on a non-array lane (preempt/cpu/general).
 
     the worker is the ordinary ex.utils.hpo.optuna.submit entrypoint pinned
@@ -178,10 +183,11 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
       workdir: working directory for submit.
       log_dir: directory for sbatch stdout/stderr.
       dry_run: if True, log the sbatch command and return "dry-run".
+      slice: optional slice identifier (recovered on submit side via combo_index).
 
     returns: job ID (str) if submitted; "dry-run" if dry_run=True.
     """
-    name = job_name(experiment, method, lane_name)
+    name = job_name(experiment, method, lane_name, slice=slice)
     wrap = (
         f"source ~/.bashrc && conda activate fac && cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
@@ -222,8 +228,8 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
 
 def dispatch_array(config_module: str, combo_index: int, experiment: str,
                    method: str, lane: LaneProfile, n_workers: int,
-                   workdir: str, log_dir: str, dry_run: bool) -> str:
-    """sbatch one array job for a (experiment, method) study.
+                   workdir: str, log_dir: str, dry_run: bool, slice=None) -> str:
+    """sbatch one array job for a (experiment, method[, slice]) study.
 
     the array has size N = throttle K = n_workers -- this study's share of the
     array lane's total cap (lane.max_concurrent // studies still under target).
@@ -240,12 +246,13 @@ def dispatch_array(config_module: str, combo_index: int, experiment: str,
       workdir: working directory for submit.
       log_dir: directory for sbatch stdout/stderr.
       dry_run: if True, log the sbatch command and return "dry-run".
+      slice: optional slice identifier (recovered on submit side via combo_index).
 
     returns: job ID (str) if submitted; "dry-run" if dry_run=True.
 
     note: the array lane ALWAYS has gpus=0 and qos=""; no --gpus or --qos flags.
     """
-    name = job_name(experiment, method, "array")
+    name = job_name(experiment, method, "array", slice=slice)
     n = max(1, n_workers)
     array_spec = f"0-{n - 1}%{n}"
 
@@ -360,17 +367,27 @@ def main() -> int:
             break
 
         # (1) count terminal trials; collect studies still below target.
-        pending: list[tuple[int, str, int]] = []  # (combo_index, method, n_terminal)
+        # iterate the (method x slice) product via the shared `resolve_combo`
+        # contract from study_config.py; when config.slices is None, slices
+        # degrades to [None] and behavior is byte-identical to today.
+        pending: list[tuple[int, str, Hashable | None, int]] = []  # (combo_index, method, slice, n_terminal)
         count_errors = 0
-        for i, method in enumerate(config.methods):
+
+        slices = config.slices if config.slices is not None else [None]
+        combos = [(m, s) for m in config.methods for s in slices]
+
+        for combo_index, (method, slice_) in enumerate(combos):
             try:
-                n = count_complete(config.experiment, method)
+                n = count_complete(config.experiment, method, slice=slice_)
             except Exception as e:
-                logger.warning("cycle %d: count failed for %s: %s", cycle, method, e)
+                logger.warning(
+                    "cycle %d: count failed for %s slice %s: %s",
+                    cycle, method, slice_, e,
+                )
                 count_errors += 1
                 continue
-            if n < config.target_trials:
-                pending.append((i, method, n))
+            if n < config.target_for(method):
+                pending.append((combo_index, method, slice_, n))
 
         # (1b) cull in-flight workers for studies already at target -- BEFORE
         # the done-check break, so the final cycle (where pending transitions
@@ -379,29 +396,42 @@ def main() -> int:
         # array spawns that mint orphan RUNNING trial records for hours after
         # the keeper exits.
         if args.cull_on_target:
-            pending_methods = {m for (_, m, _) in pending}
-            for method in config.methods:
-                if method not in pending_methods:
+            # collect (method, slice) pairs still pending
+            pending_ms = {(m, s) for (_, m, s, _) in pending}
+
+            # cull all (method, slice) combos not in pending
+            if config.slices:
+                all_ms = [(m, s) for m in config.methods for s in config.slices]
+            else:
+                all_ms = [(m, None) for m in config.methods]
+
+            for method, slice_ in all_ms:
+                if (method, slice_) not in pending_ms:
                     try:
                         cull_study_jobs(
                             config.experiment, method, config.lanes, user,
-                            args.dry_run,
+                            args.dry_run, slice=slice_,
                         )
                     except Exception as e:
-                        logger.warning("cull failed for %s: %s", method, e)
+                        logger.warning(
+                            "cull failed for %s slice %s: %s",
+                            method, slice_, e
+                        )
 
         # only conclude "done" when every count SUCCEEDED and all are at target.
         # an empty `pending` caused by count failures is NOT done -- retry.
         if not pending and count_errors == 0:
+            n_studies = len(config.methods) * len(config.slices or [None])
             logger.info(
-                "cycle %d: all %d studies reached target_trials=%d; done",
-                cycle, len(config.methods), config.target_trials,
+                "cycle %d: all %d studies reached target; done",
+                cycle, n_studies,
             )
             break
         if not pending and count_errors:
             logger.warning(
-                "cycle %d: no studies pending but %d count(s) failed -- not "
-                "concluding done; retrying next cycle", cycle, count_errors,
+                "cycle %d: no (method, slice) studies pending but %d count(s) "
+                "failed -- not concluding done; retrying next cycle",
+                cycle, count_errors,
             )
             time.sleep(args.poll_interval)
             continue
@@ -415,10 +445,10 @@ def main() -> int:
         n_pending = len(pending)
         cycle_dispatched = 0
         study_slots: dict[str, int] = {}
-        for (_, method, _) in pending:
+        for (_, method, slice_, _) in pending:
             try:
                 in_flight = estimate_in_flight(
-                    config.experiment, method, config.lanes, user
+                    config.experiment, method, config.lanes, user, slice=slice_
                 )
             except Exception as e:
                 logger.warning(
@@ -444,11 +474,11 @@ def main() -> int:
                 # array lane: one --array job per under-target study, sized to
                 # min(per_study, study_slots[method] // lane_b). a study that
                 # already has a live array job is skipped here.
-                for (combo_index, method, n) in pending:
+                for (combo_index, method, slice_, n) in pending:
                     try:
                         count = squeue_count(
                             partition="array", user=user,
-                            name=job_name(config.experiment, method, "array"),
+                            name=job_name(config.experiment, method, "array", slice=slice_),
                         )
                     except Exception as e:
                         logger.warning("squeue failed for array %s: %s", method, e)
@@ -470,7 +500,7 @@ def main() -> int:
                         dispatch_array(
                             args.config, combo_index, config.experiment,
                             method, lane, array_n, args.workdir,
-                            args.log_dir, args.dry_run,
+                            args.log_dir, args.dry_run, slice=slice_,
                         )
                         cycle_dispatched += 1
                         study_slots[method] -= array_n * b
@@ -480,14 +510,14 @@ def main() -> int:
             else:
                 # per-worker lanes (preempt, cpu, general): top each study up to
                 # its per_study share, bounded by the per-cycle burst cap.
-                for (combo_index, method, n) in pending:
+                for (combo_index, method, slice_, n) in pending:
                     if cycle_dispatched >= args.max_dispatch_per_cycle:
                         break
 
                     try:
                         running = squeue_count(
                             partition=lane.partition, user=user,
-                            name=job_name(config.experiment, method, lane_name),
+                            name=job_name(config.experiment, method, lane_name, slice=slice_),
                         )
                     except Exception as e:
                         logger.warning(
@@ -511,7 +541,7 @@ def main() -> int:
                             dispatch(
                                 args.config, combo_index, config.experiment,
                                 method, lane_name, lane, args.workdir,
-                                args.log_dir, args.dry_run,
+                                args.log_dir, args.dry_run, slice=slice_,
                             )
                             cycle_dispatched += 1
                             study_slots[method] -= b
@@ -523,11 +553,15 @@ def main() -> int:
                             break
 
         logger.info(
-            "cycle %d: %d study(ies) below target; dispatched %d worker(s)",
+            "cycle %d: %d (method, slice) below target; dispatched %d worker(s)",
             cycle, len(pending), cycle_dispatched,
         )
         time.sleep(args.poll_interval)
 
+    # done-marker written by redis_server.sh to done/<cfg>, keyed on CONFIG
+    # module only, not per (method, slice). when slices are present, one slow
+    # slice blocks the cfg-level holdout launch. acceptable for peak-era
+    # campaign scale; flag for future scale.
     logger.info("keeper exiting normally after %d cycle(s)", cycle)
     return 0
 

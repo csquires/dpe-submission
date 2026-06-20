@@ -113,11 +113,20 @@ def _decode_cell(flat_idx: int, config: dict) -> tuple[int, int, int]:
 
 
 def list_cells(config: dict) -> list[int]:
-    """all (k1_idx, beta_idx, seed) tuples encoded as flat ints."""
-    n_k1 = len(config["kl_targets"]["k1_values"])
+    """flat ints for (k1_idx, beta_idx, seed) tuples reserved for step2.
+
+    delegates to the hpo adapter's step2_pool() so step2 runs only on the
+    cells NOT seen during hpo. encoding mirrors the existing convention:
+    flat_idx = ((k1_idx * n_beta) + beta_idx) * seeds + seed.
+    """
+    from ex.utils.hpo.adapters import get_adapter
+    adapter = get_adapter("occupancy")
     n_beta = len(config["kl_targets"]["beta_values"])
     seeds = config["kl_targets"].get("seeds_default", 1)
-    return list(range(n_k1 * n_beta * seeds))
+    return [
+        ((k1_idx * n_beta) + beta_idx) * seeds + seed
+        for (k1_idx, beta_idx, seed) in adapter.step2_pool()
+    ]
 
 
 def bucket_for_cell(cell_idx: int, config: dict) -> str:

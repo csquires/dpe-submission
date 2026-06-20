@@ -19,6 +19,7 @@ from optuna.study import MaxTrialsCallback
 from optuna.trial import TrialState
 
 from pathlib import Path
+from typing import Optional, Hashable
 from ex.utils.hpo.optuna.storage import create_or_load
 from ex.utils.hpo.suggest_hp import get_metadata
 from ex.utils.hpo.adapters import get_adapter
@@ -38,6 +39,7 @@ def run_worker(
     reduction_factor: int = 3,
     target_trials: int = 320,
     fixed_hp: dict | None = None,
+    slice: Optional[Hashable] = None,
 ) -> None:
     """
     run optuna.study.optimize() in isolated loky subprocess.
@@ -67,6 +69,10 @@ def run_worker(
       cores_per_trial: int, BLAS threads to allocate
       target_trials: int, study-wide budget of COMPLETE trials; the worker
         stops (study.stop via MaxTrialsCallback) once the shared study reaches it
+      fixed_hp: dict | None, optional fixed hyperparameters to override suggestions
+      slice: Optional[Hashable], optional identifier for per-slice study isolation.
+        When set, passed to storage.create_or_load() and make_objective() to
+        route trials into per-slice journals/namespaces. Defaults to None (no slicing).
 
     returns: None (logs errors and exits nonzero on failure)
     """
@@ -97,9 +103,10 @@ def run_worker(
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
+    logger_slice_suffix = f", slice={slice}" if slice is not None else ""
     logger.info(
         f"worker {worker_id} starting for {experiment}/{method}, "
-        f"timeout={timeout_seconds}s, cores={cores_per_trial}"
+        f"timeout={timeout_seconds}s, cores={cores_per_trial}{logger_slice_suffix}"
     )
 
     # bootstrap 4: load or create study
@@ -107,12 +114,20 @@ def run_worker(
         slurm_job_id = int(os.environ.get("SLURM_JOB_ID", 0))
         slurm_array_task_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
         seed_for_worker = hash((study_seed, slurm_job_id, slurm_array_task_id, worker_id)) & 0xFFFFFFFF
-        sampler = optuna.samplers.TPESampler(
-            n_startup_trials=64, multivariate=True, group=True, constant_liar=True, seed=seed_for_worker
-        )
 
         metadata = get_metadata(method)
         uses_pruning = metadata.get("uses_pruning", False)
+        consider_pruned = metadata.get("consider_pruned", False)
+
+        # invariants: sampler lifecycle and journal schema
+        # - Sampler is reconstructed per worker; storage persists only trial journals, not sampler state.
+        # - We do NOT call `study.set_user_attr` to checkpoint sampler state; each worker resamples.
+        # - New `trial.set_user_attr` keys are additive; downstream readers must use `.get(key, default)`.
+        # - When slice is set, per-slice journals are isolated by storage layer; sampler is agnostic.
+        sampler = optuna.samplers.TPESampler(
+            n_startup_trials=32, multivariate=True, group=True, constant_liar=True,
+            consider_pruned_trials=consider_pruned, seed=seed_for_worker
+        )
         if uses_pruning:
             pruner = optuna.pruners.HyperbandPruner(
                 min_resource=min_resource, max_resource=max_resource,
@@ -121,7 +136,7 @@ def run_worker(
         else:
             pruner = optuna.pruners.NopPruner()
 
-        study = create_or_load(experiment, method, sampler=sampler, pruner=pruner)
+        study = create_or_load(experiment, method, sampler=sampler, pruner=pruner, slice=slice)
     except Exception as e:
         logger.error(f"failed to load/create study: {e}")
         sys.exit(1)
@@ -145,7 +160,7 @@ def run_worker(
     # bootstrap 6: construct objective
     try:
         objective_fn = make_objective(adapter, method, builder, study_seed,
-                                      fixed_hp=fixed_hp)
+                                      fixed_hp=fixed_hp, slice=slice)
     except Exception as e:
         logger.error(f"objective factory failed: {e}")
         sys.exit(1)

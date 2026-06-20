@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 from ex.utils.hpo.optuna.study_config import load_config
+from ex.utils.hpo.optuna.storage import _serialize_slice, _match_slice
 
 
 COVERAGE_THRESHOLD = 0.8  # cells in >= this fraction of candidates form the shared set
@@ -257,11 +258,19 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--config", required=True, help="dotted StudyConfig module")
     p.add_argument("--method", required=True, help="method name")
+    p.add_argument("--slice", default=None,
+                   help="serialized slice string (e.g., '0_0_0'); shifts root to slice subdir")
     p.add_argument("--output-root", default=None,
                    help="default $DPE_DATA_ROOT/holdout")
     args = p.parse_args()
 
     cfg = load_config(args.config)
+
+    # match slice if --slice is given.
+    matched_slice = None
+    if args.slice is not None:
+        matched_slice = _match_slice(cfg, args.slice)
+
     if args.output_root is not None:
         out_root = Path(args.output_root)
     else:
@@ -269,7 +278,13 @@ def main() -> int:
             logging.error("DPE_DATA_ROOT not set and --output-root not given")
             return 1
         out_root = Path(os.environ["DPE_DATA_ROOT"]) / "holdout"
-    root = out_root / cfg.experiment / args.method
+
+    # shift root to slice subdir if --slice is given.
+    if args.slice is None:
+        root = out_root / cfg.experiment / args.method
+    else:
+        root = out_root / cfg.experiment / args.method / f"slice_{args.slice}"
+
     if not root.exists():
         logging.error(f"no holdout output directory: {root}")
         return 1
@@ -356,6 +371,40 @@ def main() -> int:
         )
     logging.info(f"best_hp -> {root / 'best_hp.json'}")
     logging.info(f"aggregate_summary -> {summary_csv}")
+
+    # phase 3: rollup across slices (if cfg.slices is not None).
+    if cfg.slices is not None:
+        method_root = out_root / cfg.experiment / args.method
+        rows = []
+        for slice_dir in sorted(method_root.glob("slice_*")):
+            if not slice_dir.is_dir():
+                continue
+            bhp = slice_dir / "best_hp.json"
+            if not bhp.exists():
+                continue
+            try:
+                d = json.loads(bhp.read_text())
+            except Exception as e:
+                logging.warning(f"cannot parse {bhp}: {e}")
+                continue
+            slice_id = slice_dir.name[len("slice_"):]
+            sel = d.get("selection", {})
+            rows.append({
+                "slice": slice_id,
+                "winner_trial_number": d.get("winner_trial_number"),
+                "best_step": d.get("best_step"),
+                "best_value_median": d.get("best_value_median"),
+                "best_value_mean": d.get("best_value_mean"),
+                "best_value_std": d.get("best_value_std"),
+                "mean_rank": sel.get("winner_mean_rank"),
+                "n_shared_cells": sel.get("n_shared_cells"),
+            })
+        if rows:
+            df = pd.DataFrame(rows)
+            csv_path = method_root / "winners_by_slice.csv"
+            df.to_csv(csv_path, index=False)
+            logging.info(f"rollup: {csv_path} ({len(rows)} slices)")
+
     return 0
 
 

@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional, Hashable
 import numpy as np
 import pandas as pd
 import optuna
@@ -24,9 +24,10 @@ def run_holdout(
     device: str | None = None,
     output_dir: Path | None = None,
     fixed_hp: dict | None = None,
+    slice: Optional[Hashable] = None,
 ) -> pd.DataFrame:
     """
-    evaluate top-K optuna study hyperparameters on adapter.holdout_pool() cells.
+    evaluate top-K optuna study hyperparameters on holdout cells (full pool or per-slice).
 
     Args:
         study: loaded optuna study (typically from create_or_load).
@@ -37,6 +38,7 @@ def run_holdout(
         full_budget_steps: step budget for each holdout trial; must match study max_resource. default 6400.
         device: torch device (None -> infer from adapter.default_device() or 'cpu'). optional.
         output_dir: if provided, write JSON per (hp, cell) and CSV summary. path created if missing.
+        slice: if None, iterate adapter.holdout_pool(); if set, iterate adapter.cells_for_slice(slice, pool='holdout'). default None.
 
     Returns:
         DataFrame with columns [hp_idx, hp_dict_json, cell, cell_metric, mean_metric, std_metric, n_cells].
@@ -54,9 +56,15 @@ def run_holdout(
     assert isinstance(full_budget_steps, int) and full_budget_steps > 0, "full_budget_steps must be positive int"
 
     # get holdout cells
-    holdout_cells = adapter.holdout_pool()
+    if slice is None:
+        holdout_cells = adapter.holdout_pool()
+        empty_err = "adapter.holdout_pool() is empty"
+    else:
+        holdout_cells = adapter.cells_for_slice(slice, pool='holdout')
+        empty_err = f"adapter.cells_for_slice({slice!r}, pool='holdout') is empty"
+
     if not holdout_cells:
-        raise ValueError("adapter.holdout_pool() is empty")
+        raise ValueError(empty_err)
 
     # infer device
     if device is None:

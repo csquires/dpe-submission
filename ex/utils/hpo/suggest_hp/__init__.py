@@ -23,6 +23,23 @@ from . import tsm
 from . import vfm
 from . import vfmorthros
 
+# peak variants — add ONE line per peak module that exists on disk (strict
+# "no import without a file" rule per spec 09).
+from . import bdre_peak
+from . import vfm_peak
+from . import ctsm_peak
+from . import tsm_peak
+from . import triangular_ctsm_peak
+from . import triangular_vfm_peak
+from . import mdre_peak
+from . import triangular_mdre_peak
+from . import mh_tdre_peak
+from . import mh_triangular_tdre_peak
+from . import fmdre_peak
+from . import fmdre_s2_peak
+from . import triangular_fmdre_peak
+from . import triangular_tsm_peak
+
 
 SUGGEST_HP_REGISTRY: dict[str, tuple[Callable[[optuna.Trial], dict], dict]] = {
     "BDRE": (bdre.suggest_hp, bdre.METADATA),
@@ -45,6 +62,26 @@ SUGGEST_HP_REGISTRY: dict[str, tuple[Callable[[optuna.Trial], dict], dict]] = {
     "TriangularTSM": (triangular_tsm.suggest_hp, triangular_tsm.METADATA),
     "VFM": (vfm.suggest_hp, vfm.METADATA),
     "VFMOrthros": (vfmorthros.suggest_hp, vfmorthros.METADATA),
+
+    # peak variants
+    "BDRE_peak": (bdre_peak.suggest_hp, bdre_peak.METADATA),
+    "VFM_peak": (vfm_peak.suggest_hp, vfm_peak.METADATA),
+    "CTSM_peak": (ctsm_peak.suggest_hp, ctsm_peak.METADATA),
+    "TSM_peak": (tsm_peak.suggest_hp, tsm_peak.METADATA),
+    "TriangularCTSM_V1_peak": (triangular_ctsm_peak.suggest_hp_v1, triangular_ctsm_peak.METADATA_V1),
+    "TriangularCTSM_V2_peak": (triangular_ctsm_peak.suggest_hp_v2, triangular_ctsm_peak.METADATA_V2),
+    "TriangularCTSM_V3_peak": (triangular_ctsm_peak.suggest_hp_v3, triangular_ctsm_peak.METADATA_V3),
+    "TriangularVFM_V1_peak": (triangular_vfm_peak.suggest_hp_v1, triangular_vfm_peak.METADATA_V1),
+    "TriangularVFM_V2_peak": (triangular_vfm_peak.suggest_hp_v2, triangular_vfm_peak.METADATA_V2),
+    "TriangularVFM_V3_peak": (triangular_vfm_peak.suggest_hp_v3, triangular_vfm_peak.METADATA_V3),
+    "MDRE_peak": (mdre_peak.suggest_hp, mdre_peak.METADATA),
+    "TriangularMDRE_peak": (triangular_mdre_peak.suggest_hp, triangular_mdre_peak.METADATA),
+    "MultiHeadTDRE_peak": (mh_tdre_peak.suggest_hp, mh_tdre_peak.METADATA),
+    "MultiHeadTriangularTDRE_peak": (mh_triangular_tdre_peak.suggest_hp, mh_triangular_tdre_peak.METADATA),
+    "FMDRE_peak": (fmdre_peak.suggest_hp, fmdre_peak.METADATA),
+    "FMDRE_S2_peak": (fmdre_s2_peak.suggest_hp, fmdre_s2_peak.METADATA),
+    "TriangularFMDRE_peak": (triangular_fmdre_peak.suggest_hp, triangular_fmdre_peak.METADATA),
+    "TriangularTSM_peak": (triangular_tsm_peak.suggest_hp, triangular_tsm_peak.METADATA),
 }
 
 
@@ -94,3 +131,16 @@ def list_methods() -> list[str]:
     use case: ui enumeration, method filter validation.
     """
     return list(SUGGEST_HP_REGISTRY.keys())
+
+
+def peak_variant(method: str) -> str | None:
+    """return peak variant name for method, or None if not registered.
+
+    input: method name (str), e.g. 'BDRE', 'VFM'.
+    action: check if f"{method}_peak" exists in registry.
+    output: f"{method}_peak" if registered, else None.
+
+    use case: campaign config auto-discovery, parity test setup.
+    """
+    peak_name = f"{method}_peak"
+    return peak_name if peak_name in SUGGEST_HP_REGISTRY else None

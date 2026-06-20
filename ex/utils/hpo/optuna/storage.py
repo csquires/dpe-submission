@@ -15,8 +15,10 @@ creation, and age-thresholded stale-trial reaping.
 """
 
 import datetime
+import re
 from os import environ
 from pathlib import Path
+from typing import Hashable
 
 import optuna
 from optuna.pruners import HyperbandPruner
@@ -50,12 +52,105 @@ def redis_url() -> str:
     return f"redis://{endpoint.read_text().strip()}"
 
 
-def study_prefix(experiment: str, method: str) -> str:
-    """redis key namespace for one (experiment, method) study's journal."""
-    return f"{experiment}:{method}"
+def _serialize_slice(s: Hashable) -> str:
+    """serialize a slice value to redis-prefix-safe string.
+
+    codomain: [A-Za-z0-9_-]+ (simultaneously redis-prefix-safe and
+    slurm-job-name-safe). used by both storage prefix and keeper job names.
+
+    args:
+        s: slice identifier (int, str, or tuple of ints).
+            tuple branch is restricted to int-only elements because the "_"
+            separator would otherwise be ambiguous: with str elements you can
+            construct distinct tuples that serialize identically (e.g.,
+            ("a", "b") and ("a_b",) both produce "a_b"), breaking the
+            _match_slice inverse.
+
+    returns:
+        str: serialized slice in [A-Za-z0-9_-]+.
+
+    raises:
+        ValueError: if int/str contains forbidden chars or tuple is empty or
+            tuple contains a non-int element.
+        TypeError: if s is not int, str, or tuple.
+    """
+    if isinstance(s, int) and not isinstance(s, bool):
+        result = str(s)
+    elif isinstance(s, str):
+        result = s
+    elif isinstance(s, tuple):
+        if not s:
+            raise ValueError("cannot serialize empty tuple slice")
+        for i, x in enumerate(s):
+            if not isinstance(x, int) or isinstance(x, bool):
+                raise ValueError(
+                    f"tuple slice element {i} = {x!r} is not int; "
+                    f"_serialize_slice only accepts int-only tuples to keep "
+                    f"the encoding injective"
+                )
+        result = "_".join(str(x) for x in s)
+    else:
+        raise TypeError(f"cannot serialize slice of type {type(s).__name__}")
+
+    # validate codomain [A-Za-z0-9_-]+
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", result):
+        forbidden_chars = [c for c in result if not re.match(r"[A-Za-z0-9_-]", c)]
+        first_forbidden = forbidden_chars[0] if forbidden_chars else "?"
+        raise ValueError(
+            f"slice serialization contains forbidden char {repr(first_forbidden)}; "
+            f"allowed: [A-Za-z0-9_-]"
+        )
+
+    return result
 
 
-def _get_storage(experiment: str, method: str) -> JournalStorage:
+def _match_slice(cfg, serialized: str) -> Hashable:
+    """find the original slice value whose serialization equals the given string.
+
+    cli entrypoints (run_holdout.py / aggregate_holdout.py) receive --slice as
+    a string (output of _serialize_slice); this helper maps it back to the
+    original hashable in cfg.slices, enabling adapter.cells_for_slice(...) calls
+    that need exact type match against stratify_key(cell).
+
+    args:
+        cfg: loaded StudyConfig with .slices list (or None).
+        serialized: the --slice CLI argument (must equal _serialize_slice(s)
+            for some s in cfg.slices).
+
+    returns:
+        the original hashable slice from cfg.slices.
+
+    raises:
+        ValueError: cfg.slices is None or empty, or no match found.
+    """
+    if cfg.slices is None:
+        raise ValueError(
+            f"cannot match slice '{serialized}': cfg.slices is None "
+            f"(this config has no slice fan-out)"
+        )
+    for s in cfg.slices:
+        if _serialize_slice(s) == serialized:
+            return s
+    raise ValueError(
+        f"no slice in cfg.slices matches '{serialized}'; "
+        f"available: {[_serialize_slice(x) for x in cfg.slices]}"
+    )
+
+
+def study_prefix(experiment: str, method: str, slice: Hashable | None = None) -> str:
+    """redis key namespace for one (experiment, method[, slice]) study's journal.
+
+    slice=None branch MUST equal the pre-slice format byte-for-byte.
+    don't refactor the f-string.
+    """
+    if slice is None:
+        return f"{experiment}:{method}"
+    return f"{experiment}:{_serialize_slice(slice)}:{method}"
+
+
+def _get_storage(
+    experiment: str, method: str, slice: Hashable | None = None
+) -> JournalStorage:
     """build a JournalStorage over the shared redis-server.
 
     use_cluster=False: every append is a single atomic redis incr+set (a
@@ -65,13 +160,14 @@ def _get_storage(experiment: str, method: str) -> JournalStorage:
     args:
         experiment: experiment identifier.
         method: method identifier.
+        slice: optional slice identifier for stratified studies.
 
     returns:
         JournalStorage: configured with a JournalRedisBackend namespaced to
         this study.
     """
     backend = JournalRedisBackend(
-        redis_url(), use_cluster=False, prefix=study_prefix(experiment, method)
+        redis_url(), use_cluster=False, prefix=study_prefix(experiment, method, slice)
     )
     return JournalStorage(backend)
 
@@ -80,6 +176,7 @@ def create_or_load(
     experiment: str,
     method: str,
     *,
+    slice: Hashable | None = None,
     sampler: optuna.samplers.BaseSampler | None = None,
     pruner: optuna.pruners.BasePruner | None = None,
     direction: str = "minimize",
@@ -94,6 +191,7 @@ def create_or_load(
     args:
         experiment: experiment identifier.
         method: method identifier.
+        slice: optional slice identifier for stratified studies.
         sampler: optuna sampler; defaults to TPESampler(n_startup_trials,
             multivariate=True, group=True, seed=42).
         pruner: optuna pruner; defaults to HyperbandPruner(min_resource=100,
@@ -109,7 +207,7 @@ def create_or_load(
         callers cannot override config mid-stream; sampler/pruner args are
         passed only on first creation.
     """
-    storage = _get_storage(experiment, method)
+    storage = _get_storage(experiment, method, slice)
 
     if sampler is None:
         sampler = TPESampler(
@@ -127,6 +225,9 @@ def create_or_load(
         )
 
     study_name = f"{experiment}_{method}"
+    if slice is not None:
+        study_name = f"{study_name}_slice_{_serialize_slice(slice)}"
+
     study = optuna.create_study(
         study_name=study_name,
         direction=direction,

@@ -2,7 +2,7 @@
 
 # Experimental Grid
 alphas: [0.1, 0.3, 0.9, 2.7]
-num_pairs_per_alpha: 40
+num_pairs_per_alpha: 100   # peak campaign: 100 per alpha (24 train + 8 holdout + 68 step2)
 num_samples: 40000
 
 # Model Architecture

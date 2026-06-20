@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Hashable
 import importlib
 import logging
 
@@ -25,9 +25,16 @@ class StudyConfig:
             pruner config.
         reduction_factor: hyperband reduction factor; must > 1.
         holdout_top_k: number of trials to evaluate on holdout pool; must > 0.
-        target_trials: per-study budget of COMPLETE (full-length) trials;
-            the keeper stops dispatching once a study's COMPLETE count reaches
-            it, and workers self-stop via MaxTrialsCallback. must > 0.
+        target_trials: per-study budget of COMPLETE trials. scalar int (all methods
+            share budget, default 320) or dict[str, int] (per-method budgets).
+            dict form requires keys == set(methods) exactly. the keeper stops
+            dispatching once a study's COMPLETE count reaches the per-method
+            target, and workers self-stop via MaxTrialsCallback. scalar or dict
+            values must > 0. accessor: target_for(method) -> int.
+        slices: optional list of hashable stratify-key values for per-hardness-slice
+            studies. one set of HPs per slice value; study names and redis prefixes
+            include slice suffix when set. if provided, must be non-empty with
+            no duplicates. defaults to None (full pool, no stratification).
         walltime_margin_minutes: buffer before hard timeout; must <
             walltime_minutes.
         nfs_base: root for journal files; defaults to $DPE_DATA_ROOT/optuna at
@@ -61,7 +68,8 @@ class StudyConfig:
     max_resource: int = 10000
     reduction_factor: int = 3
     holdout_top_k: int = 5
-    target_trials: int = 320
+    target_trials: int | Dict[str, int] = 320
+    slices: Optional[List[Hashable]] = None
 
     walltime_margin_minutes: int = 10
     nfs_base: Optional[str] = None
@@ -73,6 +81,36 @@ class StudyConfig:
     lanes: List[str] = field(default_factory=lambda: ["preempt", "array"])
     max_in_flight: int = 256
     schema_version: str = "1.0"
+
+    def target_for(self, method: str) -> int:
+        """Return the target trial count for a given method.
+
+        If target_trials is an int, returns it as-is (all methods share the same
+        budget). If target_trials is a dict, returns target_trials[method] (per-method
+        budget). Raises KeyError with a helpful message if the method is not in the
+        dict.
+
+        Args:
+            method: method name (must be a key in self.methods).
+
+        Returns:
+            int: target trial count for this method.
+
+        Raises:
+            KeyError: if target_trials is a dict and method is not a key.
+        """
+        if isinstance(self.target_trials, int):
+            return self.target_trials
+        else:
+            # target_trials is a dict[str, int]
+            try:
+                return self.target_trials[method]
+            except KeyError:
+                known = list(self.target_trials.keys())
+                raise KeyError(
+                    f"method '{method}' not in target_trials dict; "
+                    f"known methods: {known}"
+                ) from None
 
     def __post_init__(self):
         """Validate all fields after initialization.
@@ -120,8 +158,39 @@ class StudyConfig:
             raise ValueError(f"holdout_top_k must > 0, got {self.holdout_top_k}")
 
         # validate target_trials
-        if self.target_trials <= 0:
-            raise ValueError(f"target_trials must > 0, got {self.target_trials}")
+        if isinstance(self.target_trials, int):
+            # scalar form: must be > 0
+            if self.target_trials <= 0:
+                raise ValueError(
+                    f"target_trials (scalar) must > 0, got {self.target_trials}"
+                )
+        else:
+            # dict form: keys must be exactly self.methods, all values > 0
+            if not isinstance(self.target_trials, dict):
+                raise ValueError(
+                    f"target_trials must be int or dict[str, int], "
+                    f"got {type(self.target_trials)}"
+                )
+
+            target_keys = set(self.target_trials.keys())
+            method_keys = set(self.methods)
+
+            if target_keys != method_keys:
+                missing = method_keys - target_keys
+                extra = target_keys - method_keys
+                msg = "target_trials dict keys must equal set(self.methods) exactly; "
+                if missing:
+                    msg += f"missing: {missing}; "
+                if extra:
+                    msg += f"extra: {extra}"
+                raise ValueError(msg)
+
+            for method, count in self.target_trials.items():
+                if not isinstance(count, int) or count <= 0:
+                    raise ValueError(
+                        f"target_trials['{method}'] must be int > 0, "
+                        f"got {count} (type {type(count).__name__})"
+                    )
 
         # validate max_in_flight
         if self.max_in_flight <= 0:
@@ -150,6 +219,32 @@ class StudyConfig:
             raise ValueError(
                 f"lanes {offending} not in LANES registry; known lanes: {known}"
             )
+
+        # validate slices
+        if self.slices is not None:
+            # slices must be a non-empty list with no duplicates, all hashable
+            if not isinstance(self.slices, list):
+                raise ValueError(
+                    f"slices must be None or list, got {type(self.slices)}"
+                )
+
+            if len(self.slices) == 0:
+                raise ValueError("slices must be non-empty if provided (not None)")
+
+            # check all elements are hashable (try to hash them)
+            try:
+                hashed = set(self.slices)
+            except TypeError as e:
+                raise ValueError(
+                    f"all slices elements must be hashable; error: {e}"
+                ) from e
+
+            # check no duplicates
+            if len(hashed) != len(self.slices):
+                raise ValueError(
+                    f"slices contains duplicates; must be unique. "
+                    f"got {len(self.slices)} items, {len(hashed)} unique"
+                )
 
 
 def load_config(module_path: str) -> StudyConfig:
@@ -188,21 +283,28 @@ def load_config(module_path: str) -> StudyConfig:
     return config
 
 
-def resolve_combo(config: StudyConfig, combo_index: int) -> tuple[str, str]:
-    """Resolve (experiment, method) pair from config and combo index.
+def resolve_combo(
+    config: StudyConfig, combo_index: int
+) -> tuple[str, str, Optional[Hashable]]:
+    """Resolve (experiment, method, slice) from config and combo index.
 
-    Builds cartesian product of (experiment, method) where method is from
-    config.methods. Returns the pair at combo_index with wraparound via modulo.
+    method-major cross product:
+      [(config.experiment, m, s) for m in config.methods
+       for s in (config.slices or [None])]
+    returned at combo_index with wraparound via modulo.
 
-    Single shared resolver used by submit.py and keeper.py to avoid duplicating
-    logic for experiment-method pair construction.
+    when config.slices is None, slice is always None and the product
+    reduces to today's (experiment, method) list with an appended None.
+
+    keeper and submit.py both call this with the same combo_index to
+    agree on (method, slice) selection.
 
     Args:
-        config: StudyConfig instance with experiment and methods fields.
-        combo_index: index into (experiment, method) product; wraparound via %.
+        config: StudyConfig instance with experiment, methods, slices fields.
+        combo_index: index into the product; wraparound via %.
 
     Returns:
-        tuple of (experiment_name, method_name).
+        tuple of (experiment_name, method_name, slice_value_or_None).
 
     Raises:
         ValueError: if config.methods is empty.
@@ -210,5 +312,10 @@ def resolve_combo(config: StudyConfig, combo_index: int) -> tuple[str, str]:
     if not config.methods:
         raise ValueError("config.methods must not be empty")
 
-    combos = [(config.experiment, m) for m in config.methods]
+    slices = config.slices if config.slices is not None else [None]
+    combos = [
+        (config.experiment, m, s)
+        for m in config.methods
+        for s in slices
+    ]
     return combos[combo_index % len(combos)]

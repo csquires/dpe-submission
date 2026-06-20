@@ -29,11 +29,13 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional, Hashable
 
 import numpy as np
 
+from ex.utils.hpo.optuna.bands import compute_bands
+from ex.utils.hpo.optuna.storage import _serialize_slice, _match_slice
 
-HYPERBAND_BANDS = [400, 800, 1600, 3200, 6400]       # 5-band Hyperband (rf=2, max_resource=6400)
 POOL_K_PER_BUDGET = 10                          # top-K per band before dedup
 EVAL_INTERVAL = 500                             # holdout eval frequency (steps)
 DEFAULT_CHUNK_SIZE = 4                          # matches HPO B = 16 // 4 cores_per_trial
@@ -69,11 +71,15 @@ def _run_element(
     eval_interval: int,
     output_root_str: str,
     cores_per_trial: int,
+    slice: Optional[Hashable] = None,
 ) -> tuple[int, str]:
     """fresh-load everything in this (possibly loky-child) process and run
     one (candidate, cell) training. matches the HPO worker bootstrap order
     (BLAS env BEFORE torch import) so within-element multiprocessing does
     not over-saturate the cpu allocation.
+
+    slice: optional hashable value for per-slice cell selection; if given,
+        cells are drawn from adapter.cells_for_slice(slice) instead of holdout_pool().
 
     returns (element_idx, status_string) for parent-side logging.
     """
@@ -97,10 +103,17 @@ def _run_element(
     cfg = load_config(config_dotted)
     bands = [int(b) for b in bands_csv.split(",")]
 
-    study = create_or_load(cfg.experiment, method)
+    study = create_or_load(cfg.experiment, method, slice=slice)
+    # WARNING: probe.best_at_budget(study, budget_step=X) accepts budget_step for
+    # API stability but discards it—do not use it for budget-conditioned selection.
+    # top_k_at_each_budget correctly inspects intermediate_values[band] per budget.
     pool = probe.top_k_at_each_budget(study, bands, k=k_per_budget)
     adapter = get_adapter(cfg.experiment)
-    cells = adapter.holdout_pool()
+    cells = (
+        adapter.cells_for_slice(slice, pool='holdout')
+        if slice is not None
+        else adapter.holdout_pool()
+    )
     n_cells = len(cells)
 
     cand_idx, cell_idx = divmod(element_idx, n_cells)
@@ -108,7 +121,11 @@ def _run_element(
     cell = cells[cell_idx]
 
     out_root = Path(output_root_str)
-    cand_dir = out_root / cfg.experiment / method / f"cand_{trial.number}"
+    if slice is None:
+        cand_dir = out_root / cfg.experiment / method / f"cand_{trial.number}"
+    else:
+        slice_str = _serialize_slice(slice)
+        cand_dir = out_root / cfg.experiment / method / f"slice_{slice_str}" / f"cand_{trial.number}"
     cand_dir.mkdir(parents=True, exist_ok=True)
     cell_id = "_".join(map(str, cell))
     out_path = cand_dir / f"cell_{cell_id}.json"
@@ -192,7 +209,11 @@ def main() -> int:
     p.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE,
                    help="elements per chunk (loky fanout). default matches HPO B")
     p.add_argument("--list-elements", action="store_true")
-    p.add_argument("--bands", default=",".join(map(str, HYPERBAND_BANDS)))
+    p.add_argument("--bands", default=None,
+                   help="hyperband bands as comma-separated ints; default derived from compute_bands(cfg)")
+    p.add_argument("--slice", type=str, default=None,
+                   help="serialized slice value (output of _serialize_slice); "
+                        "enables per-slice cell selection via adapter.cells_for_slice()")
     p.add_argument("--k-per-budget", type=int, default=POOL_K_PER_BUDGET)
     p.add_argument("--eval-interval", type=int, default=EVAL_INTERVAL)
     p.add_argument("--cores-per-trial", type=int, default=None,
@@ -215,6 +236,17 @@ def main() -> int:
         logging.error(f"method '{args.method}' not in {cfg.methods}")
         return 1
 
+    # derive bands from cfg if not given
+    if args.bands is None:
+        bands = compute_bands(cfg)
+    else:
+        bands = [int(b) for b in args.bands.split(",")]
+
+    # resolve --slice to original hashable form if given
+    slice_value = None
+    if args.slice is not None:
+        slice_value = _match_slice(cfg, args.slice)
+
     out_root = _resolve_output_root(args.output_root)
     # the launcher owns the (cpus, chunk_size, cores) shape; we just consume it.
     # only --list-elements may omit cores_per_trial (no training is launched).
@@ -225,14 +257,17 @@ def main() -> int:
     cores_per_trial = args.cores_per_trial
 
     # count total elements without spinning up training subsystems.
-    bands = [int(b) for b in args.bands.split(",")]
-    study = create_or_load(cfg.experiment, args.method)
+    study = create_or_load(cfg.experiment, args.method, slice=slice_value)
     pool = probe.top_k_at_each_budget(study, bands, k=args.k_per_budget)
     if not pool:
         logging.error("empty pool")
         return 1
     adapter = get_adapter(cfg.experiment)
-    cells = adapter.holdout_pool()
+    cells = (
+        adapter.cells_for_slice(slice_value, pool='holdout')
+        if slice_value is not None
+        else adapter.holdout_pool()
+    )
     n_cells = len(cells)
     total = len(pool) * n_cells
 
@@ -251,8 +286,10 @@ def main() -> int:
         logging.info(f"single element {args.element_idx} / {total}")
         e, status = _run_element(
             args.config, args.method, args.element_idx,
-            args.bands, args.k_per_budget, args.eval_interval,
+            args.bands if args.bands is not None else ",".join(map(str, bands)),
+            args.k_per_budget, args.eval_interval,
             str(out_root), cores_per_trial,
+            slice=slice_value,
         )
         logging.info(f"element {e}: {status}")
         return 0
@@ -283,8 +320,10 @@ def main() -> int:
     )(
         joblib.delayed(_run_element)(
             args.config, args.method, e,
-            args.bands, args.k_per_budget, args.eval_interval,
+            args.bands if args.bands is not None else ",".join(map(str, bands)),
+            args.k_per_budget, args.eval_interval,
             str(out_root), cores_per_trial,
+            slice=slice_value,
         )
         for e in elements
     )

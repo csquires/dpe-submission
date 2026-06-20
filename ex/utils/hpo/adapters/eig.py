@@ -87,17 +87,48 @@ class EIGAdapter(ExperimentAdapter):
         return "per_design_ldr_mae"
 
     def stratify_key(self, cell: tuple[int]):
-        """return the design-eig-percentage index for stratification.
+        """return (pct_idx, prior_idx) for stratification.
 
         design layout (step1_create_data.py) is
           design_idx = prior_idx * (n_pct * n_per)
                      + pct_idx  * n_per
                      + within_idx,
-        so pct_idx = (design_idx // n_per) % n_pct. eig difficulty is
-        governed by design_eig_percentage; stratifying on it guarantees
-        every informativeness regime is sampled.
+        so pct_idx = (design_idx // n_per) % n_pct and
+        prior_idx = design_idx // (n_per * n_pct). the peak campaign uses
+        the joint stratum (pct, prior) so that one hparam set is learned per
+        (informativeness regime, prior shape) cell — finer than the previous
+        per-pct convention.
         """
-        return (cell[0] // self._n_per) % self._n_pct
+        n_per = self._n_per
+        n_pct = self._n_pct
+        idx = cell[0]
+        return ((idx // n_per) % n_pct, idx // (n_per * n_pct))
+
+    # -- peak-campaign three-way split overrides -------------------------------
+    # eig under the 32/8/all convention: 40 cells per (pct, prior) stratum,
+    # 32 → train, 8 → holdout, all 40 → step2 (no exclusion; step2 evaluates
+    # winners on every cell, including the 32+8 HPO cells).
+
+    def n_train_per_stratum(self) -> int:
+        return 32
+
+    def n_holdout_per_stratum(self) -> int:
+        return 8
+
+    def n_step2_per_stratum(self) -> int:
+        # sentinel: send EVERY non-train/non-holdout cell to step2. since the
+        # stratum has exactly 32+8=40 cells, the leftover is empty and step2's
+        # disjoint pool is empty too — step2_pool() is overridden below to
+        # return cell_pool() so winners are evaluated on every cell.
+        return -1
+
+    def step2_pool(self) -> list[tuple[int, ...]]:
+        """eig step2 evaluates winners on EVERY cell (32 train + 8 holdout).
+
+        the disjoint step2 bucket from the base three-way split is empty here
+        (40 = 32 + 8 + 0), so list_cells must consume cell_pool() directly.
+        """
+        return self.cell_pool()
 
     def eval_cell(
         self,

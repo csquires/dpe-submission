@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Optional, Hashable
 
 import joblib
 
@@ -75,6 +76,7 @@ def _run_parallel(
     reduction_factor: int = 3,
     target_trials: int = 320,
     fixed_hp: dict | None = None,
+    slice: Hashable | None = None,
 ) -> int:
     """spawn M loky workers and consume task generator with SIGTERM protection.
 
@@ -86,6 +88,9 @@ def _run_parallel(
       cores_per_trial: cores per trial (passed to each worker)
       walltime_minutes: total wall time budget
       walltime_margin_minutes: buffer before timeout
+      target_trials: per-method trial budget; passed to each worker
+      fixed_hp: optional pinned hyperparameters; passed to each worker
+      slice: optional slice value for stratified sampling; passed to each worker
 
     returns: 0 on success or SIGTERM, 1 on error
     """
@@ -115,6 +120,7 @@ def _run_parallel(
                     reduction_factor=reduction_factor,
                     target_trials=target_trials,
                     fixed_hp=fixed_hp,
+                    slice=slice,
                 )
 
         # spawn parallel executor with SIGTERM handler
@@ -219,10 +225,25 @@ def main() -> int:
 
     # resolve (experiment, method) from config and combo_index
     try:
-        experiment, method = resolve_combo(config, combo_index)
-        logger.info(f"resolved combo {combo_index}: ({experiment}, {method})")
+        experiment, method, slice_ = resolve_combo(config, combo_index)
+        log_msg = f"resolved combo {combo_index}: ({experiment}, {method})"
+        if slice_ is not None:
+            log_msg += f", slice={slice_}"
+        logger.info(log_msg)
     except (ValueError, IndexError) as e:
         logger.error(f"failed to resolve combo {combo_index}: {e}")
+        return 1
+
+    # resolve target_trials for this method
+    try:
+        target_trials_for_method = config.target_for(method)
+        logger.info(
+            f"target_trials for {method}: {target_trials_for_method}"
+        )
+    except (AttributeError, KeyError) as e:
+        logger.error(
+            f"failed to resolve target_trials for {method}: {e}"
+        )
         return 1
 
     # get lane profile
@@ -278,7 +299,7 @@ def main() -> int:
 
     # create study and reap stale trials
     try:
-        study = create_or_load(experiment, method)
+        study = create_or_load(experiment, method, slice=slice_)
         margin_seconds = 600  # 10-minute buffer
         max_age = walltime_seconds + margin_seconds
         from ex.utils.hpo.optuna.storage import reap_stale_trials
@@ -311,8 +332,9 @@ def main() -> int:
                 min_resource=config.min_resource,
                 max_resource=config.max_resource,
                 reduction_factor=config.reduction_factor,
-                target_trials=config.target_trials,
+                target_trials=target_trials_for_method,
                 fixed_hp=config.fixed_hp,
+                slice=slice_,
             )
             logger.info("worker completed normally")
             return 0
@@ -337,8 +359,9 @@ def main() -> int:
             min_resource=config.min_resource,
             max_resource=config.max_resource,
             reduction_factor=config.reduction_factor,
-            target_trials=config.target_trials,
+            target_trials=target_trials_for_method,
             fixed_hp=config.fixed_hp,
+            slice=slice_,
         )
 
 

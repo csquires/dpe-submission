@@ -3,11 +3,12 @@ import logging
 from collections import defaultdict
 from math import isfinite
 from random import Random
-from typing import Callable, Optional
+from typing import Callable, Hashable, Optional
 
 import numpy as np
 import optuna
 
+from ex.utils.hpo.optuna.storage import _serialize_slice
 from ex.utils.hpo.suggest_hp import get_metadata, suggest_hp
 
 
@@ -87,7 +88,7 @@ def stratified_pick(
 
 
 def make_objective(adapter, method: str, builder, study_seed: int,
-                   fixed_hp: Optional[dict] = None) -> Callable:
+                   fixed_hp: Optional[dict] = None, slice: Optional[Hashable] = None) -> Callable:
     """build trial objective closure with stratified cell pooling and pruning.
 
     adapter: ExperimentAdapter instance with train_pool(), stratify_key, eval_cell(),
@@ -95,22 +96,32 @@ def make_objective(adapter, method: str, builder, study_seed: int,
     method: method name string (e.g., "BDRE").
     builder: estimator builder callable.
     study_seed: study-level seed for deterministic cell selection.
+    slice: optional hashable stratification key to restrict pool to single stratum.
+        if None, full pool + round-robin stratification (default).
+        if set, pool restricted to cells matching slice + uniform random selection.
 
     returns: callable accepting optuna.Trial and returning float metric.
 
     closure behavior (per trial):
       1. suggest hyperparams via suggest_hp(trial, method).
       2. fetch metadata: uses_pruning, requires_pstar.
-      3. select cell via stratified_pick(adapter.train_pool(), adapter.stratify_key,
-         study_seed, trial.number).
+      3. select cell:
+         - if slice is None:
+           - pool = adapter.train_pool(), stratify_fn = adapter.stratify_key.
+           - round-robin stratification over all strata (backward-compatible).
+         - else:
+           - pool = adapter.cells_for_slice(slice, pool='train').
+           - stratify_fn = None (single stratum; uniform random within slice).
+           - call stratified_pick(pool, None, study_seed, trial.number).
       4. store cell in trial.user_attr('cell').
-      5. derive trial-local rng via PCG64(hash((study_seed, trial.number))).
-      6. construct step_cb if uses_pruning else None.
-      7. call adapter.eval_cell(..., trial_number=trial.number, step_cb_interval=50).
-      8. catch RuntimeError, ValueError, AttributeError; return float('inf') on
+      5. if slice is not None, store slice in trial.user_attr('slice') for traceability.
+      6. derive trial-local rng via PCG64(hash((study_seed, trial.number))).
+      7. construct step_cb if uses_pruning else None.
+      8. call adapter.eval_cell(..., trial_number=trial.number, step_cb_interval=50).
+      9. catch RuntimeError, ValueError, AttributeError; return float('inf') on
          a bad-hyperparameter failure, but re-raise an OOM RuntimeError (FAIL).
-      9. validate metric is finite; return float('inf') if not.
-      10. return metric.
+      10. validate metric is finite; return float('inf') if not.
+      11. return metric.
     """
 
     def objective(trial: optuna.Trial) -> float:
@@ -124,16 +135,27 @@ def make_objective(adapter, method: str, builder, study_seed: int,
         uses_pruning = metadata["uses_pruning"]
         requires_pstar = metadata["requires_pstar"]
 
-        # 3. stratified cell selection
-        cell = stratified_pick(
-            adapter.train_pool(),
-            adapter.stratify_key,
-            study_seed,
-            trial.number,
-        )
+        # 3. prepare pool and stratify function based on slice
+        if slice is None:
+            pool = adapter.train_pool()
+            stratify_fn = adapter.stratify_key
+        else:
+            pool = adapter.cells_for_slice(slice, pool='train')
+            stratify_fn = None  # single stratum; skip round-robin stratification
+
+        # 3b. stratified cell selection
+        cell = stratified_pick(pool, stratify_fn, study_seed, trial.number)
 
         # 4. store cell in trial
         trial.set_user_attr("cell", tuple(cell))
+        if slice is not None:
+            # emit slice via _serialize_slice so the user_attr value matches
+            # the output-dir name AND the aggregator's winners_by_slice.csv
+            # 'slice' column (which both use _serialize_slice). using str(slice)
+            # here would diverge for tuple slices: str((0,1)) = '(0, 1)' but
+            # _serialize_slice((0,1)) = '0_1'. downstream joins would then
+            # silently miss every tuple-valued slice (pendulum / occupancy).
+            trial.set_user_attr("slice", _serialize_slice(slice))
 
         # 5. derive trial-local rng
         rng = np.random.Generator(

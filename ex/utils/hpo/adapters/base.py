@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional, Callable
 import torch
 from ex.utils.hpo.adapters.eval_split import split_for_eval as _split_for_eval
-from ex.utils.hpo.adapters.split_utils import stratified_split
+from ex.utils.hpo.adapters.split_utils import stratified_split, stratified_split_3way
 
 
 class ExperimentAdapter(abc.ABC):
@@ -17,6 +17,7 @@ class ExperimentAdapter(abc.ABC):
     """
 
     _train_holdout_cache: tuple[list, list] | None = None
+    _train_holdout_step2_cache: tuple[list, list, list] | None = None
     _last_meta: dict | None = None
 
     @abc.abstractmethod
@@ -134,10 +135,37 @@ class ExperimentAdapter(abc.ABC):
     def holdout_ratio(self) -> float:
         """holdout fraction for train/holdout stratified split.
 
-        default: 0.2 (20% holdout, 80% train). override per-adapter.
-        range: (0, 1) exclusive; stratified_split validates bounds.
+        DEPRECATED. legacy method, retained only so subclasses that override
+        it don't silently break. the active split path now uses absolute
+        per-stratum counts via n_train_per_stratum / n_holdout_per_stratum /
+        n_step2_per_stratum.
         """
         return 0.2
+
+    def n_train_per_stratum(self) -> int:
+        """per-stratum cell count routed to the optuna train pool.
+
+        default: 24 (peak-campaign convention; mnist/occupancy/pendulum).
+        override per-adapter when the data shape differs (e.g. eig: 32).
+        """
+        return 24
+
+    def n_holdout_per_stratum(self) -> int:
+        """per-stratum cell count routed to the holdout pool.
+
+        default: 8 (peak-campaign convention).
+        """
+        return 8
+
+    def n_step2_per_stratum(self) -> int:
+        """per-stratum cell count routed to the step2 pool (NOT seen by hpo).
+
+        default: 68 (peak-campaign convention; 100/stratum total minus 24+8).
+        override to -1 to send EVERY non-train/non-holdout cell to step2 (used
+        by adapters whose datasets have no spare bucket — eig under the
+        32/8/all convention).
+        """
+        return 68
 
     def split_for_eval(self, data: dict) -> tuple[dict, dict]:
         """deterministic within-cell train/eval split.
@@ -152,38 +180,90 @@ class ExperimentAdapter(abc.ABC):
         """
         return _split_for_eval(data, seed=42)
 
-    def train_pool(self) -> list[tuple[int, ...]]:
-        """training pool via stratified split of cell_pool.
+    def _ensure_split(self) -> tuple[list, list, list]:
+        """compute the (train, holdout, step2) three-way split once and cache it.
 
-        returns deterministic stratified subset ensuring stratification
-        by stratify_key (if defined). result cached per adapter instance
-        to avoid recomputation on repeated calls.
+        the split is stratified by stratify_key, deterministic in split_seed,
+        and uses the per-stratum counts from
+        n_train_per_stratum / n_holdout_per_stratum / n_step2_per_stratum.
         """
-        if self._train_holdout_cache is None:
-            train, holdout = stratified_split(
+        if self._train_holdout_step2_cache is None:
+            train, holdout, step2 = stratified_split_3way(
                 self.cell_pool(),
                 stratify_fn=self.stratify_key,
-                train_ratio=1 - self.holdout_ratio(),
+                n_train_per_stratum=self.n_train_per_stratum(),
+                n_holdout_per_stratum=self.n_holdout_per_stratum(),
+                n_step2_per_stratum=self.n_step2_per_stratum(),
                 seed=self.split_seed(),
             )
+            self._train_holdout_step2_cache = (train, holdout, step2)
+            # mirror to the legacy two-way cache so any reader of
+            # _train_holdout_cache still gets the same (train, holdout) view.
             self._train_holdout_cache = (train, holdout)
-        return self._train_holdout_cache[0]
+        return self._train_holdout_step2_cache
+
+    def train_pool(self) -> list[tuple[int, ...]]:
+        """training pool: the n_train_per_stratum cells per stratum.
+
+        deterministic stratified subset of cell_pool; cached per instance.
+        """
+        return self._ensure_split()[0]
 
     def holdout_pool(self) -> list[tuple[int, ...]]:
-        """holdout pool via stratified split of cell_pool.
+        """holdout pool: the n_holdout_per_stratum cells per stratum.
 
-        returns deterministic complement of train_pool; same cache and
-        split parameters. disjoint with train_pool; union equals cell_pool.
+        deterministic, disjoint with train_pool and step2_pool.
         """
-        if self._train_holdout_cache is None:
-            train, holdout = stratified_split(
-                self.cell_pool(),
-                stratify_fn=self.stratify_key,
-                train_ratio=1 - self.holdout_ratio(),
-                seed=self.split_seed(),
+        return self._ensure_split()[1]
+
+    def step2_pool(self) -> list[tuple[int, ...]]:
+        """step2 pool: cells reserved for step2 evaluation, NOT seen by hpo.
+
+        deterministic, disjoint with train_pool and holdout_pool.
+        when n_step2_per_stratum() == -1, holds every cell not in
+        train_pool / holdout_pool. step2_runner adapters delegate their
+        list_cells() to this method.
+        """
+        return self._ensure_split()[2]
+
+    def cells_for_slice(self, slice, *, pool: str = 'train') -> list[tuple[int, ...]]:
+        """filter (train|holdout) cells to the given stratum.
+
+        filters cells in the specified pool whose stratify_key value equals slice.
+        raises ValueError if the slice is empty in the pool (likely a config error).
+
+        args:
+            slice: stratify-key value matching stratify_key(cell). must be Hashable
+                and in the codomain of stratify_key for cells in the requested pool.
+            pool: 'train' or 'holdout'. selects which pool to filter from.
+
+        returns:
+            list of cells c where stratify_key(c) == slice.
+
+        raises:
+            ValueError: pool is not 'train' or 'holdout', or sliced pool is empty.
+
+        example:
+            adapter = EIGAdapter(...)
+            cells = adapter.cells_for_slice('regime_A', pool='train')
+            # returns all training cells with stratify_key == 'regime_A'
+        """
+        if pool == 'train':
+            base = self.train_pool()
+        elif pool == 'holdout':
+            base = self.holdout_pool()
+        else:
+            raise ValueError(f"pool must be 'train' or 'holdout', got {pool!r}")
+
+        result = [c for c in base if self.stratify_key(c) == slice]
+
+        if not result:
+            raise ValueError(
+                f"slice {slice!r} has no cells in {pool} pool; "
+                f"check adapter.stratify_key codomain"
             )
-            self._train_holdout_cache = (train, holdout)
-        return self._train_holdout_cache[1]
+
+        return result
 
     def eval_cell(
         self,
