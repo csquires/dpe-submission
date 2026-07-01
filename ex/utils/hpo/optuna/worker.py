@@ -81,6 +81,14 @@ def run_worker(
     os.environ["OMP_NUM_THREADS"] = str(cores_per_trial)
     os.environ["MKL_NUM_THREADS"] = str(cores_per_trial)
     os.environ["OPENBLAS_NUM_THREADS"] = str(cores_per_trial)
+    # reduce fragmentation-driven CUDA OOM on preempt lane where 32 workers
+    # share one GPU. torch's own suggested mitigation; zero throughput cost.
+    # PYTORCH_ALLOC_CONF is the new name; PYTORCH_CUDA_ALLOC_CONF is the
+    # deprecated alias set for compat with older torch builds.
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+    )
 
     if "torch" in sys.modules:
         logging.warning(
@@ -124,9 +132,15 @@ def run_worker(
         # - We do NOT call `study.set_user_attr` to checkpoint sampler state; each worker resamples.
         # - New `trial.set_user_attr` keys are additive; downstream readers must use `.get(key, default)`.
         # - When slice is set, per-slice journals are isolated by storage layer; sampler is agnostic.
+        # NOTE: `consider_pruned_trials` was removed from optuna's TPESampler
+        # in 4.x — passing it raises TypeError. Per-method `consider_pruned`
+        # from METADATA is read but currently dropped; the 4.x sampler
+        # handles pruned-trial accounting internally. revisit if optuna
+        # exposes an equivalent knob in a future release.
+        _ = consider_pruned   # read to keep linters quiet
         sampler = optuna.samplers.TPESampler(
             n_startup_trials=32, multivariate=True, group=True, constant_liar=True,
-            consider_pruned_trials=consider_pruned, seed=seed_for_worker
+            seed=seed_for_worker,
         )
         if uses_pruning:
             pruner = optuna.pruners.HyperbandPruner(

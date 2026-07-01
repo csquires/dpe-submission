@@ -150,7 +150,7 @@ def _run_parallel(
             return 0
 
     except Exception as e:
-        logger.error(f"parallel execution failed: {e}")
+        logger.error(f"parallel execution failed: {e}", exc_info=True)
         return 1
 
 
