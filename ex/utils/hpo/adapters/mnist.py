@@ -31,9 +31,17 @@ class MnistAdapter(ExperimentAdapter):
             config = yaml.safe_load(f)
 
         self._data_dir = config["data_dir"]
-        self._device = config.get("device", "cuda")
+        # fall back to cpu when cuda is unavailable (e.g. cpu/array lanes).
+        # mirrors the occupancy adapter pattern — without this, every mnist
+        # worker on a non-GPU lane fails on _cuda_init.
+        _dev = config.get("device", "cuda")
+        self._device = (
+            "cpu" if _dev == "cuda" and not torch.cuda.is_available() else _dev
+        )
         self._latent_dim = config["latent_dim"]
         self._num_waypoints = config.get("num_waypoints")
+        self._n_alphas = len(config["alphas"])
+        self._n_pairs = config["num_pairs_per_alpha"]
 
     def name(self) -> str:
         """return "mnist"."""
@@ -44,8 +52,8 @@ class MnistAdapter(ExperimentAdapter):
         return Path(self._data_dir)
 
     def cell_pool(self) -> list[tuple[int, int]]:
-        """return [(a, p) for a in range(4), p in range(40)]."""
-        return list(itertools.product(range(4), range(40)))
+        """return [(a, p) for a in range(n_alphas), p in range(n_pairs)]."""
+        return list(itertools.product(range(self._n_alphas), range(self._n_pairs)))
 
     def load_cell_data(self, cell: tuple[int, int], device: str) -> dict[str, torch.Tensor]:
         """load one (alpha, pair) cell from h5 file.

@@ -89,15 +89,8 @@ class OccupancyAdapter(ExperimentAdapter):
         """return resolved encoding subdir path."""
         return self._data_dir
 
-    # historical fix: the seed=0 h5 at (k1_idx=0, beta_idx=0) was overwritten
-    # 2026-05-19 by a 10-sample smoke probe (legit datagen would write 5000
-    # samples + full attrs). seed=40 was generated 2026-06-01 with the proper
-    # step1_create_data.py as a same-(k1, beta) replacement, at the same
-    # position in the stratified-split input order so train/holdout assignments
-    # for other cells stay stable.
-    _SEED_SUBSTITUTIONS: dict[tuple[int, int], dict[int, int]] = {
-        (0, 0): {0: 40},
-    }
+    # legacy-- datagen artefact, if some seed is corrupted use this to remap
+    _SEED_SUBSTITUTIONS: dict[tuple[int, int], dict[int, int]] = {}
 
     def cell_pool(self) -> list[tuple[int, int, int]]:
         """return [(k1, b, s)] for k1 in n_k1, b in n_beta, s in n_seeds.
