@@ -313,3 +313,143 @@ def plot_results_main(config_path: str) -> None:
 
     print(f'Figure saved to: {pdf_path}')
     print(f'PNG saved to: {png_path}')
+
+
+def per_pair_mae_gathered(config: dict, methods=None):
+    """per-(alpha,pair) pointwise LDR MAE from a gathered results_all_cells.h5.
+
+    cell i decodes to (alpha=i//n_pairs, pair=i%n_pairs); ground-truth ldrs come
+    from the per-pair data file whose length matches the estimate (held-out eval
+    uses samples_test_true_ldrs, legacy pstar eval uses true_ldrs), so the gt key
+    is chosen by length.
+
+    Args:
+        config: loaded config dict (keys alphas, data_dir, raw_results_dir).
+        methods: method names to compute; None -> every est_ldrs_* in the file.
+
+    Returns:
+        (per_pair, kl_per_pair, n_alphas, n_pairs); per_pair maps each present
+        method to a [n_alphas, n_pairs] float32 array (nan where a pair is missing).
+    """
+    alphas = config['alphas']
+    data_dir = os.path.expandvars(config['data_dir'])
+    raw_results_dir = config['raw_results_dir']
+    n_alphas = len(alphas)
+
+    gathered_path = os.path.join(raw_results_dir, 'results_all_cells.h5')
+    if not os.path.exists(gathered_path):
+        raise FileNotFoundError(f'gathered results not found: {gathered_path}')
+
+    with h5py.File(gathered_path, 'r') as f:
+        avail = [k[len('est_ldrs_'):] for k in f.keys() if k.startswith('est_ldrs_')]
+        sel = avail if methods is None else [m for m in methods if m in avail]
+        est_by_method = {m: f[f'est_ldrs_{m}'][:] for m in sel}
+    if not est_by_method:
+        raise ValueError(f'no requested methods found in {gathered_path}')
+
+    n_cells = next(iter(est_by_method.values())).shape[0]
+    if n_cells % n_alphas != 0:
+        raise ValueError(f'n_cells={n_cells} not divisible by n_alphas={n_alphas}')
+    n_pairs = n_cells // n_alphas
+
+    per_pair = {m: np.full((n_alphas, n_pairs), np.nan, dtype=np.float32)
+                for m in est_by_method}
+    kl_per_pair = np.full((n_alphas, n_pairs), np.nan, dtype=np.float32)
+
+    def _pick_gt(handle, n_eval):
+        """return the gt ldr array whose length matches the estimate, or None."""
+        for key in ('samples_test_true_ldrs', 'true_ldrs'):
+            if key in handle and handle[key].shape[0] == n_eval:
+                return handle[key][:]
+        return None
+
+    for alpha_idx in range(n_alphas):
+        for pair_idx in range(n_pairs):
+            cell = alpha_idx * n_pairs + pair_idx
+            data_file = f'{data_dir}/alpha_{alpha_idx}_pair_{pair_idx}.h5'
+            if not os.path.exists(data_file):
+                print(f'warning: data file not found {data_file}')
+                continue
+            with h5py.File(data_file, 'r') as f:
+                if 'kl_weights' in f:
+                    kl_per_pair[alpha_idx, pair_idx] = float(f['kl_weights'][()])
+                for m in est_by_method:
+                    e = est_by_method[m][cell]
+                    gt = _pick_gt(f, e.shape[0])
+                    if gt is None:
+                        print(f'warning: no length-{e.shape[0]} gt in {data_file} for {m}')
+                        continue
+                    per_pair[m][alpha_idx, pair_idx] = float(np.mean(np.abs(e - gt)))
+
+    return per_pair, kl_per_pair, n_alphas, n_pairs
+
+
+def process_results_gathered(config_path: str) -> None:
+    """process a step2_runner gathered results_all_cells.h5 into per-alpha stats.
+
+    the step2_runner gather writes one combined file with est_ldrs_<method> of
+    shape (n_cells, n_eval) instead of the legacy per-(alpha,pair) raw files.
+    cell i decodes to (alpha=i//n_pairs, pair=i%n_pairs); ground-truth ldrs come
+    from the per-pair data file whose length matches the estimate -- the new
+    held-out eval predicts on samples_test (-> samples_test_true_ldrs) while the
+    legacy eval predicted on pstar (-> true_ldrs), so the matching key is chosen
+    by length. writes mae_summary.h5 with the same schema as
+    process_results_main, so plot_results_main consumes it unchanged.
+
+    reads:  {raw_results_dir}/results_all_cells.h5, {data_dir}/alpha_{a}_pair_{p}.h5
+    writes: {processed_results_dir}/mae_summary.h5
+
+    Args:
+        config_path: config yaml with keys alphas, data_dir, raw_results_dir,
+            processed_results_dir, algorithms.
+    """
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    alphas = config['alphas']
+    processed_results_dir = config['processed_results_dir']
+    algorithms = config['algorithms']
+
+    per_pair_present, kl_per_pair, n_alphas, n_pairs = per_pair_mae_gathered(config, algorithms)
+    missing = [m for m in algorithms if m not in per_pair_present]
+    if missing:
+        print(f'warning: methods absent from gathered file: {missing}')
+
+    per_pair_by_method = {
+        m: per_pair_present.get(m, np.full((n_alphas, n_pairs), np.nan, dtype=np.float32))
+        for m in algorithms
+    }
+
+    # aggregate per-pair -> per-alpha mean/std (ignoring nan)
+    mae_by_method = {}
+    std_by_method = {}
+    for m in algorithms:
+        pp = per_pair_by_method[m]
+        mae_by_method[m] = np.nanmean(pp, axis=1).astype(np.float32)
+        std_by_method[m] = np.nanstd(pp, axis=1, ddof=1).astype(np.float32)
+    kl_mean = np.nanmean(kl_per_pair, axis=1)
+    kl_std = np.nanstd(kl_per_pair, axis=1, ddof=1)
+
+    os.makedirs(processed_results_dir, exist_ok=True)
+    out_path = f'{processed_results_dir}/mae_summary.h5'
+    with h5py.File(out_path, 'w') as out:
+        out.create_dataset('alphas', data=np.array(alphas, dtype=np.float32))
+        for m in algorithms:
+            out.create_dataset(f'mae_{m}', data=mae_by_method[m])
+            out.create_dataset(f'std_{m}', data=std_by_method[m])
+            out.create_dataset(f'per_pair_{m}', data=per_pair_by_method[m])
+        out.create_dataset('kl_per_pair', data=kl_per_pair)
+        out.create_dataset('kl_mean', data=kl_mean)
+        out.create_dataset('kl_std', data=kl_std)
+
+    print('\n' + '=' * 80)
+    print('Gathered ELDR results -> per-alpha MAE')
+    print('=' * 80)
+    print(f'methods={len(algorithms)}  (n_alphas={n_alphas}, n_pairs={n_pairs})')
+    print(f'saved:    {out_path}')
+    print(f'alphas:   {alphas}')
+    for m in algorithms:
+        mae_str = ', '.join(f'{x:.4f}' for x in mae_by_method[m])
+        print(f'  {m:25s}: MAE=[{mae_str}]')
+    print('KL(w,w\') per alpha: ' + ', '.join(f'{k:.3f}' for k in kl_mean))
+    print('=' * 80 + '\n')

@@ -133,6 +133,20 @@ for alg_name, est_ldrs_arr in est_ldrs_by_alg.items():
         for q, arr in strat_maes.items()
     }
 
+# eldr error: |E_samples[est] - E_samples[true]| per (row, test), aggregated to
+# per-(kl, test) mean +/- se over the NUM_INSTANCES_PER_KL instances. distinct
+# from maes_by_kl (pointwise mean|est-true|): this is the error of the integrated
+# log-ratio, allowing per-sample errors to cancel.
+eldr_err_mean_by_alg = {}
+eldr_err_se_by_alg = {}
+true_eldr = true_ldrs_arr.mean(axis=2)  # (nrows, NTEST_SETS)
+for alg_name, est_ldrs_arr in est_ldrs_by_alg.items():
+    est_eldr = est_ldrs_arr.mean(axis=2)  # (nrows, NTEST_SETS)
+    err = np.abs(est_eldr - true_eldr).reshape(
+        len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+    eldr_err_mean_by_alg[alg_name] = err.mean(axis=1)                       # (n_kl, NTEST)
+    eldr_err_se_by_alg[alg_name] = err.std(axis=1, ddof=1) / np.sqrt(NUM_INSTANCES_PER_KL)
+
 # save results
 os.makedirs(PROCESSED_RESULTS_DIR, exist_ok=True)
 with h5py.File(processed_results_filename, 'w') as f:
@@ -147,3 +161,6 @@ with h5py.File(processed_results_filename, 'w') as f:
     for alg_name, strat_dict in stratified_mae_by_kl.items():
         for quartile, arr in strat_dict.items():
             f.create_dataset(f'stratified_mae_{quartile}_by_kl_{alg_name}', data=arr)
+    for alg_name in eldr_err_mean_by_alg:
+        f.create_dataset(f'eldr_err_{alg_name}_mean', data=eldr_err_mean_by_alg[alg_name])
+        f.create_dataset(f'eldr_err_{alg_name}_se', data=eldr_err_se_by_alg[alg_name])
