@@ -38,25 +38,44 @@ def get_adapter(name: str) -> ExperimentAdapter:
     resolve adapter by name. instantiates a fresh adapter (no caching).
 
     args:
-        name: experiment name (str key in registry).
+        name: experiment name (str key in registry, or model_selection_<tag>).
 
     returns:
         fresh instance of adapter class.
 
     raises:
-        KeyError: if name not in registry. message lists all known adapters.
+        KeyError: if name not in registry and not a model_selection_* variant.
+                  message lists known adapters and valid model_selection tags.
 
     behavior:
-        1. check if name in _ADAPTERS; raise KeyError with helpful message if not.
-        2. retrieve adapter class.
-        3. instantiate with no args.
-        4. return fresh instance (no caching; each call creates new instance).
+        1. if name in _ADAPTERS, instantiate and return.
+        2. elif name.startswith("model_selection_"), resolve tag via
+           variants.tag_from_experiment(name); get config_path via
+           variants.config_path(tag); instantiate ModelSelectionAdapter with
+           that config_path.
+        3. else raise KeyError with helpful message listing known adapters.
     """
-    if name not in _ADAPTERS:
-        known = sorted(_ADAPTERS)
-        raise KeyError(f"unknown experiment: {name!r}; known: {known}")
+    if name in _ADAPTERS:
+        return _ADAPTERS[name]()
 
-    return _ADAPTERS[name]()
+    if name.startswith("model_selection_"):
+        # lazy import to avoid circular dependency at module load time
+        from ex.synth.model_selection import variants
+        try:
+            tag = variants.tag_from_experiment(name)
+            config_path = variants.config_path(tag)
+            return ModelSelectionAdapter(config_path=config_path)
+        except KeyError:
+            # tag_from_experiment raised KeyError for unknown tag
+            valid_tags = ", ".join(sorted(variants.VARIANTS.keys()))
+            raise KeyError(
+                f"unknown model_selection variant: {name!r}; "
+                f"valid tags: {valid_tags}"
+            ) from None
+
+    # neither registry hit nor model_selection_* pattern
+    known = sorted(_ADAPTERS)
+    raise KeyError(f"unknown experiment: {name!r}; known: {known}")
 
 
 def list_adapters() -> list[str]:
