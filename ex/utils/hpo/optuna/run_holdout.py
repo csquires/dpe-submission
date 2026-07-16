@@ -108,6 +108,10 @@ def _run_element(
     # API stability but discards it—do not use it for budget-conditioned selection.
     # top_k_at_each_budget correctly inspects intermediate_values[band] per budget.
     pool = probe.top_k_at_each_budget(study, bands, k=k_per_budget)
+    if not pool:
+        # no hyperband bands (e.g. model_selection eval_cell reports no
+        # intermediate values) -> fall back to top-k at the final rung.
+        pool = probe.top_k_by_final_value(study, k=k_per_budget)
     adapter = get_adapter(cfg.experiment)
     cells = (
         adapter.cells_for_slice(slice, pool='holdout')
@@ -259,6 +263,12 @@ def main() -> int:
     # count total elements without spinning up training subsystems.
     study = create_or_load(cfg.experiment, args.method, slice=slice_value)
     pool = probe.top_k_at_each_budget(study, bands, k=args.k_per_budget)
+    if not pool:
+        # no hyperband bands -> top-k at the final rung (model_selection).
+        pool = probe.top_k_by_final_value(study, k=args.k_per_budget)
+        if pool:
+            logging.info("no bands; fell back to top-%d by final value",
+                         args.k_per_budget)
     if not pool:
         logging.error("empty pool")
         return 1

@@ -57,4 +57,41 @@ def get_cores_for_method(method: str, overrides: dict[str, int] | None = None) -
         return overrides[method]
     if method in CORES_REGISTRY:
         return CORES_REGISTRY[method]
+    # peak-campaign fallback: strip `_peak` suffix and inherit the base
+    # method's cores allocation. peak variants share their base's compute
+    # shape (same builder, same per-step cost), so the base value is right.
+    if method.endswith("_peak"):
+        base = method[:-len("_peak")]
+        if overrides is not None and base in overrides:
+            return overrides[base]
+        if base in CORES_REGISTRY:
+            return CORES_REGISTRY[base]
     raise KeyError(f"method '{method}' not found in CORES_REGISTRY and not in overrides")
+
+
+# methods whose continuous-time ode integration / score / flow-matching
+# memory cost makes them OOM on cpu/array lanes at batch_size=1024 (added to
+# the peak campaign's widened search space). gating these to gpu lanes only
+# stops mnist trial FAIL rates of 70-95% observed for the affected families.
+# classifier-style methods (BDRE/MDRE/MHTDRE/TriangularMDRE etc.) fit on
+# cpu and stay unrestricted.
+NEEDS_GPU: set[str] = {
+    "TSM", "CTSM", "VFM", "VFMOrthros",
+    "FMDRE", "FMDRE_S2",
+    "TriangularTSM", "TriangularTSM_fix", "TriangularFMDRE",
+    "TriangularCTSM_V1", "TriangularCTSM_V2", "TriangularCTSM_V3",
+    "TriangularVFM_V1", "TriangularVFM_V2", "TriangularVFM_V3",
+}
+
+
+def needs_gpu(method: str) -> bool:
+    """return True if method must run on a gpu lane (gpus >= 1).
+
+    strips ``_peak`` suffix so peak campaign variants inherit the base
+    method's gating. methods not in ``NEEDS_GPU`` return False (unrestricted).
+    """
+    if method in NEEDS_GPU:
+        return True
+    if method.endswith("_peak"):
+        return method[:-len("_peak")] in NEEDS_GPU
+    return False

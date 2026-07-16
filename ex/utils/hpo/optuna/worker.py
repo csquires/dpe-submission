@@ -81,10 +81,7 @@ def run_worker(
     os.environ["OMP_NUM_THREADS"] = str(cores_per_trial)
     os.environ["MKL_NUM_THREADS"] = str(cores_per_trial)
     os.environ["OPENBLAS_NUM_THREADS"] = str(cores_per_trial)
-    # reduce fragmentation-driven CUDA OOM on preempt lane where 32 workers
-    # share one GPU. torch's own suggested mitigation; zero throughput cost.
-    # PYTORCH_ALLOC_CONF is the new name; PYTORCH_CUDA_ALLOC_CONF is the
-    # deprecated alias set for compat with older torch builds.
+    # reduce frag-driven CUDA OOM on preempt lane (default 32 workers 1 gpu)
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     os.environ.setdefault(
         "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
@@ -180,15 +177,45 @@ def run_worker(
         sys.exit(1)
 
     # bootstrap 7: optimize study
+    #
+    # per-trial redis counter increment on COMPLETE. gives count_complete an
+    # O(1) fast path on studies whose journals are too big to scan in a
+    # keeper cycle (occupancy). counter key mirrors study_prefix(); readers
+    # sum the counter with a best-effort journal read for prior-history.
+    try:
+        from ex.utils.hpo.optuna.storage import study_prefix, complete_counter_key
+        import redis as _redis_pkg
+        _prefix = study_prefix(experiment, method, slice=slice)
+        _counter_key = complete_counter_key(_prefix)
+        _redis_host, _redis_port = os.environ.get(
+            "DPE_REDIS_ENDPOINT",
+            open(
+                Path(os.environ["DPE_DATA_ROOT"]) / "redis" / "endpoint"
+            ).read().strip(),
+        ).split(":")
+        _r = _redis_pkg.Redis(host=_redis_host, port=int(_redis_port), socket_timeout=3)
+
+        def _incr_complete_counter(study, trial):
+            if trial.state == TrialState.COMPLETE:
+                try:
+                    _r.incr(_counter_key)
+                except Exception:
+                    pass  # non-critical
+    except Exception as _cb_err:
+        logger.warning(f"complete-counter setup failed: {_cb_err}; running without counter")
+        _incr_complete_counter = None
+
+    _callbacks = [MaxTrialsCallback(target_trials, states=(TrialState.COMPLETE,))]
+    if _incr_complete_counter is not None:
+        _callbacks.append(_incr_complete_counter)
+
     try:
         study.optimize(
             objective_fn,
             timeout=timeout_seconds,
             gc_after_trial=True,
             catch=(RuntimeError, ValueError),
-            callbacks=[
-                MaxTrialsCallback(target_trials, states=(TrialState.COMPLETE,))
-            ],
+            callbacks=_callbacks,
         )
         logger.info("optimize() completed or timed out")
     except KeyboardInterrupt:

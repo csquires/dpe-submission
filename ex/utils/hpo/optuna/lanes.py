@@ -52,6 +52,8 @@ class LaneProfile:
         max_concurrent: per-lane TOTAL concurrent-job cap (the binding qos
                        MaxJobsPU/MaxTRESPU minus headroom). The keeper splits it
                        evenly across the studies still under target.
+        constraint: sbatch --constraint node feature (e.g. a gpu-type feature).
+                    Empty string '' means omit --constraint.
     """
     partition: str
     qos: str
@@ -62,6 +64,7 @@ class LaneProfile:
     worker_walltime: str
     max_concurrent: int
     cores_per_trial: int | None = None
+    constraint: str = ""
 
 
 LANES: dict[str, LaneProfile] = {
@@ -131,6 +134,47 @@ LANES: dict[str, LaneProfile] = {
         batch_size=32,
         worker_walltime="09:00:00",
         max_concurrent=24,
+        # pin to newer high-vram gpu classes only. older/smaller cards (A6000,
+        # A100_40GB, L40 non-S, H100/H200) get skipped -- keeps OOM risk down
+        # for heavy score/flow methods and avoids preempt spins on nodes we
+        # would rather not schedule on.
+        constraint="L40S|RTX_PRO_6000|6000Ada",
+    ),
+    # array_gpu: gpu-on-array lane. gpus=1 on the array partition to use the
+    # 8-gpu fanout allowed there, pinned to RTX_PRO_6000 (96G VRAM) nodes.
+    # B=1: one trial per gpu. profiled 2026-07-05 -- B=8 (8 loky trials/gpu) ran
+    # 2.2x SLOWER at steady state (1.8 vs 4 completes/min across 7 studies): the
+    # dim-64 vfm/fmdre trials saturate the gpu so concurrency just time-slices,
+    # and 56 workers contend on the aviamala redis journal (comms-bound).
+    # dispatched as a job array (the array partition only accepts arrays) via
+    # keeper.dispatch_array_gpu; the cpu "array" lane is left untouched.
+    "array_gpu": LaneProfile(
+        partition="array",
+        qos="",
+        gpus=1,
+        cpus_per_task=4,
+        mem="32G",
+        batch_size=1,
+        worker_walltime="18:00:00",
+        max_concurrent=8,
+        constraint="RTX_PRO_6000",
+    ),
+    # array_gpu_wide: like array_gpu but B=8 loky trials per gpu. for
+    # LOW-DIM experiments (e.g. model_selection dim-3) where one trial barely
+    # touches the gpu, so packing several per card should win even though each
+    # loky worker is its own redis client (the journal-contention tradeoff is
+    # the point of the experiment). routed via dispatch_array_gpu (partition
+    # array + gpus>0), same as array_gpu.
+    "array_gpu_wide": LaneProfile(
+        partition="array",
+        qos="",
+        gpus=1,
+        cpus_per_task=8,
+        mem="32G",
+        batch_size=8,
+        worker_walltime="18:00:00",
+        max_concurrent=8,
+        constraint="RTX_PRO_6000",
     ),
 }
 
@@ -154,3 +198,22 @@ def get_lane(name: str) -> LaneProfile:
         known = ", ".join(sorted(LANES.keys()))
         raise KeyError(f"lane '{name}' not found; known lanes: {known}")
     return LANES[name]
+
+
+def resolve_constraint(lane: LaneProfile) -> str:
+    """Resolve constraint for a lane, respecting DPE_PREEMPT_CONSTRAINT override.
+
+    If the lane partition is "preempt" and env var DPE_PREEMPT_CONSTRAINT is set,
+    use that value (even "" to disable). Otherwise use lane.constraint.
+    This allows per-run constraint tuning without modifying the lane registry.
+
+    Args:
+        lane: LaneProfile instance.
+
+    Returns:
+        Constraint string (may be empty "").
+    """
+    import os
+    if lane.partition == "preempt" and "DPE_PREEMPT_CONSTRAINT" in os.environ:
+        return os.environ["DPE_PREEMPT_CONSTRAINT"]
+    return lane.constraint

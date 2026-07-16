@@ -29,7 +29,8 @@ from typing import Hashable
 
 from optuna.trial import TrialState
 
-from ex.utils.hpo.optuna.cores_registry import get_cores_for_method
+from ex.utils.hpo.optuna.cores_registry import get_cores_for_method, needs_gpu
+from ex.utils.hpo.optuna.storage import complete_counter_key, study_prefix, redis_url
 from ex.utils.hpo.optuna.lanes import get_lane, LaneProfile
 from ex.utils.hpo.optuna.study_config import load_config
 from ex.utils.hpo.optuna.storage import create_or_load, _serialize_slice
@@ -41,22 +42,112 @@ logger = logging.getLogger(__name__)
 _BUDGET_STATES = (TrialState.COMPLETE,)
 
 
+def _read_complete_counter(experiment: str, method: str, slice=None) -> int:
+    """read the redis O(1) COMPLETE-trial counter for one study.
+
+    returns 0 on error. counter is incremented by worker callbacks and
+    counts only trials completed since the counter was introduced.
+    """
+    try:
+        import redis as _redis_pkg
+        url = redis_url().removeprefix("redis://")
+        host, port = url.split(":")
+        r = _redis_pkg.Redis(host=host, port=int(port), socket_timeout=3)
+        prefix = study_prefix(experiment, method, slice=slice)
+        val = r.get(complete_counter_key(prefix))
+        return int(val) if val is not None else 0
+    except Exception:
+        return 0
+
+
+# cached optuna.Study handles per (experiment, method, slice). reusing the
+# same handle across keeper cycles is the speed fix: optuna's JournalStorage
+# tracks _last_log_id and replays only new entries on subsequent .trials
+# fetches, so cycle N>=2 cost is proportional to NEW journal growth, not
+# total journal size. before this, every count_complete call rebuilt the
+# study from scratch and reparsed the full journal -- occupancy keeper got
+# stuck in its first scan because each .trials call took 30+ s on a 300k+
+# entry journal, blowing well past a single cycle's budget.
+_study_handle_cache: dict[tuple, "optuna.Study"] = {}
+
+# last successful COMPLETE count per (experiment, method, slice). used as a
+# fallback when a fresh count_complete call times out. survives across
+# cycles in-process; reset on keeper restart.
+_count_cache: dict[tuple, int] = {}
+
+# soft per-call ceiling. occupancy studies on bv have journals so large
+# that one full create_or_load + study.trials can run for many minutes per
+# study, freezing a whole cycle. when this fires we return the last-known
+# count (or 0 if none) so the keeper still progresses through pending.
+_COUNT_COMPLETE_TIMEOUT_S = 30
+
+
+def _count_complete_timeout_handler(signum, frame):
+    raise _CountTimeout()
+
+
+class _CountTimeout(Exception):
+    pass
+
+
 def count_complete(experiment: str, method: str, slice=None, attempts: int = 3) -> int:
     """count COMPLETE trials in a study (the target_trials metric).
 
     PRUNED/FAIL trials do not count: target_trials is a budget of full-length
-    completions, enforced worker-side by MaxTrialsCallback. the study is loaded
-    fresh each call; a transient read error is retried a few times.
+    completions, enforced worker-side by MaxTrialsCallback. on first call the
+    study is loaded and cached; subsequent calls reuse the handle so optuna's
+    journal storage only replays new log entries. a transient read error
+    drops the cache entry and retries.
+
+    when the underlying journal load + trial scan exceeds
+    ``_COUNT_COMPLETE_TIMEOUT_S``, returns the last-known count (or 0 if
+    no prior count cached) so the keeper does not stall on one slow study.
     """
+    import signal
+    key = (experiment, method, slice)
     last_err: Exception | None = None
     for attempt in range(attempts):
+        # install timeout for this attempt only. signal.SIGALRM works on
+        # the keeper's single-threaded main loop where count_complete is
+        # called; no nested alarms exist in the dispatch path.
+        old_handler = signal.signal(signal.SIGALRM, _count_complete_timeout_handler)
+        signal.alarm(_COUNT_COMPLETE_TIMEOUT_S)
         try:
-            study = create_or_load(experiment, method, slice=slice)
-            return sum(1 for t in study.trials if t.state in _BUDGET_STATES)
-        except Exception as e:  # torn read; retry
+            study = _study_handle_cache.get(key)
+            if study is None:
+                study = create_or_load(experiment, method, slice=slice)
+                _study_handle_cache[key] = study
+            n = sum(1 for t in study.trials if t.state in _BUDGET_STATES)
+            _count_cache[key] = n
+            return n
+        except _CountTimeout:
+            cached = _count_cache.get(key)
+            # try the redis counter fast-path — worker callbacks INCR it on
+            # each COMPLETE, so the counter reflects trials completed since
+            # its introduction. add to `cached` (which holds our last-known
+            # journal-derived count, incl. pre-counter history) if present.
+            counter_val = _read_complete_counter(experiment, method, slice)
+            merged = (cached if cached is not None else 0) + counter_val
+            logger.warning(
+                "count_complete timed out for %s/%s/%s after %ds; "
+                "returning cached=%s + counter=%s = %s",
+                experiment, method, slice, _COUNT_COMPLETE_TIMEOUT_S,
+                cached if cached is not None else "0",
+                counter_val, merged,
+            )
+            # drop the optuna handle so next attempt re-creates it; the
+            # _CountTimeout often fires inside JournalStorage internals
+            # where the storage state may now be inconsistent.
+            _study_handle_cache.pop(key, None)
+            return merged
+        except Exception as e:  # torn read; drop cache + retry
+            _study_handle_cache.pop(key, None)
             last_err = e
             if attempt < attempts - 1:
                 time.sleep(2)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
     raise last_err
 
 
@@ -189,7 +280,7 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
     """
     name = job_name(experiment, method, lane_name, slice=slice)
     wrap = (
-        f"source ~/.bashrc && conda activate fac && cd {workdir} && "
+        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
         f"--config {config_module} --lane {lane_name} --combo-index {combo_index}"
     )
@@ -210,6 +301,9 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
     # include --qos only if lane specifies a qos.
     if lane.qos:
         cmd += ["--qos", lane.qos]
+    # include --constraint if pinned (e.g. preempt lane pinned to newer gpus).
+    if lane.constraint:
+        cmd += ["--constraint", lane.constraint]
 
     if dry_run:
         logger.info("DRY-RUN dispatch %s: %s", name, " ".join(cmd))
@@ -257,7 +351,7 @@ def dispatch_array(config_module: str, combo_index: int, experiment: str,
     array_spec = f"0-{n - 1}%{n}"
 
     wrap = (
-        f"source ~/.bashrc && conda activate fac && cd {workdir} && "
+        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
         f"--config {config_module} --lane array --combo-index {combo_index}"
     )
@@ -290,14 +384,75 @@ def dispatch_array(config_module: str, combo_index: int, experiment: str,
         raise
 
 
+def dispatch_array_gpu(config_module: str, combo_index: int, experiment: str,
+                       method: str, lane_name: str, lane: LaneProfile,
+                       n_workers: int, workdir: str, log_dir: str,
+                       dry_run: bool, slice=None) -> str:
+    """sbatch one GPU array job for a study on a gpu-on-array lane.
+
+    like dispatch_array but for a lane with gpus>0 on the array partition
+    (e.g. "array_gpu"): emits --gpus and, when set, --constraint / --qos, and
+    threads lane_name through so submit resolves the right lane. kept SEPARATE
+    from dispatch_array so the cpu "array" lane's dispatch path is untouched.
+
+    args mirror dispatch_array plus lane_name (the gpu-on-array lane name).
+    returns: job ID (str) if submitted; "dry-run" if dry_run=True.
+    """
+    name = job_name(experiment, method, lane_name, slice=slice)
+    n = max(1, n_workers)
+    array_spec = f"0-{n - 1}%{n}"
+
+    wrap = (
+        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && cd {workdir} && "
+        f"python -m ex.utils.hpo.optuna.submit "
+        f"--config {config_module} --lane {lane_name} --combo-index {combo_index}"
+    )
+
+    cmd = [
+        "sbatch", "--parsable",
+        f"--array={array_spec}",
+        "--job-name", name,
+        "--partition", lane.partition,
+        "--time", lane.worker_walltime,
+        "--cpus-per-task", str(lane.cpus_per_task),
+        "--mem", lane.mem,
+        "--gpus", str(lane.gpus),
+        "--requeue",
+        "--output", os.path.join(log_dir, f"{name}_%A_%a.out"),
+        "--wrap", wrap,
+    ]
+    if lane.constraint:
+        cmd += ["--constraint", lane.constraint]
+    if lane.qos:
+        cmd += ["--qos", lane.qos]
+
+    if dry_run:
+        logger.info("DRY-RUN dispatch_array_gpu %s: %s", name, " ".join(cmd))
+        return "dry-run"
+
+    try:
+        jid = subprocess.run(
+            cmd, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        logger.info("dispatched gpu array %s (size=%d) -> jobid %s", name, n, jid)
+        return jid
+    except subprocess.CalledProcessError as e:
+        logger.error("dispatch_array_gpu failed for %s: %s", name, e.stderr)
+        raise
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="multi-lane keeper for optuna hpo")
     p.add_argument("--config", required=True,
                    help="dotted StudyConfig module path")
     p.add_argument("--poll-interval", type=int, default=60,
                    help="seconds between cycles")
-    p.add_argument("--max-dispatch-per-cycle", type=int, default=10,
-                   help="cap submits per cycle to bound burstiness")
+    p.add_argument("--max-dispatch-per-cycle", type=int, default=30,
+                   help="cap submits per cycle to bound burstiness. raised to "
+                        "30 (from 10) so a single cycle can fill both general "
+                        "and preempt lanes; the per-lane iteration is "
+                        "sequential (general first, then preempt), so a cap "
+                        "of 10 was exhausted before preempt ever saw a slot.")
     p.add_argument("--max-cycles", type=int, default=0,
                    help="stop after N cycles (0 = run until all studies reach "
                         "target); use --max-cycles 1 with --dry-run for a "
@@ -352,7 +507,7 @@ def main() -> int:
         )
 
     logger.info(
-        "keeper start: experiment=%s methods=%s target_trials=%d lanes=%s",
+        "keeper start: experiment=%s methods=%s target_trials=%s lanes=%s",
         config.experiment, config.methods, config.target_trials, config.lanes,
     )
 
@@ -457,6 +612,27 @@ def main() -> int:
                 )
                 in_flight = 0
             study_slots[method] = max(0, config.max_in_flight - in_flight)
+
+        # fair-share ordering: sort pending by per-method study_slots
+        # descending, so under-served methods (high slots) get first crack at
+        # each cycle's dispatch budget AND any qos-cap room that frees. without
+        # this, the keeper iterates pending in config-methods order; once the
+        # qos cap is hit, methods later in the list (e.g. FMDRE_S2 at index 10,
+        # Triangular* at 11-18) are starved indefinitely because the early
+        # methods refill any freed slot before iteration reaches them. ties
+        # broken by combo_index for determinism within a method.
+        # tie-break rotates by cycle so methods with equal study_slots
+        # don't always get tried in combo_index order. without this, methods
+        # late in config.methods (TriangularVFM_V*, TriangularFMDRE at indices
+        # 15-17) lose every QOS race to earlier methods that refill the cap
+        # before iteration reaches them.
+        _n_methods = max(1, len(config.methods))
+        pending.sort(key=lambda r: (
+            -study_slots.get(r[1], 0),
+            (r[0] + cycle) % _n_methods,
+            r[0],
+        ))
+
         for lane_name in config.lanes:
             try:
                 lane = get_lane(lane_name)
@@ -475,6 +651,11 @@ def main() -> int:
                 # min(per_study, study_slots[method] // lane_b). a study that
                 # already has a live array job is skipped here.
                 for (combo_index, method, slice_, n) in pending:
+                    # gate gpu-required methods off cpu/array lanes only when
+                    # the config opts in. mnist needs this; pendulum/occupancy
+                    # don't FAIL on cpu so they stay unrestricted.
+                    if config.gate_gpu_methods and lane.gpus == 0 and needs_gpu(method):
+                        continue
                     try:
                         count = squeue_count(
                             partition="array", user=user,
@@ -507,12 +688,53 @@ def main() -> int:
                     except Exception as e:
                         logger.warning("dispatch_array failed for %s: %s", method, e)
 
+            elif lane.partition == "array" and lane.gpus > 0:
+                # gpu-on-array lane(s), e.g. array_gpu (B=1) and array_gpu_wide
+                # (B=8): one gpu --array job per under-target study, same slot
+                # logic as the cpu array branch but dispatched via
+                # dispatch_array_gpu (adds --gpus/--constraint). the cpu "array"
+                # branch above (gpus=0) is deliberately left untouched.
+                for (combo_index, method, slice_, n) in pending:
+                    try:
+                        count = squeue_count(
+                            partition=lane.partition, user=user,
+                            name=job_name(config.experiment, method, lane_name, slice=slice_),
+                        )
+                    except Exception as e:
+                        logger.warning("squeue failed for array_gpu %s: %s", method, e)
+                        continue
+                    if count != 0:
+                        continue
+                    b = lane_b(lane, method)
+                    slot_n = study_slots.get(method, 0) // b
+                    array_n = min(per_study, slot_n)
+                    if array_n <= 0:
+                        logger.info(
+                            "skip array_gpu dispatch for %s: in_flight cap "
+                            "(slots=%d, B=%d)",
+                            method, study_slots.get(method, 0), b,
+                        )
+                        continue
+                    try:
+                        dispatch_array_gpu(
+                            args.config, combo_index, config.experiment,
+                            method, lane_name, lane, array_n, args.workdir,
+                            args.log_dir, args.dry_run, slice=slice_,
+                        )
+                        cycle_dispatched += 1
+                        study_slots[method] -= array_n * b
+                    except Exception as e:
+                        logger.warning("dispatch_array_gpu failed for %s: %s", method, e)
+
             else:
                 # per-worker lanes (preempt, cpu, general): top each study up to
                 # its per_study share, bounded by the per-cycle burst cap.
                 for (combo_index, method, slice_, n) in pending:
                     if cycle_dispatched >= args.max_dispatch_per_cycle:
                         break
+                    # see array-lane block above; config-driven gate.
+                    if config.gate_gpu_methods and lane.gpus == 0 and needs_gpu(method):
+                        continue
 
                     try:
                         running = squeue_count(
@@ -528,7 +750,7 @@ def main() -> int:
 
                     b = lane_b(lane, method)
                     deficit = per_study - running
-                    deficit = min(deficit, config.target_trials - n)
+                    deficit = min(deficit, config.target_for(method) - n)
                     deficit = min(
                         deficit, args.max_dispatch_per_cycle - cycle_dispatched
                     )

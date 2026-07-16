@@ -37,7 +37,7 @@ def _data_root() -> Path:
 
 
 def gather_method(exp: str, method: str, n_cells_total: int,
-                  fragments_dir: Path) -> tuple[np.ndarray, dict]:
+                  fragments_dir: Path, config: dict) -> tuple[np.ndarray, dict]:
     """gather one method's fragments into an array of shape (n_cells, ...).
 
     cells without a fragment are filled with NaN; cells with ok=False are also NaN.
@@ -60,6 +60,15 @@ def gather_method(exp: str, method: str, n_cells_total: int,
                 summary["n_failed"] += 1
                 continue
             est = f["est_ldrs"][...]
+            # shape guardrail: last dim must match config nsamples_test if present
+            if "nsamples_test" in config:
+                expected_last = config["nsamples_test"]
+                actual_last = est.shape[-1]
+                if actual_last != expected_last:
+                    raise ValueError(
+                        f"Shape mismatch in {p}: est_ldrs last dim={actual_last}, "
+                        f"config['nsamples_test']={expected_last}"
+                    )
         if sample_shape is None:
             sample_shape = est.shape
             arr = np.full((n_cells_total, *sample_shape), np.nan, dtype=np.float32)
@@ -78,16 +87,23 @@ def main() -> None:
     p.add_argument("--method", default=None,
                    help="single method to gather; default: gather all methods present")
     p.add_argument("--config", default=None)
+    p.add_argument("--fragments-dir", default=None,
+                   help="path to step2_results dir (default: <DPE_DATA_ROOT>/<exp>/step2_results)")
     p.add_argument("--out", default=None,
                    help="output h5 path (default: ex/<exp>/raw_results/results.h5)")
+    p.add_argument("--strict", action="store_true",
+                   help="exit nonzero if any method has n_ok < n_total")
     args = p.parse_args()
 
-    adapter = importlib.import_module(f"ex.{args.experiment}.step2_adapter")
+    # experiment may be a nested path (e.g. synth/elbo) post ex-tree reorg; the
+    # module path needs dots while config/fragment fs paths keep the slashes.
+    mod_path = args.experiment.replace("/", ".")
+    adapter = importlib.import_module(f"ex.{mod_path}.step2_adapter")
     config_path = args.config or f"ex/{args.experiment}/config.yaml"
     config = adapter.load_config(config_path)
     n_cells_total = len(list(adapter.list_cells(config)))
 
-    fragments_dir = _data_root() / args.experiment / "step2_results"
+    fragments_dir = Path(args.fragments_dir) if args.fragments_dir else (_data_root() / args.experiment / "step2_results")
     if not fragments_dir.exists():
         raise SystemExit(f"no fragments dir at {fragments_dir}")
 
@@ -112,17 +128,26 @@ def main() -> None:
     else:
         ds_name_fn = lambda m: f"est_ldrs_arr_{m}"  # noqa: E731
 
+    has_incomplete = False
     for method in methods:
-        arr, summary = gather_method(args.experiment, method, n_cells_total, fragments_dir)
+        arr, summary = gather_method(args.experiment, method, n_cells_total, fragments_dir, config)
+        print(f"[{method}] summary: n_total={summary['n_total']}, n_ok={summary['n_ok']}, "
+              f"n_failed={summary['n_failed']}, n_missing={summary['n_missing']}")
         if arr is None:
             print(f"[{method}] no usable cells; skipping write")
+            has_incomplete = True
             continue
+        if summary["n_ok"] < summary["n_total"]:
+            has_incomplete = True
         ds_name = ds_name_fn(method)
         with h5py.File(out_path, "a") as f:
             if ds_name in f:
                 del f[ds_name]
             f.create_dataset(ds_name, data=arr)
-        print(f"[{method}] {summary}; wrote {ds_name} shape={arr.shape} -> {out_path}")
+        print(f"[{method}] wrote {ds_name} shape={arr.shape} -> {out_path}")
+
+    if args.strict and has_incomplete:
+        raise SystemExit(f"--strict: one or more methods incomplete")
 
     # optional adapter post-step (e.g. eig appends 'true_eigs_arr').
     if hasattr(adapter, "gather_postprocess"):

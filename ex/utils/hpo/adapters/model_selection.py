@@ -31,9 +31,13 @@ class ModelSelectionAdapter(ExperimentAdapter):
     device fallback: if config says cuda but unavailable, warn and use cpu.
     """
 
-    def __init__(self):
-        """load config.yaml; cache device, latent_dim, data_dir, num_waypoints, pool."""
-        with open(_CONFIG_PATH) as f:
+    def __init__(self, config_path: Path | None = None):
+        """load config.yaml; cache device, latent_dim, data_dir, num_waypoints, pool.
+
+        if config_path is None, use the legacy hardcoded _CONFIG_PATH.
+        """
+        path = config_path if config_path is not None else _CONFIG_PATH
+        with open(path) as f:
             cfg = yaml.safe_load(f)
 
         self._data_dir = cfg["data_dir"]
@@ -117,6 +121,22 @@ class ModelSelectionAdapter(ExperimentAdapter):
         dre_sample_complexity adapter.
         """
         return cell[0] // self._n_instances
+
+    # -- three-way split for the optuna objective. base defaults (24/8/68)
+    # raise on the 10-cell kl strata; 8 train + 2 holdout fills each stratum
+    # (56 train + 14 holdout over the 7 kl buckets), step2=-1 leaves the
+    # disjoint step2 bucket empty (model_selection step2 runs via the separate
+    # step2_adapter, not this hpo adapter). paired with slices=None -> one
+    # global hparam set per method.
+
+    def n_train_per_stratum(self) -> int:
+        return 8
+
+    def n_holdout_per_stratum(self) -> int:
+        return 2
+
+    def n_step2_per_stratum(self) -> int:
+        return -1
 
     def eval_cell(
         self,

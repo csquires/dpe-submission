@@ -42,6 +42,21 @@ echo "${HOST}:${PORT}" > "$RDIR/endpoint"
 echo "${SLURM_JOB_ID}" > "$RDIR/jobid"
 echo "redis endpoint: ${HOST}:${PORT}   jobid: ${SLURM_JOB_ID}"
 
+# self-chain: sbatch a successor that fires when this job ends for any
+# reason (TIMEOUT after 24h, preempt, scancel). slurm's --requeue does not
+# fire on TIMEOUT, which is the regular exit mode of a long-lived job, so
+# self-chaining is the only way to keep an uninterrupted optredis line up.
+# guarded by OPTREDIS_NOCHAIN=1 for manual one-shot runs.
+if [[ "${OPTREDIS_NOCHAIN:-0}" != "1" ]]; then
+    SUCC=$(sbatch --parsable --dependency=afterany:"${SLURM_JOB_ID}" \
+        "${BASH_SOURCE[0]}" 2>/dev/null || echo "")
+    if [[ -n "$SUCC" ]]; then
+        echo "[redis] self-chained successor jobid: $SUCC"
+    else
+        echo "[redis] WARNING: self-chain sbatch failed; no successor queued"
+    fi
+fi
+
 # minimal config: reachable from all nodes, AOF persistence so a requeue
 # replays cleanly. redis is single-threaded -> its AOF append is the only
 # disk write and is never concurrent.

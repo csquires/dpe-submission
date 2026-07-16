@@ -103,6 +103,28 @@ def top_k_at_each_budget(
     return list(seen.values())
 
 
+def top_k_by_final_value(study: optuna.Study, k: int) -> list[Any]:
+    """top-K COMPLETE trials by final trial.value (ascending; best first).
+
+    fallback candidate selector for studies with NO intermediate_values (no
+    hyperband bands), where top_k_at_each_budget returns empty -- e.g.
+    model_selection, whose custom eval_cell does not report step_cb. for
+    full-budget / no-prune trials the final trial.value IS the final-rung value,
+    so "top-k at the final rung" == top-k by final value.
+
+    returns FrozenTrials (same shape as top_k_at_each_budget) so run_holdout can
+    read .number / .params; skips non-finite COMPLETE trials.
+    """
+    finite = [
+        t for t in study.trials
+        if t.state == TrialState.COMPLETE
+        and t.value is not None
+        and math.isfinite(t.value)
+    ]
+    finite.sort(key=lambda t: t.value)
+    return finite[:k]
+
+
 def trial_intermediate_values_at_budget(
     study: optuna.Study, budget_step: int
 ) -> pd.DataFrame:

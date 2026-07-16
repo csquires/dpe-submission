@@ -58,6 +58,7 @@ def aggregate_candidate(cand_dir: Path) -> dict | None:
         return None
 
     per_cell_traj: dict[str, list] = {}
+    per_cell_final: dict[str, float] = {}  # final-rung value per cell (fallback)
     hp_dict = None
     n_total = len(cell_files)
     n_failed = 0
@@ -78,6 +79,7 @@ def aggregate_candidate(cand_dir: Path) -> dict | None:
         if not str(d.get("status", "")).startswith("success"):
             n_failed += 1
         per_cell_traj[f.stem] = d.get("trajectory") or []
+        per_cell_final[f.stem] = d.get("final_value")
 
     # preindex each cell's trajectory to dict[step, value] once, so the
     # per-step aggregation below is O(N_steps * N_cells) instead of
@@ -98,24 +100,37 @@ def aggregate_candidate(cand_dir: Path) -> dict | None:
     std = {s: float(np.std(v, ddof=0)) for s, v in step_vals.items()}
     n_finite = {s: len(v) for s, v in step_vals.items()}
 
+    per_cell_at_best: dict[str, float] = {}
     if median:
         best_step = min(median.keys(), key=lambda s: median[s])
         best_value_median = median[best_step]
         best_value_mean = mean[best_step]
         best_std = std[best_step]
         best_n = n_finite[best_step]
-    else:
-        best_step = None
-        best_value_median = None
-        best_value_mean = None
-        best_std = None
-        best_n = 0
-
-    per_cell_at_best: dict[str, float] = {}
-    if best_step is not None:
         for fname, step_map in cell_step_to_val.items():
             if best_step in step_map:
                 per_cell_at_best[fname.replace("cell_", "")] = step_map[best_step]
+    else:
+        # no per-step trajectory (e.g. model_selection eval_cell reports no
+        # step_cb) -> select at the final rung: use each cell's full-budget
+        # final_value instead of a per-step best.
+        finals = {cid: fv for cid, fv in per_cell_final.items()
+                  if fv is not None and np.isfinite(fv)}
+        if finals:
+            best_step = -1  # sentinel: final rung (no intermediate steps)
+            fv = list(finals.values())
+            best_value_median = float(np.median(fv))
+            best_value_mean = float(np.mean(fv))
+            best_std = float(np.std(fv, ddof=0))
+            best_n = len(fv)
+            per_cell_at_best = {cid.replace("cell_", ""): v
+                                for cid, v in finals.items()}
+        else:
+            best_step = None
+            best_value_median = None
+            best_value_mean = None
+            best_std = None
+            best_n = 0
 
     summary = {
         "candidate_trial_number": trial_number,

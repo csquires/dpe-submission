@@ -71,20 +71,24 @@ def _atomic_h5_write(path: Path, payload: dict, attrs: dict | None = None) -> No
 def main() -> None:
     args = parse_args()
 
+    # normalize experiment path: accept both "synth/model_selection" and "synth.model_selection"
+    exp_mod_path = args.experiment.replace("/", ".")
+    exp_file_path = args.experiment.replace(".", "/")
+
     # parse cell indices
     cell_indices = [int(x) for x in args.cell_indices.split(",") if x.strip()]
     if not cell_indices:
         raise SystemExit("--cell-indices empty")
 
     # load adapter
-    adapter_mod = f"ex.{args.experiment}.step2_adapter"
+    adapter_mod = f"ex.{exp_mod_path}.step2_adapter"
     try:
         adapter = importlib.import_module(adapter_mod)
     except ImportError as e:
         raise SystemExit(f"could not import {adapter_mod}: {e}")
 
     # load config
-    config_path = args.config or f"ex/{args.experiment}/config.yaml"
+    config_path = args.config or f"ex/{exp_file_path}/config.yaml"
     config = adapter.load_config(config_path)
 
     # load winners

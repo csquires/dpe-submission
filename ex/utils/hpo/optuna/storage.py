@@ -34,16 +34,27 @@ def redis_url() -> str:
     redis_server.sh writes ``<host>:<port>`` to
     ``$DPE_DATA_ROOT/redis/endpoint`` on every (re)start.
 
+    optional override: ``DPE_REDIS_ENDPOINT_FILE`` env var points at an
+    alternate endpoint file, useful when driving workers on one account
+    against a redis on another account (cross-account migration). the
+    file must be readable by the worker process; contents same format
+    as the canonical endpoint (``<host>:<port>``). when the override is
+    set, DPE_DATA_ROOT is used only for dataset lookups.
+
     returns:
         str: ``redis://<host>:<port>``.
 
     raises:
-        RuntimeError: if DPE_DATA_ROOT is unset or the endpoint file is
-            absent (the redis-server job is not running).
+        RuntimeError: if neither override nor DPE_DATA_ROOT/endpoint file
+            is available.
     """
-    if "DPE_DATA_ROOT" not in environ:
-        raise RuntimeError("DPE_DATA_ROOT environment variable not set")
-    endpoint = Path(environ["DPE_DATA_ROOT"]) / "redis" / "endpoint"
+    override = environ.get("DPE_REDIS_ENDPOINT_FILE")
+    if override:
+        endpoint = Path(override)
+    else:
+        if "DPE_DATA_ROOT" not in environ:
+            raise RuntimeError("DPE_DATA_ROOT environment variable not set")
+        endpoint = Path(environ["DPE_DATA_ROOT"]) / "redis" / "endpoint"
     if not endpoint.is_file():
         raise RuntimeError(
             f"redis endpoint file not found at {endpoint}; "
@@ -146,6 +157,18 @@ def study_prefix(experiment: str, method: str, slice: Hashable | None = None) ->
     if slice is None:
         return f"{experiment}:{method}"
     return f"{experiment}:{_serialize_slice(slice)}:{method}"
+
+
+def complete_counter_key(prefix: str) -> str:
+    """redis key for a study's O(1) COMPLETE-trial counter.
+
+    incremented by workers via a study.optimize callback on each COMPLETE
+    transition. read by count_complete as a fast-path fallback when the
+    journal is too big to scan in a keeper cycle. counts only trials
+    completed AFTER this counter was introduced; consumers should add the
+    counter to any prior-history reading of the journal to avoid undercount.
+    """
+    return f"count:{prefix}:complete"
 
 
 def _get_storage(

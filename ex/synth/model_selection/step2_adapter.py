@@ -48,7 +48,30 @@ def load_config(path: str) -> dict:
         raise ValueError(f"config missing keys: {missing}")
     # expand env var if present (in case _load_config doesn't)
     config["data_dir"] = os.path.expandvars(str(config["data_dir"]))
+
+    # validate dataset if it exists; import inside to avoid circular import: variants.py → src.utils.io
+    dataset_path = os.path.join(config["data_dir"], "dataset_newpstar.h5")
+    if os.path.exists(dataset_path):
+        from ex.synth.model_selection import variants
+        variants.assert_dataset_matches(config, dataset_path)
+
     return config
+
+
+def gather_output_path(config: dict) -> str:
+    """path where gather writes the unified results; consumed by ex.utils.step2_runner.gather (line 105–106).
+
+    ensures gather writes exactly where step3_process_results reads.
+    """
+    return os.path.join(config["raw_results_dir"], "new_pstar.h5")
+
+
+def gather_dataset_name(method: str, config: dict) -> str:
+    """dataset key template in results h5; consumed by ex.utils.step2_runner.gather (line 113–116).
+
+    matches gather's default (line 116 of gather.py) but explicit contract prevents drift.
+    """
+    return f"est_ldrs_arr_{method}"
 
 
 # -----------------------------------------------------------------------------
@@ -138,7 +161,10 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                 est = estimator.predict_ldr(pstar_test)
             est_ldrs[t] = est.detach().cpu().numpy().astype(np.float32)
             true_ldrs[t] = true_ldrs_t.cpu().numpy().astype(np.float32)
-            mae_per[t] = float(torch.abs(est - true_ldrs_t).mean().item())
+            # mae off the host arrays above: predict_ldr may hand back a cpu tensor
+            # even when the estimator is on cuda, so a torch subtract here would
+            # mix devices and raise. same values, device-agnostic.
+            mae_per[t] = float(np.abs(est_ldrs[t] - true_ldrs[t]).mean())
 
     return {
         "est_ldrs": est_ldrs,

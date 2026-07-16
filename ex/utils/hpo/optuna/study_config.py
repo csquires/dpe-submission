@@ -80,6 +80,16 @@ class StudyConfig:
     include_tabular: bool = False
     lanes: List[str] = field(default_factory=lambda: ["preempt", "array"])
     max_in_flight: int = 256
+    # when True, keeper refuses to dispatch methods flagged ``needs_gpu`` to
+    # cpu/array lanes. set per-config; mnist needs this because the heavy
+    # continuous methods (CTSM/VFM/FMDRE/Triangular*) FAIL at 70-95% on cpu
+    # lanes. pendulum/eig/occupancy don't see those FAILs so leave it off.
+    gate_gpu_methods: bool = False
+    # lane used for the winner-validation holdout phase (submit_holdout.sh
+    # reads this when --lane is not passed explicitly). default "holdout" (cpu);
+    # gpu-only campaigns set "array_gpu" so holdout retrains at full budget on
+    # gpu instead of oom/crawl on cpu.
+    holdout_lane: str = "holdout"
     schema_version: str = "1.0"
 
     def target_for(self, method: str) -> int:
@@ -218,6 +228,13 @@ class StudyConfig:
             known = list(LANES.keys())
             raise ValueError(
                 f"lanes {offending} not in LANES registry; known lanes: {known}"
+            )
+
+        # validate holdout_lane exists in LANES registry
+        if self.holdout_lane not in LANES:
+            raise ValueError(
+                f"holdout_lane '{self.holdout_lane}' not in LANES registry; "
+                f"known lanes: {list(LANES.keys())}"
             )
 
         # validate slices

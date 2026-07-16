@@ -1,3 +1,20 @@
+"""step3: turn gathered step2 estimates into per-(kl, test_set) metrics.
+
+reads  {raw_results_dir}/new_pstar.h5   (est_ldrs_arr_<method>, (nrows, ntest, nsamp))
+       {data_dir}/dataset_newpstar.h5   (true_ldrs_arr, true_eldr_analytic_arr)
+writes {processed_results_dir}/new_pstar.h5
+
+the eldr error is the headline metric: |E_samples[est] - true_eldr|. its ground
+truth is the ANALYTIC population ELDR (closed form for gaussians, zero MC noise);
+the MC sample-mean version is kept alongside under an mc_ prefix for comparison.
+the two measure different things -- the MC truth shares p*'s sampling noise with
+est_eldr so it partly cancels (isolating the estimator's ratio-function bias),
+whereas the analytic truth is the honest gap of the sample-estimated expectation
+to the true population value.
+
+paths and sample counts come from the variant config (see variants.py).
+"""
+import argparse
 import os
 
 import h5py
@@ -5,162 +22,136 @@ from einops import reduce
 import numpy as np
 from scipy import stats
 
-from src.utils.io import _load_config
+from ex.synth.model_selection.dists import true_eldr_arr
+from ex.synth.model_selection.variants import resolve
 
 
-config = _load_config('ex/synth/model_selection/config.yaml')
-
-# directories
-DATA_DIR = config['data_dir']
-RAW_RESULTS_DIR = config['raw_results_dir']
-PROCESSED_RESULTS_DIR = config['processed_results_dir']
-# dataset parameters
-DATA_DIM = config['data_dim']
-KL_DISTANCES = config['kl_distances']
-NSAMPLES_TRAIN = config['nsamples_train']
-NSAMPLES_TEST = config['nsamples_test']
-NTEST_SETS = config['ntest_sets']
-NUM_INSTANCES_PER_KL = config['num_instances_per_kl']
-
-# raw_results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-# dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-# processed_results_filename = f'{PROCESSED_RESULTS_DIR}/metrics_d={DATA_DIM},ntrain={NSAMPLES_TRAIN},ntest={NSAMPLES_TEST},ntestsets={NTEST_SETS}.h5'
-
-dataset_filename = f'{DATA_DIR}/dataset_newpstar.h5'
-raw_results_filename = f'{RAW_RESULTS_DIR}/new_pstar.h5'
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/new_pstar.h5'
-
-with h5py.File(raw_results_filename, 'r') as f:
-    result_keys = [key for key in f.keys() if key.startswith('est_ldrs_arr_')]
-    est_ldrs_by_alg = {key.replace('est_ldrs_arr_', ''): f[key][:] for key in result_keys}
-
-with h5py.File(dataset_filename, 'r') as f:
-    true_ldrs_arr = f['true_ldrs_arr'][:]  # (nrows, NTEST_SETS, NSAMPLES_TEST)
-
-nrows = true_ldrs_arr.shape[0]
-
-
-def compute_spearman_correlation(est_ldrs, true_ldrs):
-    """Compute Spearman correlation for each (row, test_set) pair."""
-    # est_ldrs, true_ldrs: (nrows, NTEST_SETS, NSAMPLES_TEST)
-    result = np.zeros((nrows, NTEST_SETS))
+def spearman(est_ldrs, true_ldrs):
+    """rank correlation per (row, test_set) -> (nrows, ntest)."""
+    nrows, ntest = est_ldrs.shape[:2]
+    out = np.zeros((nrows, ntest))
     for i in range(nrows):
-        for j in range(NTEST_SETS):
-            corr, _ = stats.spearmanr(est_ldrs[i, j, :], true_ldrs[i, j, :])
-            result[i, j] = corr
-    return result
+        for j in range(ntest):
+            out[i, j] = stats.spearmanr(est_ldrs[i, j, :], true_ldrs[i, j, :])[0]
+    return out
 
 
-def compute_median_ae(est_ldrs, true_ldrs):
-    """Compute Median Absolute Error for each (row, test_set) pair."""
-    absolute_errors = np.abs(est_ldrs - true_ldrs)
-    return np.median(absolute_errors, axis=2)  # (nrows, NTEST_SETS)
+def median_ae(est_ldrs, true_ldrs):
+    """median |est - true| per (row, test_set) -> (nrows, ntest)."""
+    return np.median(np.abs(est_ldrs - true_ldrs), axis=2)
 
 
-def compute_trimmed_mae_iqr(est_ldrs, true_ldrs):
-    """Compute MAE only for points within the IQR of true LDRs."""
-    result = np.zeros((nrows, NTEST_SETS))
+def trimmed_mae_iqr(est_ldrs, true_ldrs):
+    """mae over points inside the iqr of the true ldrs -> (nrows, ntest)."""
+    nrows, ntest = est_ldrs.shape[:2]
+    out = np.zeros((nrows, ntest))
     for i in range(nrows):
-        for j in range(NTEST_SETS):
-            true_vals = true_ldrs[i, j, :]
-            est_vals = est_ldrs[i, j, :]
+        for j in range(ntest):
+            true_vals, est_vals = true_ldrs[i, j, :], est_ldrs[i, j, :]
             q1, q3 = np.percentile(true_vals, [25, 75])
             mask = (true_vals >= q1) & (true_vals <= q3)
-            if mask.sum() > 0:
-                result[i, j] = np.mean(np.abs(est_vals[mask] - true_vals[mask]))
-            else:
-                result[i, j] = np.nan
-    return result
+            out[i, j] = (np.mean(np.abs(est_vals[mask] - true_vals[mask]))
+                         if mask.sum() else np.nan)
+    return out
 
 
-def compute_stratified_mae_quartiles(est_ldrs, true_ldrs):
-    """Compute MAE stratified by quartiles of true LDR.
-
-    Returns: dict with keys 'q1', 'q2', 'q3', 'q4', each (nrows, NTEST_SETS)
-    """
-    quartile_maes = {f'q{q}': np.zeros((nrows, NTEST_SETS)) for q in range(1, 5)}
+def stratified_mae_quartiles(est_ldrs, true_ldrs):
+    """mae stratified by quartile of the true ldr -> {q1..q4: (nrows, ntest)}."""
+    nrows, ntest = est_ldrs.shape[:2]
+    out = {f'q{q}': np.zeros((nrows, ntest)) for q in range(1, 5)}
     for i in range(nrows):
-        for j in range(NTEST_SETS):
-            true_vals = true_ldrs[i, j, :]
-            est_vals = est_ldrs[i, j, :]
-            percentiles = np.percentile(true_vals, [25, 50, 75])
-            # Q1: 0-25th percentile
-            mask_q1 = true_vals <= percentiles[0]
-            # Q2: 25-50th percentile
-            mask_q2 = (true_vals > percentiles[0]) & (true_vals <= percentiles[1])
-            # Q3: 50-75th percentile
-            mask_q3 = (true_vals > percentiles[1]) & (true_vals <= percentiles[2])
-            # Q4: 75-100th percentile
-            mask_q4 = true_vals > percentiles[2]
-
-            for q, mask in enumerate([mask_q1, mask_q2, mask_q3, mask_q4], 1):
-                if mask.sum() > 0:
-                    quartile_maes[f'q{q}'][i, j] = np.mean(np.abs(est_vals[mask] - true_vals[mask]))
-                else:
-                    quartile_maes[f'q{q}'][i, j] = np.nan
-    return quartile_maes
+        for j in range(ntest):
+            true_vals, est_vals = true_ldrs[i, j, :], est_ldrs[i, j, :]
+            p25, p50, p75 = np.percentile(true_vals, [25, 50, 75])
+            masks = [true_vals <= p25,
+                     (true_vals > p25) & (true_vals <= p50),
+                     (true_vals > p50) & (true_vals <= p75),
+                     true_vals > p75]
+            for q, mask in enumerate(masks, 1):
+                out[f'q{q}'][i, j] = (np.mean(np.abs(est_vals[mask] - true_vals[mask]))
+                                      if mask.sum() else np.nan)
+    return out
 
 
-# Compute all metrics for each algorithm
-maes_by_kl = {}
-median_aes_by_kl = {}
-spearman_by_kl = {}
-trimmed_mae_iqr_by_kl = {}
-stratified_mae_by_kl = {}  # nested: {alg: {q1: ..., q2: ..., q3: ..., q4: ...}}
+def eldr_err_stats(est_by_alg, true_eldr, n_kl, n_inst, ntest):
+    """|mean_samples(est) - true_eldr|, aggregated to per-(kl, test) mean +/- se."""
+    means, ses = {}, {}
+    for alg, est in est_by_alg.items():
+        err = np.abs(est.mean(axis=2) - true_eldr).reshape(n_kl, n_inst, ntest)
+        means[alg] = err.mean(axis=1)
+        ses[alg] = err.std(axis=1, ddof=1) / np.sqrt(n_inst)
+    return means, ses
 
-for alg_name, est_ldrs_arr in est_ldrs_by_alg.items():
-    # MAE (original)
-    absolute_errors = np.abs(est_ldrs_arr - true_ldrs_arr)
-    maes = reduce(absolute_errors, 'n t d -> n t', 'mean')
-    maes_by_kl[alg_name] = maes.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
 
-    # Median AE
-    median_aes = compute_median_ae(est_ldrs_arr, true_ldrs_arr)
-    median_aes_by_kl[alg_name] = median_aes.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+def main(variant=None):
+    tag, config = resolve(variant)
+    data_dir = config['data_dir']
+    raw_dir = config['raw_results_dir']
+    proc_dir = config['processed_results_dir']
+    kl_distances = config['kl_distances']
+    n_inst = config['num_instances_per_kl']
+    ntest = config['ntest_sets']
+    n_kl = len(kl_distances)
 
-    # Spearman correlation
-    spearman = compute_spearman_correlation(est_ldrs_arr, true_ldrs_arr)
-    spearman_by_kl[alg_name] = spearman.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+    with h5py.File(f'{raw_dir}/new_pstar.h5', 'r') as f:
+        est_by_alg = {k.replace('est_ldrs_arr_', ''): f[k][:]
+                      for k in f.keys() if k.startswith('est_ldrs_arr_')}
 
-    # Trimmed MAE within IQR
-    trimmed_mae = compute_trimmed_mae_iqr(est_ldrs_arr, true_ldrs_arr)
-    trimmed_mae_iqr_by_kl[alg_name] = trimmed_mae.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
+    with h5py.File(f'{data_dir}/dataset_newpstar.h5', 'r') as f:
+        true_ldrs = f['true_ldrs_arr'][:]  # (nrows, ntest, nsamp)
+        # analytic (population) eldr: prefer the stored field, else rebuild from
+        # the gaussian params (datasets generated before the field was added).
+        if 'true_eldr_analytic_arr' in f:
+            true_eldr_analytic = f['true_eldr_analytic_arr'][:]
+        else:
+            true_eldr_analytic = true_eldr_arr(
+                f['mu0_arr'][:], f['Sigma0_arr'][:],
+                f['mu1_arr'][:], f['Sigma1_arr'][:]).astype(np.float32)
 
-    # Stratified MAE by quartiles
-    strat_maes = compute_stratified_mae_quartiles(est_ldrs_arr, true_ldrs_arr)
-    stratified_mae_by_kl[alg_name] = {
-        q: arr.reshape(len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
-        for q, arr in strat_maes.items()
-    }
+    maes, med_aes, spear, trim, strat = {}, {}, {}, {}, {}
+    for alg, est in est_by_alg.items():
+        shape = (n_kl, n_inst, ntest)
+        maes[alg] = reduce(np.abs(est - true_ldrs), 'n t d -> n t', 'mean').reshape(shape)
+        med_aes[alg] = median_ae(est, true_ldrs).reshape(shape)
+        spear[alg] = spearman(est, true_ldrs).reshape(shape)
+        trim[alg] = trimmed_mae_iqr(est, true_ldrs).reshape(shape)
+        strat[alg] = {q: a.reshape(shape)
+                      for q, a in stratified_mae_quartiles(est, true_ldrs).items()}
 
-# eldr error: |E_samples[est] - E_samples[true]| per (row, test), aggregated to
-# per-(kl, test) mean +/- se over the NUM_INSTANCES_PER_KL instances. distinct
-# from maes_by_kl (pointwise mean|est-true|): this is the error of the integrated
-# log-ratio, allowing per-sample errors to cancel.
-eldr_err_mean_by_alg = {}
-eldr_err_se_by_alg = {}
-true_eldr = true_ldrs_arr.mean(axis=2)  # (nrows, NTEST_SETS)
-for alg_name, est_ldrs_arr in est_ldrs_by_alg.items():
-    est_eldr = est_ldrs_arr.mean(axis=2)  # (nrows, NTEST_SETS)
-    err = np.abs(est_eldr - true_eldr).reshape(
-        len(KL_DISTANCES), NUM_INSTANCES_PER_KL, NTEST_SETS)
-    eldr_err_mean_by_alg[alg_name] = err.mean(axis=1)                       # (n_kl, NTEST)
-    eldr_err_se_by_alg[alg_name] = err.std(axis=1, ddof=1) / np.sqrt(NUM_INSTANCES_PER_KL)
+    true_eldr_mc = true_ldrs.mean(axis=2)  # (nrows, ntest)
+    eldr_mean, eldr_se = eldr_err_stats(est_by_alg, true_eldr_analytic, n_kl, n_inst, ntest)
+    mc_mean, mc_se = eldr_err_stats(est_by_alg, true_eldr_mc, n_kl, n_inst, ntest)
 
-# save results
-os.makedirs(PROCESSED_RESULTS_DIR, exist_ok=True)
-with h5py.File(processed_results_filename, 'w') as f:
-    for alg_name, maes_arr in maes_by_kl.items():
-        f.create_dataset(f'maes_by_kl_{alg_name}', data=maes_arr)
-    for alg_name, median_aes_arr in median_aes_by_kl.items():
-        f.create_dataset(f'median_aes_by_kl_{alg_name}', data=median_aes_arr)
-    for alg_name, spearman_arr in spearman_by_kl.items():
-        f.create_dataset(f'spearman_by_kl_{alg_name}', data=spearman_arr)
-    for alg_name, trimmed_mae_arr in trimmed_mae_iqr_by_kl.items():
-        f.create_dataset(f'trimmed_mae_iqr_by_kl_{alg_name}', data=trimmed_mae_arr)
-    for alg_name, strat_dict in stratified_mae_by_kl.items():
-        for quartile, arr in strat_dict.items():
-            f.create_dataset(f'stratified_mae_{quartile}_by_kl_{alg_name}', data=arr)
-    for alg_name in eldr_err_mean_by_alg:
-        f.create_dataset(f'eldr_err_{alg_name}_mean', data=eldr_err_mean_by_alg[alg_name])
-        f.create_dataset(f'eldr_err_{alg_name}_se', data=eldr_err_se_by_alg[alg_name])
+    os.makedirs(proc_dir, exist_ok=True)
+    with h5py.File(f'{proc_dir}/new_pstar.h5', 'w') as f:
+        for alg in est_by_alg:
+            f.create_dataset(f'maes_by_kl_{alg}', data=maes[alg])
+            f.create_dataset(f'median_aes_by_kl_{alg}', data=med_aes[alg])
+            f.create_dataset(f'spearman_by_kl_{alg}', data=spear[alg])
+            f.create_dataset(f'trimmed_mae_iqr_by_kl_{alg}', data=trim[alg])
+            for q, arr in strat[alg].items():
+                f.create_dataset(f'stratified_mae_{q}_by_kl_{alg}', data=arr)
+            # primary metric (step4 plots these): eldr_err_* vs the ANALYTIC truth.
+            f.create_dataset(f'eldr_err_{alg}_mean', data=eldr_mean[alg])
+            f.create_dataset(f'eldr_err_{alg}_se', data=eldr_se[alg])
+            # comparison copy vs the MC sample-mean truth; the mc_ prefix keeps it
+            # out of step4's 'eldr_err_*_mean' method discovery.
+            f.create_dataset(f'mc_eldr_err_{alg}_mean', data=mc_mean[alg])
+            f.create_dataset(f'mc_eldr_err_{alg}_se', data=mc_se[alg])
+
+    nsamp = config['nsamples_test']
+    print('=' * 72)
+    print(f'[{tag}] ELDR-error ground truth: ANALYTIC (population) vs MC ({nsamp}-sample mean)')
+    print(f'{"method":26s} {"analytic":>10s} {"mc":>10s} {"delta":>10s}')
+    for alg in sorted(eldr_mean):
+        a, m = float(eldr_mean[alg].mean()), float(mc_mean[alg].mean())
+        print(f'{alg:26s} {a:10.4f} {m:10.4f} {a - m:+10.4f}')
+    print('=' * 72)
+    print(f'wrote {proc_dir}/new_pstar.h5  ({len(est_by_alg)} methods)')
+
+
+if __name__ == '__main__':
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--variant', default=None,
+                   help='variant tag; precedence --variant > $DPE_MS_VARIANT > default')
+    main(p.parse_args().variant)

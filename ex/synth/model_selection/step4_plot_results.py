@@ -14,15 +14,17 @@ import numpy as np
 
 from src.utils.io import _load_config
 from ex.utils.faceted_lines import plot_panels, plot_legend
+from ex.synth.model_selection.variants import resolve
 
 
 TEST_SET_TITLES = [r'$p_* = p_0$', r'$p_* = p_1$', r'$p_* = q_0$', r'$p_* = q_1$']
 
 
-def main():
-    config = _load_config('ex/synth/model_selection/config.yaml')
+def main(variant: str | None = None):
+    tag, config = resolve(variant)
     processed_dir = config['processed_results_dir']
     figures_dir = config['figures_dir']
+    os.makedirs(figures_dir, exist_ok=True)
     kl_distances = np.array(config['kl_distances'], dtype=float)
     n_test = config['ntest_sets']
 
@@ -56,4 +58,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description='Step 4: Plot ELDR estimation results.')
+    parser.add_argument('--variant', type=str, required=True,
+                        help='Variant tag (precedence: --variant > $DPE_MS_VARIANT > DEFAULT_TAG)')
+    args = parser.parse_args()
+    main(args.variant)
