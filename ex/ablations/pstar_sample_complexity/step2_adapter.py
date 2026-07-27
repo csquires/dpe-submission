@@ -3,9 +3,8 @@
 cell axis: flat int over (instance_idx, pstar_idx). 20 instances x N pstar values.
 bucket axis: f"pstar_idx_{pstar_idx}".
 
-note: in 200broad analysis, pstar_sample_complexity has only triangular methods
-(no non-triangular HPO data) — there is no winners.<this exp>.uniform_200broad.yaml
-in scratch/200broad/winners_pinned/. to run this experiment via step2_runner you
+note: pstar_sample_complexity has HPO data for triangular methods only, so no
+stock winners yaml covers it. to run this experiment via step2_runner you
 must pass --winners pointing at a winners.yaml that has at least one method with
 a hyperparams entry. legacy schema-B winners.json files (used by the original
 step2) are also supported by load_winners.
