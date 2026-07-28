@@ -1,0 +1,198 @@
+methods:
+  BDRE:
+    hyperparams:
+      n_steps: 6400
+      learning_rate: 0.00016125928125769408
+      latent_dim: 64
+      batch_size: 128
+      weight_decay: 0.0
+      n_hidden_layers: 5
+    score:
+      best_value_median: 0.6477493643760681
+      winner_trial_number: 5222
+      best_step: -1
+      source: hpo_holdout_global
+  BDRE_NWJ:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.0001047583921654813
+      latent_dim: 64
+      batch_size: 128
+      weight_decay: 0.0001
+      n_hidden_layers: 5
+    score:
+      best_value_median: 1.374453365802765
+      winner_trial_number: 5796
+      best_step: -1
+      source: hpo_holdout_global
+  BDRE_DV:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.00010255391634549841
+      latent_dim: 64
+      batch_size: 64
+      weight_decay: 0.001
+      n_hidden_layers: 5
+    score:
+      best_value_median: 1.5764675736427307
+      winner_trial_number: 6225
+      best_step: -1
+      source: hpo_holdout_global
+  MultiHeadTDRE:
+    hyperparams:
+      n_steps: 6400
+      learning_rate: 0.00012412800431390436
+      hidden_dim: 64
+      head_dim: 10
+      num_shared_layers: 1
+      num_waypoints: 5
+      batch_size: 64
+      weight_decay: 0.0
+      n_hidden_layers: 5
+    score:
+      best_value_median: 0.6422534883022308
+      winner_trial_number: 5229
+      best_step: -1
+      source: hpo_holdout_global
+  MHT_NWJ:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.00010382901275850413
+      latent_dim: 64
+      num_waypoints: 5
+      batch_size: 64
+      weight_decay: 0.001
+      n_hidden_layers: 5
+    score:
+      best_value_median: 0.8111108839511871
+      winner_trial_number: 6951
+      best_step: -1
+      source: hpo_holdout_global
+  MHT_DV:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.002652945670395978
+      latent_dim: 64
+      num_waypoints: 5
+      batch_size: 64
+      weight_decay: 1.0e-05
+      n_hidden_layers: 5
+    score:
+      best_value_median: 3.2597113251686096
+      winner_trial_number: 4599
+      best_step: -1
+      source: hpo_holdout_global
+  CTSM:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.003887409018702643
+      batch_size: 256
+      sched: bridge
+      inner_eps: 0.0
+      time_dist: stiff_20
+      gamma_min: 0.010986645484347895
+      apply_iw: false
+      sigma: 0.8968439110023885
+      eps: 0.004471248041242535
+      integration_steps: 400
+      test_eps: 0.023090548025515134
+      hidden_dim: 32
+      activation: silu
+      reweight: false
+      ema_decay: 0.999
+      grad_clip_norm: 5.0
+      weight_decay: 1.0e-05
+      cosine_min_factor: 0.0
+      test_sched: bridge
+      test_sigma: 0.8968439110023885
+      test_inner_eps: 0.0
+      test_gamma_min: 0.010986645484347895
+      n_hidden_layers: 5
+    score:
+      best_value_median: 0.41509559750556946
+      winner_trial_number: 5229
+      best_step: -1
+      source: hpo_holdout_global
+  TSM:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.0007546829838277505
+      batch_size: 512
+      time_dist: stiff_inv_40
+      apply_iw: true
+      eps: 0.0003383939065697328
+      integration_steps: 2600
+      hidden_dim: 64
+      activation: silu
+      reweight: false
+      ema_decay: null
+      grad_clip_norm: null
+      weight_decay: 0.001
+      cosine_min_factor: 0.0
+      n_hidden_layers: 5
+    score:
+      best_value_median: 0.5180903375148773
+      winner_trial_number: 5173
+      best_step: -1
+      source: hpo_holdout_global
+  VFM:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.00016609065117885333
+      batch_size: 512
+      sched: bridge
+      inner_eps: 0.0
+      precond: false
+      div_method: exact
+      div_noise: rademacher
+      n_hutch_samples: 4
+      activation: silu
+      gamma_min: 0.0
+      reweight: false
+      eps: 0.0008164716513929279
+      integration_steps: 2600
+      ema_decay: 0.999
+      grad_clip_norm: 1.0
+      sigma: 1.5545112473949148
+      test_eps: 0.0015992984364059258
+      hidden_dim: 512
+      weight_decay: 0.001
+      time_dist: stiff_inv_40
+      layernorm: 'off'
+      antithetic: true
+      cosine_min_factor: 0.0
+      apply_iw: true
+      test_sched: bridge
+      test_sigma: 1.5545112473949148
+      test_inner_eps: 0.0
+      test_gamma_min: 0.0
+      n_hidden_layers: 5
+    score:
+      best_value_median: 0.5430081188678741
+      winner_trial_number: 749
+      best_step: -1
+      source: hpo_holdout_global
+  FMDRE:
+    hyperparams:
+      n_steps: 6400
+      lr: 0.0001959435263775136
+      batch_size: 256
+      precond: false
+      time_dist: stiff_20
+      reweight: true
+      apply_iw: true
+      eps: 0.02958468655481206
+      integration_steps: 2600
+      hidden_dim: 256
+      n_shared_layers: 4
+      score_weight: 0.06842123644324458
+      ema_decay: 0.9999
+      grad_clip_norm: 1.0
+      weight_decay: 0.0001
+      cosine_min_factor: 0.0
+      n_hidden_layers: 5
+    score:
+      best_value_median: 0.31837767362594604
+      winner_trial_number: 938
+      best_step: -1
+      source: hpo_holdout_global
