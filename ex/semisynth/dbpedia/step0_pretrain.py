@@ -304,15 +304,19 @@ def mode_log_p_y(config: dict, device: str, force: bool) -> None:
         pstar_codes = torch.load(pstar_cache, map_location="cpu", weights_only=False)
     else:
         ds = get_dbpedia_dataset("train", cache_dir=config["hf_cache_dir"])
-        balanced = np.ones(14) / 14.0
-        idx = subsample_dbpedia(
-            ds,
-            balanced,
-            K=14,
-            min_per_class=config["num_samples"] // 14,
-            seed=config["seed"],
-        )
-        texts = [ds[int(i)]["content"] for i in idx[: config["num_samples"]]]
+        # class-balanced pstar: draw num_samples//14 per class directly. the
+        # legacy front-slice of subsample_dbpedia's class-ordered output yields
+        # a single-class pstar whenever num_samples < the per-class count.
+        per_class = config["num_samples"] // 14
+        rem = config["num_samples"] % 14
+        labels = np.asarray(ds["label"])
+        rng = np.random.default_rng(config["seed"])
+        idx = []
+        for c in range(14):
+            n_c = per_class + (1 if c < rem else 0)
+            c_idx = np.where(labels == c)[0]
+            idx.extend(rng.choice(c_idx, size=n_c, replace=False).tolist())
+        texts = [ds[int(i)]["content"] for i in idx]
         emb = encode_corpus(
             texts,
             model_name=config["sbert_model"],
