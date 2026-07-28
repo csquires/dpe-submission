@@ -47,7 +47,7 @@ def _resolve(members: list[str], present) -> list[str]:
 
 
 def plot_group_row(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix,
-                   xscale="linear", yscale="linear",
+                   xscale="linear", yscale="linear", linthresh=None,
                    ylim=None, panel_w=5.2, panel_h=4.2) -> list[str]:
     """one figure: len(METHOD_GROUPS) shared-y panels, methods split by group.
 
@@ -58,6 +58,8 @@ def plot_group_row(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix,
       x: 1D array (length L).
       mean, lo, hi: dict method -> array (L,); lo/hi are the band edges.
       xlabel/ylabel/out_dir/prefix/xscale/yscale: as named.
+      linthresh: symlog linear/log crossover (only used when yscale="symlog";
+                 values below it are linear so exact 0 renders; default 1e-3).
       ylim: optional (lo, hi) shared y-range; computed from the data if None.
 
     a method with no finite mean is skipped; a group with no methods is dropped.
@@ -84,6 +86,9 @@ def plot_group_row(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix,
             y_lo = max(y_lo, 1e-4)
             # extra headroom on log axes gives the in-panel legend clean space.
             ylim = (y_lo * 0.8, y_hi * 4.5)
+        elif yscale == "symlog":
+            # 0 at the bottom (linear region); headroom above the pack for the legend.
+            ylim = (0.0, y_hi * 3.0)
         else:
             ylim = (min(0.0, y_lo), y_hi * 1.08)
 
@@ -104,7 +109,10 @@ def plot_group_row(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix,
                             alpha=ERROR_BAND_ALPHA, linewidth=0)
             drawn.append(m)
         ax.set_xscale(xscale)
-        ax.set_yscale(yscale)
+        if yscale == "symlog":
+            ax.set_yscale("symlog", linthresh=(linthresh or 1e-3), linscale=0.5)
+        else:
+            ax.set_yscale(yscale)
         ax.set_xlabel(xlabel)
         ax.set_ylim(*ylim)
         ax.grid(True, alpha=0.3)

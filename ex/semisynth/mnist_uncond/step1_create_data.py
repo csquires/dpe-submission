@@ -65,24 +65,39 @@ def compute_log_jacobian(vae_pair, vae_global, z_global, device, chunk_size=500)
 
 
 def load_pstar_images(config, device):
-    """load balanced MNIST images for p* distribution.
+    """load balanced MNIST images for p* distribution (train + held-out test).
 
-    returns [N, 1, 28, 28] tensor of balanced MNIST samples.
+    draws balanced_indices with sufficient samples to support both train and test.
+    returns (train_images, test_images): two [N, 1, 28, 28] tensors.
+    train_images: indices [0:num_samples]
+    test_images: indices [num_samples:num_samples+num_samples_test] (disjoint)
     """
     mnist_dataset = get_mnist_dataset(root='./data', train=True, download=True)
     balanced_weights = np.ones(10) / 10.0
+    min_per_class = (config['num_samples'] + config['num_samples_test']) // 10
     balanced_indices = subsample_mnist(
         mnist_dataset, balanced_weights,
-        min_per_class=config['num_samples'] // 10
+        min_per_class=min_per_class
     )
-    pstar_images_list = []
+
+    # train set
+    train_images_list = []
     for idx in balanced_indices[:config['num_samples']]:
         img, _ = mnist_dataset[idx]
-        pstar_images_list.append(img)
-    return torch.stack(pstar_images_list, dim=0)  # [N, 1, 28, 28]
+        train_images_list.append(img)
+    train_images = torch.stack(train_images_list, dim=0)  # [N_train, 1, 28, 28]
+
+    # held-out test set (disjoint)
+    test_images_list = []
+    for idx in balanced_indices[config['num_samples']:config['num_samples'] + config['num_samples_test']]:
+        img, _ = mnist_dataset[idx]
+        test_images_list.append(img)
+    test_images = torch.stack(test_images_list, dim=0)  # [N_test, 1, 28, 28]
+
+    return train_images, test_images
 
 
-def process_pair(config, alpha_idx, pair_idx, pstar_images, device, device_str, force=False):
+def process_pair(config, alpha_idx, pair_idx, pstar_images, test_images, device, device_str, force=False):
     """generate data for a single (alpha_idx, pair_idx).
 
     loads pretrained models, generates samples, computes ground-truth LDRs,
@@ -189,12 +204,49 @@ def process_pair(config, alpha_idx, pair_idx, pstar_images, device, device_str, 
     log_jac_1 = compute_log_jacobian(vae_1, vae_global, pstar_latent, device)
     true_ldrs = (log_p0 + log_jac_0) - (log_p1 + log_jac_1)  # [N,]
 
+    # compute test set ground-truth LDRs (same pipeline, disjoint data)
+    with torch.no_grad():
+        # encode test p* through vae_global
+        test_pstar_latent_list = []
+        for i in range(0, test_images.shape[0], batch_enc):
+            batch = test_images[i:i+batch_enc].to(device)
+            mu, _ = vae_global.encode(batch)
+            test_pstar_latent_list.append(mu.cpu())
+        test_pstar_latent = torch.cat(test_pstar_latent_list, dim=0)  # [N_test, 14]
+
+        # encode test p* through both per-pair VAEs
+        test_z_in_0_list, test_z_in_1_list = [], []
+        for i in range(0, test_images.shape[0], batch_enc):
+            batch = test_images[i:i+batch_enc].to(device)
+            mu_0, _ = vae_0.encode(batch)
+            mu_1, _ = vae_1.encode(batch)
+            test_z_in_0_list.append(mu_0.cpu())
+            test_z_in_1_list.append(mu_1.cpu())
+        test_z_in_0 = torch.cat(test_z_in_0_list, dim=0)  # [N_test, 14]
+        test_z_in_1 = torch.cat(test_z_in_1_list, dim=0)  # [N_test, 14]
+
+        # evaluate flow log-probs on test set
+        test_log_p0_list, test_log_p1_list = [], []
+        for i in range(0, test_z_in_0.shape[0], batch_lp):
+            z0_b = test_z_in_0[i:i+batch_lp].to(device)
+            z1_b = test_z_in_1[i:i+batch_lp].to(device)
+            test_log_p0_list.append(log_prob(flow_0, z0_b, steps=config['log_prob_steps'], device=device_str).cpu())
+            test_log_p1_list.append(log_prob(flow_1, z1_b, steps=config['log_prob_steps'], device=device_str).cpu())
+        test_log_p0 = torch.cat(test_log_p0_list, dim=0)
+        test_log_p1 = torch.cat(test_log_p1_list, dim=0)
+
+    # jacobian corrections for test set
+    test_log_jac_0 = compute_log_jacobian(vae_0, vae_global, test_pstar_latent, device)
+    test_log_jac_1 = compute_log_jacobian(vae_1, vae_global, test_pstar_latent, device)
+    test_true_ldrs = (test_log_p0 + test_log_jac_0) - (test_log_p1 + test_log_jac_1)  # [N_test,]
+
     # save to HDF5
     with h5py.File(output_path, 'w') as f:
         f.create_dataset('pstar_samples', data=pstar_latent.numpy(), dtype=np.float32)
         f.create_dataset('p0_samples', data=p0_latent.numpy(), dtype=np.float32)
         f.create_dataset('p1_samples', data=p1_latent.numpy(), dtype=np.float32)
         f.create_dataset('true_ldrs', data=true_ldrs.numpy(), dtype=np.float32)
+        f.create_dataset('samples_test_true_ldrs', data=test_true_ldrs.numpy(), dtype=np.float32)
         f.create_dataset('w0', data=weights['w0'].cpu().numpy(), dtype=np.float32)
         f.create_dataset('w1', data=weights['w1'].cpu().numpy(), dtype=np.float32)
         kl_val = weight_kl(weights['w0'].cpu().numpy(), weights['w1'].cpu().numpy())
@@ -223,13 +275,13 @@ if __name__ == '__main__':
     np.random.seed(config['seed'])
     torch.manual_seed(config['seed'])
 
-    print("loading balanced MNIST...")
-    pstar_images = load_pstar_images(config, device)
+    print("loading balanced MNIST (train + held-out test)...")
+    pstar_images, test_images = load_pstar_images(config, device)
 
     # dispatch: single pair or all pairs
     if args.alpha_idx is not None and args.pair_idx is not None:
-        process_pair(config, args.alpha_idx, args.pair_idx, pstar_images, device, device_str, args.force)
+        process_pair(config, args.alpha_idx, args.pair_idx, pstar_images, test_images, device, device_str, args.force)
     else:
         for alpha_idx in tqdm(range(len(config['alphas'])), desc="alpha"):
             for pair_idx in tqdm(range(config['num_pairs_per_alpha']), desc="pair", leave=False):
-                process_pair(config, alpha_idx, pair_idx, pstar_images, device, device_str, args.force)
+                process_pair(config, alpha_idx, pair_idx, pstar_images, test_images, device, device_str, args.force)

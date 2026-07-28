@@ -18,20 +18,34 @@ from __future__ import annotations
 import torch
 
 
-def joint_and_shuffled(theta: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def joint_and_shuffled(
+    theta: torch.Tensor,
+    y: torch.Tensor,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """concatenate (theta, y) along feature axis to form p0; independently
     permute rows of theta and y to form p1 (product of marginals).
+
+    when generator is provided, permutations are drawn from it (seeded, reproducible
+    across processes/gpus). when None, uses the global rng (current default behavior).
 
     args:
         theta: shape (N, D)
         y:     shape (N, K)
+        generator: torch.Generator or None; if provided, enables reproducible shuffling.
     returns:
         (p0, p1) each of shape (N, D + K).
     """
     n = theta.shape[0]
     p0 = torch.cat([theta, y], dim=1)
-    perm_t = torch.randperm(n, device=theta.device)
-    perm_y = torch.randperm(n, device=theta.device)
+    if generator is None:
+        perm_t = torch.randperm(n, device=theta.device)
+        perm_y = torch.randperm(n, device=theta.device)
+    else:
+        # randperm with generator runs on the generator's device (cpu);
+        # move indices to theta.device for indexing (no-op if theta is cpu).
+        perm_t = torch.randperm(n, generator=generator).to(theta.device)
+        perm_y = torch.randperm(n, generator=generator).to(theta.device)
     p1 = torch.cat([theta[perm_t], y[perm_y]], dim=1)
     return p0, p1
 
