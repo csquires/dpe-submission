@@ -14,6 +14,7 @@ from ex.utils.hpo.adapters.eig import EIGAdapter
 from ex.utils.hpo.adapters.elbo import ELBOAdapter
 from ex.utils.hpo.adapters.occupancy import OccupancyAdapter
 from ex.utils.hpo.adapters.dre_sample_complexity import DreSampleComplexityAdapter
+from ex.utils.hpo.adapters.dokls import DoklsAdapter
 
 
 
@@ -73,7 +74,22 @@ def get_adapter(name: str) -> ExperimentAdapter:
                 f"valid tags: {valid_tags}"
             ) from None
 
-    # neither registry hit nor model_selection_* pattern
+    if name.startswith("dokls_"):
+        # lazy import to avoid circular dependency at module load time.
+        # experiment is dokls_{route}_{tag}; adapter is keyed by (pstar_idx, N, route).
+        from ex.ablations.dokls import variants as dokls_variants
+        try:
+            route, tag = dokls_variants.tag_from_experiment(name)
+            pstar_idx, N, nstar = dokls_variants.VARIANTS[tag]
+            return DoklsAdapter(pstar_idx, N, nstar=nstar, route=route)
+        except KeyError:
+            valid_tags = ", ".join(sorted(dokls_variants.VARIANTS.keys()))
+            raise KeyError(
+                f"unknown dokls variant: {name!r}; valid tags: {valid_tags}; "
+                f"routes: {dokls_variants.ROUTES}"
+            ) from None
+
+    # neither registry hit nor model_selection_* / dokls_* pattern
     known = sorted(_ADAPTERS)
     raise KeyError(f"unknown experiment: {name!r}; known: {known}")
 

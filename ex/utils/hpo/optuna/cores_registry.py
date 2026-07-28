@@ -31,6 +31,11 @@ CORES_REGISTRY: dict[str, int] = {
     "TriangularVFM_V1": 4,
     "TriangularVFM_V2": 4,
     "TriangularVFM_V3": 4,
+    # dokls ablation cls loss variants (cpu; not in NEEDS_GPU)
+    "BDRE_NWJ": 2,
+    "BDRE_DV": 2,
+    "MHT_NWJ": 4,
+    "MHT_DV": 4,
 }
 
 
