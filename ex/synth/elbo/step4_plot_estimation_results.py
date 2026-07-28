@@ -45,11 +45,14 @@ def shared_ylim(lo, hi, yscale):
     y_lo, y_hi = min(los), max(his)
     if yscale == "log":
         return (max(y_lo, 1e-4) * 0.8, y_hi * 1.25)
+    if yscale == "symlog":
+        # 0 at the bottom (linear region), headroom above the pack for the legend
+        return (0.0, y_hi * 3.0)
     return (min(0.0, y_lo), y_hi * 1.08)
 
 
 def plot_metric(deps, alphas, mean, lo, hi, *, ylabel, prefix, yscale,
-                cell_fn, table_title, figures_dir):
+                cell_fn, table_title, figures_dir, linthresh=None):
     """per-alpha group-row figures + one table file with a section per alpha."""
     ylim = shared_ylim(lo, hi, yscale)
     sections = []
@@ -63,7 +66,7 @@ def plot_metric(deps, alphas, mean, lo, hi, *, ylabel, prefix, yscale,
             {m: col(hi, m) for m in mean},
             xlabel=r"$\beta$ (Design EIG %)", ylabel=ylabel,
             out_dir=figures_dir, prefix=f"{prefix}_{tag}",
-            yscale=yscale, ylim=ylim,
+            yscale=yscale, ylim=ylim, linthresh=linthresh,
         )
         if drawn:
             header = ["Method"] + [f"beta={d:g}" for d in deps]
@@ -108,7 +111,7 @@ def main():
         plot_metric(
             deps, alphas, reg, reg_lo, reg_hi,
             ylabel="Rel. ELDR regret (MoM, IQR band)", prefix="elbo_regret_mom",
-            yscale="linear",
+            yscale="symlog", linthresh=1e-3,
             cell_fn=lambda m, di, ai: fmt_iqr(reg[m][di, ai], reg_lo[m][di, ai], reg_hi[m][di, ai]),
             table_title="ELDR regret MoM [bootstrap IQR]", figures_dir=figures_dir,
         )

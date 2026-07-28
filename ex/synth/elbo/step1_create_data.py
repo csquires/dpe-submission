@@ -22,7 +22,8 @@ NUM_PRIORS = config['num_priors']
 NUM_DESIGNS_PER_SETTING = config['num_designs_per_setting']
 DESIGN_EIG_PERCENTAGES = config['design_eig_percentages']
 ALPHAS = config['alphas']
-NSAMPLES = config['nsamples']
+N_P0P1 = config['n_p0p1']
+N_PSTAR = config['n_pstar']
 N_ALPHAS = len(ALPHAS)
 # random seed
 SEED = config['seed']
@@ -42,12 +43,12 @@ Sigma_q_arr = np.zeros((nrows, DATA_DIM, DATA_DIM), dtype=np.float32)
 design_arr = np.zeros((nrows, DATA_DIM, 1), dtype=np.float32)
 obs_y_arr = np.zeros((nrows, 1), dtype=np.float32)
 # data
-theta0_samples_arr = np.zeros((nrows, NSAMPLES, DATA_DIM), dtype=np.float32)
-y0_samples_arr = np.zeros((nrows, NSAMPLES, 1), dtype=np.float32)
-theta1_samples_arr = np.zeros((nrows, NSAMPLES, DATA_DIM), dtype=np.float32)
-y1_samples_arr = np.zeros((nrows, NSAMPLES, 1), dtype=np.float32)
-theta_star_samples_arr = np.zeros((nrows, NSAMPLES, DATA_DIM), dtype=np.float32)
-y_star_samples_arr = np.zeros((nrows, NSAMPLES, 1), dtype=np.float32)
+theta0_samples_arr = np.zeros((nrows, N_P0P1, DATA_DIM), dtype=np.float32)
+y0_samples_arr = np.zeros((nrows, N_P0P1, 1), dtype=np.float32)
+theta1_samples_arr = np.zeros((nrows, N_P0P1, DATA_DIM), dtype=np.float32)
+y1_samples_arr = np.zeros((nrows, N_P0P1, 1), dtype=np.float32)
+theta_star_samples_arr = np.zeros((nrows, N_PSTAR, DATA_DIM), dtype=np.float32)
+y_star_samples_arr = np.zeros((nrows, N_PSTAR, 1), dtype=np.float32)
 
 
 def sample_uniform_over_sphere(dim: int) -> torch.Tensor:
@@ -70,10 +71,10 @@ for _ in trange(NUM_PRIORS):
             obs_y = MultivariateNormal(obs_xi.T @ theta_star, covariance_matrix=torch.eye(1)).sample((1,))
 
             # alpha-independent draws: prior-induced joint and prior-predictive marginal
-            theta0_samples = prior_mvn.sample((NSAMPLES,))
-            y0_samples = theta0_samples @ obs_xi + torch.randn(NSAMPLES, 1)
-            hidden_theta1_samples = prior_mvn.sample((NSAMPLES,))
-            y1_samples = hidden_theta1_samples @ obs_xi + torch.randn(NSAMPLES, 1)
+            theta0_samples = prior_mvn.sample((N_P0P1,))
+            y0_samples = theta0_samples @ obs_xi + torch.randn(N_P0P1, 1)
+            hidden_theta1_samples = prior_mvn.sample((N_P0P1,))
+            y1_samples = hidden_theta1_samples @ obs_xi + torch.randn(N_P0P1, 1)
 
             # stack variational posteriors across alpha to enable batched MVN sampling
             mu_q_stack = torch.zeros(N_ALPHAS, DATA_DIM)
@@ -83,10 +84,10 @@ for _ in trange(NUM_PRIORS):
                 mu_q_stack[a_i] = mu_q_a
                 Sigma_q_stack[a_i] = Sigma_q_a
 
-            # batched draws from variational posteriors: (N_ALPHAS, NSAMPLES, DATA_DIM)
+            # batched draws from variational posteriors
             q_mvn = MultivariateNormal(mu_q_stack, covariance_matrix=Sigma_q_stack)
-            theta1_stack = q_mvn.sample((NSAMPLES,)).transpose(0, 1)
-            theta_star_stack = q_mvn.sample((NSAMPLES,)).transpose(0, 1)
+            theta1_stack = q_mvn.sample((N_P0P1,)).transpose(0, 1)  # shape: (N_ALPHAS, N_P0P1, DATA_DIM)
+            theta_star_stack = q_mvn.sample((N_PSTAR,)).transpose(0, 1)  # shape: (N_ALPHAS, N_PSTAR, DATA_DIM)
 
             theta0_np = theta0_samples.numpy()
             y0_np = y0_samples.numpy()
@@ -118,7 +119,7 @@ for _ in trange(NUM_PRIORS):
 
 
 os.makedirs(DATA_DIR, exist_ok=True)
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+dataset_filename = f'{DATA_DIR}/{config["dataset_filename"]}'
 with h5py.File(dataset_filename, 'w') as f:
     # metadata
     f.create_dataset('design_eig_percentage_arr', data=design_eig_percentage_arr)

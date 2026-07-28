@@ -7,6 +7,32 @@ import torch
 from tqdm import trange
 import yaml
 
+"""
+Step 2 Standalone Runner: Fit ELDR estimators cell-by-cell and write raw results.
+
+LEGACY: This is a standalone runner. The primary production path is the step2_runner
+adapter infrastructure (ex/synth/elbo/step2_adapter.py + ex.utils.step2_runner.*),
+which distributes cells across slurm jobs and gathers results via gather.py.
+Use this script only if you need single-machine sequential evaluation.
+
+Workflow:
+  1. Load config from ex/synth/elbo/config1.yaml
+  2. For each row in the dataset, fit each algorithm on p0/p1 samples
+  3. Predict ELDR on pstar samples (variable-size subset per new config)
+  4. Append results to a single h5 file
+
+Config schema (new):
+  dataset_filename: "dataset_d=3,n_p0p1=10000,n_pstar=5000.h5"  # full filename
+  n_p0p1: 10000   # samples for theta0, y0, theta1, y1
+  n_pstar: 5000   # samples for theta_star, y_star
+  nsamples: REMOVED (no longer used)
+
+Per-row data shapes (indexed by cell row):
+  theta_star, theta0, theta1: (n_pstar/n_p0p1, data_dim)
+  y_star, y0, y1:             (n_pstar/n_p0p1, 1)
+  samples_pstar, samples_p0, samples_p1:  (n_pstar/n_p0p1, data_dim+1)
+"""
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--force', action='store_true', help='Force re-run of all algorithms, overwriting existing results')
 args = parser.parse_args()
@@ -27,14 +53,18 @@ DATA_DIR = config['data_dir']
 RAW_RESULTS_DIR = config['raw_results_dir']
 # dataset parameters
 DATA_DIM = config['data_dim']
-NSAMPLES = config['nsamples']
 # random seed
 SEED = config['seed']
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-dataset_filename = f'{DATA_DIR}/dataset_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-results_filename = f'{RAW_RESULTS_DIR}/results_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+# use dataset_filename from config (shared with step2_adapter.py pattern)
+dataset_file = config['dataset_filename']
+dataset_filename = os.path.join(DATA_DIR, dataset_file)
+
+# derive results filename by replacing 'dataset_' -> 'results_' in the stem
+results_stem = dataset_file.replace('dataset_', 'results_').removesuffix('.h5')
+results_filename = os.path.join(RAW_RESULTS_DIR, f'{results_stem}.h5')
 
 existing_results = set()
 if os.path.exists(results_filename):
@@ -103,19 +133,19 @@ with h5py.File(dataset_filename, 'r') as dataset_file:
         est_eldrs_arr = np.zeros(nrows)
         for idx in trange(nrows):
             # p_star samples: (theta_star, y_star) from variational posterior
-            theta_star = torch.from_numpy(dataset_file['theta_star_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, DATA_DIM)
-            y_star = torch.from_numpy(dataset_file['y_star_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, 1)
-            samples_pstar = torch.cat([theta_star, y_star], dim=1)  # (NSAMPLES, DATA_DIM+1)
+            theta_star = torch.from_numpy(dataset_file['theta_star_samples_arr'][idx]).float().to(DEVICE)  # (n_pstar, DATA_DIM)
+            y_star = torch.from_numpy(dataset_file['y_star_samples_arr'][idx]).float().to(DEVICE)  # (n_pstar, 1)
+            samples_pstar = torch.cat([theta_star, y_star], dim=1)  # (n_pstar, DATA_DIM+1)
 
             # p0 samples: prior-induced joint (theta0, y0)
-            theta0 = torch.from_numpy(dataset_file['theta0_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, DATA_DIM)
-            y0 = torch.from_numpy(dataset_file['y0_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, 1)
-            samples_p0 = torch.cat([theta0, y0], dim=1)  # (NSAMPLES, DATA_DIM+1)
+            theta0 = torch.from_numpy(dataset_file['theta0_samples_arr'][idx]).float().to(DEVICE)  # (n_p0p1, DATA_DIM)
+            y0 = torch.from_numpy(dataset_file['y0_samples_arr'][idx]).float().to(DEVICE)  # (n_p0p1, 1)
+            samples_p0 = torch.cat([theta0, y0], dim=1)  # (n_p0p1, DATA_DIM+1)
 
             # p1 samples: q(theta) x prior predictive (theta1, y1)
-            theta1 = torch.from_numpy(dataset_file['theta1_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, DATA_DIM)
-            y1 = torch.from_numpy(dataset_file['y1_samples_arr'][idx]).float().to(DEVICE)  # (NSAMPLES, 1)
-            samples_p1 = torch.cat([theta1, y1], dim=1)  # (NSAMPLES, DATA_DIM+1)
+            theta1 = torch.from_numpy(dataset_file['theta1_samples_arr'][idx]).float().to(DEVICE)  # (n_p0p1, DATA_DIM)
+            y1 = torch.from_numpy(dataset_file['y1_samples_arr'][idx]).float().to(DEVICE)  # (n_p0p1, 1)
+            samples_p1 = torch.cat([theta1, y1], dim=1)  # (n_p0p1, DATA_DIM+1)
 
             if alg_name in _PSTAR_METHODS:
                 alg.fit(samples_p0, samples_p1, samples_pstar)
