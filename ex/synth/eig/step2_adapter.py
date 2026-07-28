@@ -28,6 +28,7 @@ import torch
 from src.utils.io import _load_config
 from ex.utils.eig_ldr import joint_and_shuffled
 from ex.utils.hpo.method_specs import METHOD_SPECS
+from ex.utils.hpo.frozen import METHOD_ALIAS as _METHOD_ALIAS, normalize_hp as _normalize_hp
 
 
 def _requires_pstar(method: str) -> bool:
@@ -76,34 +77,27 @@ def list_cells(config: dict) -> list[int]:
     return [int(cell[0]) for cell in adapter.step2_pool()]
 
 
-def bucket_for_cell(cell_idx: int, config: dict) -> None:
-    """no bucket axis: every row uses the same HP. returns None so loader uses default."""
-    return None
+def bucket_for_cell(cell_idx: int, config: dict) -> str:
+    """map a step2 cell to its per-slice bucket key.
+
+    the peak HPO campaign stratifies by (pct_idx, prior_idx) so each cell
+    (design row) belongs to exactly one slice. mirrors the eig adapter's
+    stratify_key. returns "pct_{p}_prior_{q}" — the assemble script emits
+    winners.yaml with matching per_bucket keys.
+    """
+    from ex.utils.hpo.adapters import get_adapter
+    adapter = get_adapter("eig")
+    p, q = adapter.stratify_key((cell_idx,))
+    return f"pct_{p}_prior_{q}"
 
 
 # -----------------------------------------------------------------------------
 # fit + eval
 # -----------------------------------------------------------------------------
 
-_METHOD_ALIAS = {p[0]: p[1] for p in __import__("ex.utils.hpo.method_specs",
-                                                fromlist=["ALIAS_PAIRS"]).ALIAS_PAIRS}
-
 # legacy holdout names -> current builder kwargs, applied PER METHOD because
 # different builders use different conventions (MDRE uses learning_rate +
 # latent_dim natively; VFM/CTSM use n_steps, not n_epochs).
-_HP_KEY_ALIAS_BY_METHOD = {
-    "VFM":           {"n_epochs": "n_steps"},
-    "VFMOrthros":    {"n_epochs": "n_steps"},
-    "CTSM":          {"n_epochs": "n_steps"},
-    "FMDRE":         {"n_epochs": "n_steps"},
-    "FMDRE_S2":      {"n_epochs": "n_steps"},
-}
-
-
-def _normalize_hp(method: str, hp: dict) -> dict:
-    """rename legacy hp keys to what the current builder expects, per method."""
-    alias = _HP_KEY_ALIAS_BY_METHOD.get(method, {})
-    return {alias.get(k, k): v for k, v in hp.items()}
 
 
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,

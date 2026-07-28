@@ -45,8 +45,12 @@ def main():
         reg = load(f, 'regret_by_beta')
         reg_lo = load(f, 'regret_lo_by_beta')
         reg_hi = load(f, 'regret_hi_by_beta')
+        reg_bstd = load(f, 'regret_bstd_by_beta')
         err = load(f, 'eldr_err_by_beta')
         err_se = load(f, 'eldr_err_se_by_beta')
+        err_med = load(f, 'eldr_err_med_by_beta')
+        err_q1 = load(f, 'eldr_err_q1_by_beta')
+        err_q3 = load(f, 'eldr_err_q3_by_beta')
 
     os.makedirs(FIGURES_DIR, exist_ok=True)
     beta_cols = [f'beta={b:g}' for b in betas]
@@ -56,11 +60,18 @@ def main():
         xlabel=XLABEL, ylabel='Rel. EIG regret (MoM, IQR band)',
         out_dir=FIGURES_DIR, prefix='eig_regret_mom', yscale='linear',
     )
-    write_tables(os.path.join(FIGURES_DIR, 'eig_regret_mom_table'), [(
+    regret_sections = [(
         'EIG regret -- MoM [bootstrap IQR] per beta',
         ['Method'] + beta_cols,
         table_rows(drawn, betas, lambda m, i: fmt_iqr(reg[m][i], reg_lo[m][i], reg_hi[m][i])),
-    )])
+    )]
+    if reg_bstd:
+        regret_sections.append((
+            'EIG regret -- MoM +/- bootstrap std per beta',
+            ['Method'] + beta_cols,
+            table_rows(drawn, betas, lambda m, i: fmt_pm(reg[m][i], reg_bstd[m][i])),
+        ))
+    write_tables(os.path.join(FIGURES_DIR, 'eig_regret_mom_table'), regret_sections)
 
     err_lo = {m: err[m] - err_se[m] for m in err}
     err_hi = {m: err[m] + err_se[m] for m in err}
@@ -69,11 +80,18 @@ def main():
         xlabel=XLABEL, ylabel='ELDR error (abs)',
         out_dir=FIGURES_DIR, prefix='eig_eldr_err', yscale='log',
     )
-    write_tables(os.path.join(FIGURES_DIR, 'eig_eldr_err_table'), [(
+    err_sections = [(
         'EIG absolute ELDR error -- mean +/- SE per beta',
         ['Method'] + beta_cols,
         table_rows(drawn, betas, lambda m, i: fmt_pm(err[m][i], err_se[m][i])),
-    )])
+    )]
+    if err_med:
+        err_sections.append((
+            'EIG absolute ELDR error -- median [q1, q3] per beta',
+            ['Method'] + beta_cols,
+            table_rows(drawn, betas, lambda m, i: fmt_iqr(err_med[m][i], err_q1[m][i], err_q3[m][i])),
+        ))
+    write_tables(os.path.join(FIGURES_DIR, 'eig_eldr_err_table'), err_sections)
 
     print('note: pointwise LDR MAE unavailable for eig (raw results hold integrated '
           'est_eigs only); plotted regret + eldr_err.')

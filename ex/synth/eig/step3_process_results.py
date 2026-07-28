@@ -16,8 +16,10 @@ written datasets (per method m):
   regret_by_beta_<m>   shape (B,)  -- point estimate of median-of-medians
   regret_lo_by_beta_<m> shape (B,) -- 25th percentile of bootstrap samples
   regret_hi_by_beta_<m> shape (B,) -- 75th percentile of bootstrap samples
+  regret_bstd_by_beta_<m> shape (B,) -- std of the bootstrap samples (SE-style)
   eldr_err_by_beta_<m>    shape (B,) -- mean |est - true| over (prior, design) cells
   eldr_err_se_by_beta_<m> shape (B,) -- standard error of that mean
+  eldr_err_{med,q1,q3}_by_beta_<m> shape (B,) -- median / quartiles over the same cells
 plus the shared `design_eig_percentages` axis.
 """
 import argparse
@@ -127,6 +129,7 @@ design_draws = rng.integers(0, D, size=(N_BOOTSTRAP, D))   # (N_BOOTSTRAP, D)
 
 lo = np.empty((M, B), dtype=np.float64)
 hi = np.empty((M, B), dtype=np.float64)
+bstd = np.full((M, B), np.nan, dtype=np.float64)
 for m_idx in range(M):
     for b_idx in range(B):
         mat = regret[m_idx, :, b_idx, :]                   # (P, D)
@@ -141,11 +144,17 @@ for m_idx in range(M):
         else:
             lo[m_idx, b_idx] = np.percentile(finite_boots, 25)
             hi[m_idx, b_idx] = np.percentile(finite_boots, 75)
+            if finite_boots.size >= 2:
+                bstd[m_idx, b_idx] = finite_boots.std(ddof=1)
 
 
-# absolute eldr error per (method, beta): mean +/- se over the P*D cells.
+# absolute eldr error per (method, beta): mean +/- se and median [q1, q3]
+# over the P*D cells.
 err_mean = np.full((M, B), np.nan, dtype=np.float64)
 err_se = np.full((M, B), np.nan, dtype=np.float64)
+err_med = np.full((M, B), np.nan, dtype=np.float64)
+err_q1 = np.full((M, B), np.nan, dtype=np.float64)
+err_q3 = np.full((M, B), np.nan, dtype=np.float64)
 for m_idx in range(M):
     for b_idx in range(B):
         vals = err[m_idx, :, b_idx, :].ravel()
@@ -153,6 +162,8 @@ for m_idx in range(M):
         if vals.size == 0:
             continue
         err_mean[m_idx, b_idx] = vals.mean()
+        q1, med, q3 = np.percentile(vals, [25, 50, 75])
+        err_med[m_idx, b_idx], err_q1[m_idx, b_idx], err_q3[m_idx, b_idx] = med, q1, q3
         if vals.size >= 2:
             err_se[m_idx, b_idx] = vals.std(ddof=1) / np.sqrt(vals.size)
 
@@ -166,6 +177,10 @@ with h5py.File(processed_results_filename, 'w') as out_file:
         out_file.create_dataset(f'regret_hi_by_beta_{name}', data=hi[m_idx].astype(np.float32))
         out_file.create_dataset(f'eldr_err_by_beta_{name}',    data=err_mean[m_idx].astype(np.float32))
         out_file.create_dataset(f'eldr_err_se_by_beta_{name}', data=err_se[m_idx].astype(np.float32))
+        out_file.create_dataset(f'regret_bstd_by_beta_{name}', data=bstd[m_idx].astype(np.float32))
+        out_file.create_dataset(f'eldr_err_med_by_beta_{name}', data=err_med[m_idx].astype(np.float32))
+        out_file.create_dataset(f'eldr_err_q1_by_beta_{name}',  data=err_q1[m_idx].astype(np.float32))
+        out_file.create_dataset(f'eldr_err_q3_by_beta_{name}',  data=err_q3[m_idx].astype(np.float32))
 
 print(f'wrote {processed_results_filename}')
 print(f'  methods: {", ".join(method_names)}')
