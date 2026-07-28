@@ -147,9 +147,9 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularCTSM V3 (2D stacked path + LowArcCurve2D).
 
     reweight pinned to True (1/gamma^2 is the analytic answer for CTSM time-score
-    regression; no longer a search dimension). No precond (CTSM has no precond
-    plumbing). no time-sampling knobs (the builder hardcodes a product of uniforms).
-    adds t2_max + path_height (path_height is inference-only). conditional: k (stiff).
+    regression). precond and time-sampling knobs are absent (CTSM has no precond
+    plumbing; the builder hardcodes a product of uniforms). adds t2_max +
+    path_height (path_height is inference-only). conditional: k (stiff).
     gamma_min pinned 0 (the low-arc inference curve never approaches a gamma-zero).
     """
     hp: dict[str, Any] = {}

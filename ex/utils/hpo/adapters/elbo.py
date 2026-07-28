@@ -17,13 +17,18 @@ class ELBOAdapter(ExperimentAdapter):
     """ELBO estimation experiment adapter.
 
     cell shape: 2-tuple (alpha_idx, flat_idx).
-    alpha_idx: {0, 1, 2, 3} (4 alphas).
-    flat_idx: {0 .. num_priors * len(design_eig_percentages) * num_designs_per_setting - 1}.
+    alpha_idx ∈ {0, ..., A-1} where A = len(config["alphas"]).
+    flat_idx ∈ {0, ..., P*B*D-1} where P = num_priors, B = len(design_eig_percentages),
+      D = num_designs_per_setting.
+
+    dataset layout (C-order, alpha innermost):
+      row_idx = ((prior * B + beta) * D + design) * A + alpha
+    equivalent to: row_idx = flat_idx * A + alpha_idx.
 
     h5 keys (dataset): theta0_samples_arr, y0_samples_arr, theta1_samples_arr,
       y1_samples_arr, theta_star_samples_arr, y_star_samples_arr.
-      all indexed by flat_idx along axis=0.
-    h5 keys (processed): true_eldrs (flat array, indexed by flat_idx).
+      all indexed by row_idx = flat_idx * num_alphas + alpha_idx along axis=0.
+    h5 keys (processed summary.h5): true_eldrs (flat array, indexed by row_idx).
 
     p0 = cat([theta0, y0], dim=-1); p1, pstar built analogously.
     latent_dim = data_dim + 1.
@@ -39,8 +44,16 @@ class ELBOAdapter(ExperimentAdapter):
         self._device = cfg.get("device", "cuda")
         self._data_dim = cfg["data_dim"]
         self._latent_dim = self._data_dim + 1
-        self._nsamples = cfg["nsamples"]
         self._num_waypoints = cfg.get("num_waypoints", None)
+
+        # sample sizes + the single resolved dataset filename. keeping one
+        # resolved attribute (rather than the whole cfg) is what tests stub.
+        self._n_p0p1 = cfg.get("n_p0p1")
+        self._n_pstar = cfg.get("n_pstar")
+        self._dataset_filename = cfg.get("dataset_filename") or (
+            f"dataset_d={self._data_dim},"
+            f"n_p0p1={self._n_p0p1},n_pstar={self._n_pstar}.h5"
+        )
 
         # pool metadata
         self._num_alphas = len(cfg["alphas"])
@@ -72,38 +85,40 @@ class ELBOAdapter(ExperimentAdapter):
         """load one (alpha_idx, flat_idx) cell from dataset + processed_results h5.
 
         args:
-          cell: (alpha_idx, flat_idx). alpha_idx is unused for indexing; flat_idx
+          cell: (alpha_idx, flat_idx). row_idx = flat_idx * num_alphas + alpha_idx
             indexes into all h5 arrays along axis=0.
           device: torch device string.
 
-        opens {data_dir}/dataset_d={data_dim},nsamples={nsamples}.h5.
-          extracts theta0/y0/theta1/y1/theta_star/y_star at flat_idx.
+        opens {data_dir}/{dataset_filename} (from config).
+          extracts theta0/y0/theta1/y1/theta_star/y_star at row_idx.
           concatenates theta+y along dim=-1 to form p0, p1, pstar.
-        opens {processed_results_dir}/errors_d={data_dim},nsamples={nsamples}.h5.
-          extracts true_eldrs[flat_idx] as scalar tensor.
+        opens {processed_results_dir}/summary.h5.
+          extracts true_eldrs[row_idx] as scalar tensor.
 
         returns: {"pstar": (N, D+1), "p0": (N, D+1), "p1": (N, D+1),
                   "true_ldrs": scalar tensor}.
 
         raises FileNotFoundError if h5 path missing.
         """
-        _alpha_idx, flat_idx = cell
+        alpha_idx, flat_idx = cell
+        row_idx = flat_idx * self._num_alphas + alpha_idx
 
-        dname = f"dataset_d={self._data_dim},nsamples={self._nsamples}.h5"
-        pname = f"errors_d={self._data_dim},nsamples={self._nsamples}.h5"
-        dpath = self.data_dir() / dname
-        ppath = Path(self._processed_results_dir) / pname
+        # dataset path resolved once in __init__ (mirrors step2_adapter::_dataset_path)
+        dpath = self.data_dir() / self._dataset_filename
+
+        # processed results file (step3 writes here)
+        ppath = Path(self._processed_results_dir) / "summary.h5"
 
         with h5py.File(dpath, "r") as f:
-            t0 = torch.from_numpy(np.array(f["theta0_samples_arr"][flat_idx])).float().to(device)  # (N, D)
-            y0 = torch.from_numpy(np.array(f["y0_samples_arr"][flat_idx])).float().to(device)      # (N, 1)
-            t1 = torch.from_numpy(np.array(f["theta1_samples_arr"][flat_idx])).float().to(device)  # (N, D)
-            y1 = torch.from_numpy(np.array(f["y1_samples_arr"][flat_idx])).float().to(device)      # (N, 1)
-            ts = torch.from_numpy(np.array(f["theta_star_samples_arr"][flat_idx])).float().to(device)  # (N, D)
-            ys = torch.from_numpy(np.array(f["y_star_samples_arr"][flat_idx])).float().to(device)      # (N, 1)
+            t0 = torch.from_numpy(np.array(f["theta0_samples_arr"][row_idx])).float().to(device)  # (N, D)
+            y0 = torch.from_numpy(np.array(f["y0_samples_arr"][row_idx])).float().to(device)      # (N, 1)
+            t1 = torch.from_numpy(np.array(f["theta1_samples_arr"][row_idx])).float().to(device)  # (N, D)
+            y1 = torch.from_numpy(np.array(f["y1_samples_arr"][row_idx])).float().to(device)      # (N, 1)
+            ts = torch.from_numpy(np.array(f["theta_star_samples_arr"][row_idx])).float().to(device)  # (N, D)
+            ys = torch.from_numpy(np.array(f["y_star_samples_arr"][row_idx])).float().to(device)      # (N, 1)
 
         with h5py.File(ppath, "r") as f:
-            true_ldr = torch.tensor(float(f["true_eldrs"][flat_idx])).to(device)  # scalar
+            true_ldr = torch.tensor(float(f["true_eldrs"][row_idx])).to(device)  # scalar
 
         return {
             "p0": torch.cat([t0, y0], dim=-1),      # (N, D+1)
@@ -170,6 +185,45 @@ class ELBOAdapter(ExperimentAdapter):
             est_eldr = float(torch.mean(est.predict_ldr(data["pstar"])).item())
         return abs(est_eldr - float(data["true_ldrs"].cpu().item()))
 
-    def stratify_key(self, cell: tuple[int, int]):
-        """return alpha_idx (cell[0]) for per-alpha stratification."""
-        return cell[0]
+    def stratify_key(self, cell: tuple[int, int]) -> tuple[int, int, int]:
+        """return (alpha_idx, prior_idx, beta_idx) for fine-grained stratification.
+
+        cell = (alpha_idx, flat_idx).
+        flat_idx encodes (prior, beta, design) in C-order:
+            flat_idx = prior * B * D + beta * D + design
+        where B = len(design_eig_percentages), D = num_designs_per_setting.
+
+        decompose to recover prior and beta; design is within-stratum axis.
+        yields 128 strata (4 alpha × 8 prior × 4 beta), each with 16 designs.
+        """
+        alpha_idx, flat_idx = cell
+        n_beta = len(self._design_eig_percentages)
+        n_design = self._num_designs_per_setting
+
+        # recover prior and beta from flat_idx
+        prior_idx = flat_idx // (n_beta * n_design)
+        beta_idx = (flat_idx // n_design) % n_beta
+
+        return (alpha_idx, prior_idx, beta_idx)
+
+    # -- split configuration (peak-campaign three-way split) -------------------
+    # elbo under the 2/2/12 convention: 16 cells per (alpha, prior, beta) stratum,
+    # 2 → train, 2 → holdout, 12 → step2 (disjoint remainder).
+    # total: 128 strata * (2 + 2 + 12) = 256 optuna + 256 holdout + 1536 step2.
+
+    def n_train_per_stratum(self) -> int:
+        """2 cells per stratum routed to optuna training pool."""
+        return 2
+
+    def n_holdout_per_stratum(self) -> int:
+        """2 cells per stratum routed to holdout pool."""
+        return 2
+
+    def n_step2_per_stratum(self) -> int:
+        """sentinel: route ALL non-train/non-holdout cells to step2.
+
+        since each stratum has exactly 16 cells and we allocate 2+2=4 to hpo,
+        the remainder is 12, so step2 gets every remaining design. set to -1
+        to invoke the sentinel behavior in stratified_split_3way (line 207–209).
+        """
+        return -1

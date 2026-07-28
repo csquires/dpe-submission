@@ -25,7 +25,10 @@ class DbpediaAdapter(ExperimentAdapter):
         with open(_CONFIG_PATH) as f:
             config = yaml.safe_load(f)
         self._data_dir = config["data_dir"]
-        self._device = config.get("device", "cuda")
+        # runtime detection (mirrors EIGAdapter): the same adapter serves the
+        # cpu array lane (gpus=0 -> cpu) and a gpu lane (gpus=1 -> cuda). a
+        # hardcoded "cuda" would FAIL every cpu-lane trial ("no cuda gpus").
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self._latent_dim = config["latent_dim"]
         self._num_waypoints = config.get("num_waypoints")
         self._n_alphas = len(config.get("alphas", [0, 1, 2, 3]))
@@ -65,3 +68,18 @@ class DbpediaAdapter(ExperimentAdapter):
     def stratify_key(self, cell: tuple[int, int]):
         """return alpha_idx (cell[0]) for per-alpha stratification."""
         return cell[0]
+
+    # -- three-way split: 32 optuna + 8 holdout as TOTALS over the 4 alpha
+    # strata (8 train + 2 holdout per stratum), remainder to step2. paired with
+    # slices=None in the study config -> one global hparam set per method, whose
+    # study samples over all 32 train cells; the leftover 30/stratum (120 cells)
+    # form the disjoint step2 eval pool.
+
+    def n_train_per_stratum(self) -> int:
+        return 8
+
+    def n_holdout_per_stratum(self) -> int:
+        return 2
+
+    def n_step2_per_stratum(self) -> int:
+        return -1

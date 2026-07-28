@@ -123,6 +123,21 @@ def make_adapter_module(spec: AdapterSpec, search_spaces: dict) -> dict[str, Cal
             p0 = torch.from_numpy(f["p0_samples"][()]).to(device)
             p1 = torch.from_numpy(f["p1_samples"][()]).to(device)
 
+        # cap the training pools to num_samples ("samples from each distribution").
+        # no-op unless on-disk p0/p1 exceed it (mnist_uncond reuses a 20k p0/p1 pool
+        # but trains on 10k). use a SEEDED RANDOM subsample so the pool's class
+        # balance is retained even if it is class-ordered (a prefix could bias it);
+        # pstar (eval) is left as-is. same seed as the hpo adapter -> identical subsample.
+        n_train = config.get("num_samples")
+        if n_train is not None:
+            seed = int(config.get("seed", 0))
+            if p0.shape[0] > n_train:
+                g = torch.Generator().manual_seed(seed)
+                p0 = p0[torch.randperm(p0.shape[0], generator=g)[:n_train].to(p0.device)]
+            if p1.shape[0] > n_train:
+                g = torch.Generator().manual_seed(seed)
+                p1 = p1[torch.randperm(p1.shape[0], generator=g)[:n_train].to(p1.device)]
+
         if requires_pstar:
             estimator.fit(p0, p1, pstar)
         else:

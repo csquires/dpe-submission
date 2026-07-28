@@ -57,9 +57,9 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # conditional params
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
-    # eig winner sits at 0.095 (well inside this range), and the active-band
-    # check at scratch/gamma_min_audit shows no useful config below 1e-2 for
-    # bridge-scheduled CTSM. lower bound stays at 1e-2.
+    # eig winner sits at 0.095 (well inside this range), and an active-band
+    # audit shows no useful config below 1e-2 for bridge-scheduled CTSM.
+    # lower bound stays at 1e-2.
     hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
     if time_dist != "uniform":
         hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])

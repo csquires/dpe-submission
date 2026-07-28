@@ -23,6 +23,12 @@ from . import tsm
 from . import vfm
 from . import vfmorthros
 
+# dokls ablation cls loss variants (nwj/dv kl lower bounds)
+from . import bdre_nwj
+from . import bdre_dv
+from . import mht_nwj
+from . import mht_dv
+
 # peak variants — add ONE line per peak module that exists on disk (strict
 # "no import without a file" rule per spec 09).
 from . import bdre_peak
@@ -62,6 +68,12 @@ SUGGEST_HP_REGISTRY: dict[str, tuple[Callable[[optuna.Trial], dict], dict]] = {
     "TriangularTSM": (triangular_tsm.suggest_hp, triangular_tsm.METADATA),
     "VFM": (vfm.suggest_hp, vfm.METADATA),
     "VFMOrthros": (vfmorthros.suggest_hp, vfmorthros.METADATA),
+
+    # dokls ablation cls loss variants (nwj/dv)
+    "BDRE_NWJ": (bdre_nwj.suggest_hp, bdre_nwj.METADATA),
+    "BDRE_DV": (bdre_dv.suggest_hp, bdre_dv.METADATA),
+    "MHT_NWJ": (mht_nwj.suggest_hp, mht_nwj.METADATA),
+    "MHT_DV": (mht_dv.suggest_hp, mht_dv.METADATA),
 
     # peak variants
     "BDRE_peak": (bdre_peak.suggest_hp, bdre_peak.METADATA),
