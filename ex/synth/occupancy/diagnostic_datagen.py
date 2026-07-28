@@ -65,7 +65,107 @@ def parse_args(args=None):
                    help="override config encoding.type for cell discovery")
     p.add_argument("--sigma", type=float, default=None,
                    help="override config encoding.sigma for cell discovery")
+    p.add_argument("--skip-card", action="store_true",
+                   help="skip the per-stratum data-card table + figure")
+    p.add_argument("--skip-render", action="store_true",
+                   help="skip the grid-heatmap ground-truth sample sheet")
     return p.parse_args(args)
+
+
+def _card_valid(rec) -> bool:
+    """guard against truncated smoke cells (e.g. kl1_0_beta_0_seed_0: 10 rows)."""
+    return ('pstar_latent' in rec and 'pstar_samples' in rec
+            and rec['pstar_samples'].shape[0] >= 100)
+
+
+def run_data_card(cells, k1_values, config, encoding_type):
+    """per-stratum data card with grid-native metrics.
+
+    eff_modes_dpi = exp-entropy of the empirical (s, a) occupancy histogram
+    (1024-way); occ_components = 4-connected components of the smallest state
+    set covering 90% of p* mass on the L x L grid. plus the shared
+    dimensionality / irregularity metrics on the encoded samples.
+    """
+    from scipy import ndimage
+    from ex.utils import data_card as dc
+    L = config['gridworld']['L']
+    n_actions = 4
+    names = ['twonn_id', 'part_ratio', 'eff_modes_dpi', 'occ_components',
+             'lip_q90', 'hill_tail']
+    vals = {m: [[] for _ in k1_values] for m in names}
+    for ki in range(len(k1_values)):
+        for rec in cells.get((ki, 0), []):
+            if not _card_valid(rec):
+                continue
+            X, ldr = rec['pstar_samples'], rec['true_ldrs_smoothed']
+            lat = rec['pstar_latent']
+            sa_counts = np.bincount(lat[:, 0] * n_actions + lat[:, 1],
+                                    minlength=L * L * n_actions)
+            s_counts = np.bincount(lat[:, 0], minlength=L * L).astype(float)
+            order = np.argsort(s_counts)[::-1]
+            cum = np.cumsum(s_counts[order]) / s_counts.sum()
+            mask = np.zeros(L * L, bool)
+            mask[order[:int(np.searchsorted(cum, 0.9)) + 1]] = True
+            _, n_comp = ndimage.label(mask.reshape(L, L))
+            vals['twonn_id'][ki].append(dc.twonn_id(X))
+            vals['part_ratio'][ki].append(dc.participation_ratio(X))
+            vals['eff_modes_dpi'][ki].append(dc.eff_modes(sa_counts))
+            vals['occ_components'][ki].append(float(n_comp))
+            vals['lip_q90'][ki].append(dc.lip_q(X, ldr))
+            vals['hill_tail'][ki].append(dc.hill_tail(ldr))
+    fig_dir = config['figures_dir']
+    dc.write_card(str(Path(fig_dir) / f'data_card_{encoding_type}'),
+                  [f'K1={v:g}' for v in k1_values], vals,
+                  title=f'occupancy data card ({encoding_type} pstar) -- med [q1, q3] over seeds')
+    dc.plot_metric_boxes(vals, k1_values, sweep_name='K1',
+                         out_dir=fig_dir, prefix=f'data_card_{encoding_type}')
+
+
+def run_sample_render(cells, k1_values, config, encoding_type,
+                      n_show=10, n_seeds=2):
+    """ground-truth rendering: empirical state-occupancy heatmap per
+    distribution with n_show sampled (s, a) drawn as action arrows.
+
+    uses the exact stored grid latents [s_idx, a_idx]; arrow direction is the
+    encoding's action angle 2*pi*a/4.
+    """
+    L = config['gridworld']['L']
+    dists = [('p0', r'$p_0$ ($d_O$)'), ('p1', r'$p_1$ ($d_E$)'),
+             ('pstar', r'$p_*$')]
+    rng = np.random.default_rng(0)
+    out = Path(config['figures_dir'])
+    # one file per K1 so figures stay paper-sized and composable
+    for ki, k1 in enumerate(k1_values):
+        usable = [rec for rec in cells.get((ki, 0), []) if _card_valid(rec)]
+        recs = usable[:n_seeds]
+        if not recs:
+            continue
+        fig, axes = plt.subplots(len(recs), 3,
+                                 figsize=(3.1 * 3, 2.9 * len(recs)),
+                                 squeeze=False)
+        for r, rec in enumerate(recs):
+            for ci, (d, lab) in enumerate(dists):
+                ax = axes[r, ci]
+                lat = rec.get(f'{d}_latent')
+                if lat is None:
+                    ax.set_axis_off()
+                    continue
+                s, a = lat[:, 0], lat[:, 1]
+                H = np.bincount(s, minlength=L * L).reshape(L, L)
+                ax.imshow(H, cmap='Blues')
+                idx = rng.choice(len(s), n_show, replace=False)
+                th = 2 * np.pi * a[idx] / 4
+                ax.quiver(s[idx] % L, s[idx] // L, np.cos(th), np.sin(th),
+                          color='red', scale=16, width=0.012)
+                ax.set_title(f'{lab}  seed={rec["seed"]}', fontsize=10)
+                ax.set_xticks([])
+                ax.set_yticks([])
+        fig.tight_layout()
+        for ext in ('pdf', 'png'):
+            fig.savefig(out / f'datagen_samples_{encoding_type}_k1_{k1:g}.{ext}',
+                        dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f'saved datagen_samples_{encoding_type}_k1_{k1:g}.{{pdf,png}}')
 
 
 # ----------------------------------------------------------------------
@@ -476,8 +576,8 @@ def plot_discrete_vs_smoothed(ax,
 
     smoothing compresses the LDR scale (smoothed std typically << discrete
     std); hexbin density reveals whether the relationship is tight or
-    spread, and where mass concentrates. no y=x reference -- smoothing is
-    not expected to be identity.
+    spread, and where mass concentrates. the y=x reference is omitted since
+    smoothing is not expected to be identity.
     """
     discs, smos = [], []
     for recs in cells.values():
@@ -599,6 +699,13 @@ def main():
                            config["kl_targets"]["beta_values"],
                            str(Path(config["figures_dir"])
                                / f"datagen_variance_{encoding_type}.png"))
+
+    if not args.skip_card:
+        run_data_card(cells, config["kl_targets"]["k1_values"], config,
+                      encoding_type)
+    if not args.skip_render:
+        run_sample_render(cells, config["kl_targets"]["k1_values"], config,
+                          encoding_type)
 
 
 if __name__ == "__main__":

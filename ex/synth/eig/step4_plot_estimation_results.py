@@ -1,75 +1,84 @@
-"""plot per-method normalized EIG regret vs design beta, split into 4 panels.
+"""plot eig estimation results: one figure per metric, stratifications side by side.
 
-line = median-of-medians regret per beta (see step3); shaded band = IQR of
-1000 bootstrap resamples (priors and designs drawn with replacement).
-
-styles + colors come from ex/utils/plot_style.py.
+each figure is a single row of method-group panels (vfm_fmdre / tsm_ctsm / cls)
+via ex.utils.group_panels, plus sibling {stem}.md/.tex tables of the plotted
+values. metrics:
+  regret   -- normalized EIG regret, median-of-medians point + bootstrap IQR band
+  eldr_err -- absolute |est - true| EIG error, mean +/- SE band
+pointwise LDR MAE is not available for eig: the raw campaign stored only the
+integrated est_eigs per cell, not per-sample LDR estimates.
 """
+import argparse
 import os
 
 import h5py
-import matplotlib.pyplot as plt
-import numpy as np
 import yaml
 
-from ex.utils.plot_style import (
-    apply as apply_style,
-    style_for,
-    METHOD_GROUPS,
-    ERROR_BAND_ALPHA,
-)
+from ex.utils.group_panels import plot_group_row
+from ex.utils.tables import fmt_pm, fmt_iqr, write_tables
 
 
-config = yaml.load(open('ex/synth/eig/config1.yaml', 'r'), Loader=yaml.FullLoader)
+_p = argparse.ArgumentParser(description=__doc__)
+_p.add_argument('--config', default='ex/synth/eig/config1.yaml')
+config = yaml.load(open(_p.parse_args().config, 'r'), Loader=yaml.FullLoader)
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
 FIGURES_DIR = config['figures_dir']
 DATA_DIM = config['data_dim']
 NSAMPLES = config['nsamples']
 
-processed_results_filename = f'{PROCESSED_RESULTS_DIR}/regret_by_beta_d={DATA_DIM},nsamples={NSAMPLES}.h5'
-
-with h5py.File(processed_results_filename, 'r') as f:
-    design_eig_percentages = f['design_eig_percentages'][:]
-    regret = {k[len('regret_by_beta_'):]: f[k][:]
-              for k in f.keys() if k.startswith('regret_by_beta_')}
-    lo = {k[len('regret_lo_by_beta_'):]: f[k][:]
-          for k in f.keys() if k.startswith('regret_lo_by_beta_')}
-    hi = {k[len('regret_hi_by_beta_'):]: f[k][:]
-          for k in f.keys() if k.startswith('regret_hi_by_beta_')}
-
-apply_style()
-
-# shared y-limits across panels for side-by-side comparison.
-all_hi = []
-for group_methods in METHOD_GROUPS.values():
-    for m in group_methods:
-        if m not in regret:
-            continue
-        all_hi.append(np.nanmax(hi.get(m, regret[m])))
-y_max = (max(all_hi) * 1.05) if all_hi else 1.0
+XLABEL = r'Design optimality $\beta = \mathrm{EIG}(\xi) / \mathrm{EIG}_{\max}$'
 
 
-os.makedirs(FIGURES_DIR, exist_ok=True)
-for group, methods in METHOD_GROUPS.items():
-    fig, ax = plt.subplots(figsize=(6, 4))
-    for method in methods:
-        if method not in regret:
-            continue
-        r = regret[method]
-        if not np.any(np.isfinite(r)):
-            continue
-        kw = style_for(method)
-        ax.plot(design_eig_percentages, r, label=method, **kw)
-        ax.fill_between(design_eig_percentages, lo[method], hi[method],
-                        color=kw['color'], alpha=ERROR_BAND_ALPHA, linewidth=0)
-    ax.set_xlabel(r'Design optimality $\beta = \mathrm{EIG}(\xi) / \mathrm{EIG}_{\max}$')
-    ax.set_ylabel('Rel. EIG regret (MoM, IQR band)')
-    ax.legend(loc='best')
-    ax.set_ylim(0, y_max)
-    fig.tight_layout()
-    pdf_path = os.path.join(FIGURES_DIR, f'eig_estimation_{group}.pdf')
-    png_path = os.path.join(FIGURES_DIR, f'eig_estimation_{group}.png')
-    fig.savefig(pdf_path)
-    fig.savefig(png_path)
-    plt.close(fig)
-    print(f'  {group:9s} -> {png_path}')
+def load(f, prefix):
+    """dict method -> (B,) for every '{prefix}_<m>' dataset in f."""
+    return {k[len(prefix) + 1:]: f[k][:] for k in f.keys() if k.startswith(f'{prefix}_')}
+
+
+def table_rows(methods, cols, cell_fn):
+    return [[m] + [cell_fn(m, i) for i in range(len(cols))] for m in methods]
+
+
+def main():
+    path = f'{PROCESSED_RESULTS_DIR}/regret_by_beta_d={DATA_DIM},nsamples={NSAMPLES}.h5'
+    with h5py.File(path, 'r') as f:
+        betas = f['design_eig_percentages'][:]
+        reg = load(f, 'regret_by_beta')
+        reg_lo = load(f, 'regret_lo_by_beta')
+        reg_hi = load(f, 'regret_hi_by_beta')
+        err = load(f, 'eldr_err_by_beta')
+        err_se = load(f, 'eldr_err_se_by_beta')
+
+    os.makedirs(FIGURES_DIR, exist_ok=True)
+    beta_cols = [f'beta={b:g}' for b in betas]
+
+    drawn = plot_group_row(
+        betas, reg, reg_lo, reg_hi,
+        xlabel=XLABEL, ylabel='Rel. EIG regret (MoM, IQR band)',
+        out_dir=FIGURES_DIR, prefix='eig_regret_mom', yscale='linear',
+    )
+    write_tables(os.path.join(FIGURES_DIR, 'eig_regret_mom_table'), [(
+        'EIG regret -- MoM [bootstrap IQR] per beta',
+        ['Method'] + beta_cols,
+        table_rows(drawn, betas, lambda m, i: fmt_iqr(reg[m][i], reg_lo[m][i], reg_hi[m][i])),
+    )])
+
+    err_lo = {m: err[m] - err_se[m] for m in err}
+    err_hi = {m: err[m] + err_se[m] for m in err}
+    drawn = plot_group_row(
+        betas, err, err_lo, err_hi,
+        xlabel=XLABEL, ylabel='ELDR error (abs)',
+        out_dir=FIGURES_DIR, prefix='eig_eldr_err', yscale='log',
+    )
+    write_tables(os.path.join(FIGURES_DIR, 'eig_eldr_err_table'), [(
+        'EIG absolute ELDR error -- mean +/- SE per beta',
+        ['Method'] + beta_cols,
+        table_rows(drawn, betas, lambda m, i: fmt_pm(err[m][i], err_se[m][i])),
+    )])
+
+    print('note: pointwise LDR MAE unavailable for eig (raw results hold integrated '
+          'est_eigs only); plotted regret + eldr_err.')
+    print(f'done. figures in: {FIGURES_DIR}')
+
+
+if __name__ == '__main__':
+    main()

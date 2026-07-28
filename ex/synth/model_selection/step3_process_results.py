@@ -83,6 +83,40 @@ def eldr_err_stats(est_by_alg, true_eldr, n_kl, n_inst, ntest):
     return means, ses
 
 
+def regret_stats(est_by_alg, true_eldr, n_kl, n_inst, ntest, seed, n_boot=500):
+    """eig-style per-cell normalized ELDR regret, aggregated per (kl, test_set).
+
+    per cell c=(row, test): regret[m,c] = (err[m,c] - min_m' err[m',c]) /
+    (max_m' - min_m'); 0 = best method on that cell, 1 = worst, 0 on an exact tie.
+    the point per (kl, test) is the median over the n_inst instances; the band is
+    the bootstrap std of that median (resampling instances). being scale-free it
+    de-emphasizes raw magnitude (and blowups like VFM's) and shows purely relative
+    standing across methods -- the complement to the absolute eldr_err.
+    """
+    algs = list(est_by_alg)
+    err = np.stack([  # (M, n_kl, n_inst, ntest)
+        np.abs(est_by_alg[a].mean(axis=2) - true_eldr).reshape(n_kl, n_inst, ntest)
+        for a in algs]).astype(np.float64)
+    finite = np.isfinite(err)
+    best = np.where(finite, err, np.inf).min(axis=0)    # (n_kl, n_inst, ntest)
+    worst = np.where(finite, err, -np.inf).max(axis=0)
+    span = worst - best
+    denom = np.where(span > 0, span, np.nan)
+    reg = (err - best[None]) / denom[None]              # (M, n_kl, n_inst, ntest)
+    tied = (span == 0) & np.isfinite(best)
+    reg = np.where(np.broadcast_to(tied[None], reg.shape) & finite, 0.0, reg)
+
+    rng = np.random.default_rng(seed)
+    boot = rng.integers(0, n_inst, size=(n_boot, n_inst))
+    means, ses = {}, {}
+    for mi, a in enumerate(algs):
+        r = reg[mi]                                     # (n_kl, n_inst, ntest)
+        means[a] = np.nanmedian(r, axis=1)             # (n_kl, ntest)
+        bmed = np.nanmedian(r[:, boot, :], axis=2)     # (n_kl, n_boot, ntest)
+        ses[a] = np.nanstd(bmed, axis=1)               # (n_kl, ntest)
+    return means, ses
+
+
 def main(variant=None):
     tag, config = resolve(variant)
     data_dir = config['data_dir']
@@ -121,6 +155,7 @@ def main(variant=None):
     true_eldr_mc = true_ldrs.mean(axis=2)  # (nrows, ntest)
     eldr_mean, eldr_se = eldr_err_stats(est_by_alg, true_eldr_analytic, n_kl, n_inst, ntest)
     mc_mean, mc_se = eldr_err_stats(est_by_alg, true_eldr_mc, n_kl, n_inst, ntest)
+    reg_mean, reg_se = regret_stats(est_by_alg, true_eldr_analytic, n_kl, n_inst, ntest, config['seed'])
 
     os.makedirs(proc_dir, exist_ok=True)
     with h5py.File(f'{proc_dir}/new_pstar.h5', 'w') as f:
@@ -138,6 +173,9 @@ def main(variant=None):
             # out of step4's 'eldr_err_*_mean' method discovery.
             f.create_dataset(f'mc_eldr_err_{alg}_mean', data=mc_mean[alg])
             f.create_dataset(f'mc_eldr_err_{alg}_se', data=mc_se[alg])
+            # per-cell normalized regret (0=best method on a cell, 1=worst) vs analytic truth.
+            f.create_dataset(f'regret_{alg}_mean', data=reg_mean[alg])
+            f.create_dataset(f'regret_{alg}_se', data=reg_se[alg])
 
     nsamp = config['nsamples_test']
     print('=' * 72)

@@ -16,8 +16,11 @@ written datasets (per method m):
   regret_by_beta_<m>   shape (B,)  -- point estimate of median-of-medians
   regret_lo_by_beta_<m> shape (B,) -- 25th percentile of bootstrap samples
   regret_hi_by_beta_<m> shape (B,) -- 75th percentile of bootstrap samples
+  eldr_err_by_beta_<m>    shape (B,) -- mean |est - true| over (prior, design) cells
+  eldr_err_se_by_beta_<m> shape (B,) -- standard error of that mean
 plus the shared `design_eig_percentages` axis.
 """
+import argparse
 import os
 
 import h5py
@@ -25,7 +28,9 @@ import numpy as np
 import yaml
 
 
-config = yaml.load(open('ex/synth/eig/config1.yaml', 'r'), Loader=yaml.FullLoader)
+_p = argparse.ArgumentParser(description=__doc__)
+_p.add_argument('--config', default='ex/synth/eig/config1.yaml')
+config = yaml.load(open(_p.parse_args().config, 'r'), Loader=yaml.FullLoader)
 DATA_DIR = os.path.expandvars(config['data_dir'])
 RAW_RESULTS_DIR = config['raw_results_dir']
 PROCESSED_RESULTS_DIR = config['processed_results_dir']
@@ -64,8 +69,14 @@ if true_eigs.shape[0] != expected_nrows:
     )
 betas_grid = np.array(DESIGN_EIG_PERCENTAGES, dtype=np.float32)
 beta_axis_check = np.tile(np.repeat(betas_grid, D), P)
-if not np.allclose(design_eig_percentages, beta_axis_check):
-    raise ValueError('design_eig_percentage_arr ordering does not match (prior, beta, design).')
+if design_eig_percentages.shape[0] == beta_axis_check.shape[0]:
+    if not np.allclose(design_eig_percentages, beta_axis_check):
+        raise ValueError('design_eig_percentage_arr ordering does not match (prior, beta, design).')
+else:
+    # dataset regenerated for a later campaign: only the ordering cross-check is
+    # lost; the raw grid itself is still validated against P*B*D above.
+    print(f'warning: dataset beta axis has {design_eig_percentages.shape[0]} rows '
+          f'vs raw grid {beta_axis_check.shape[0]}; skipping ordering cross-check.')
 
 
 method_names = list(est_eigs_by_alg.keys())
@@ -132,6 +143,20 @@ for m_idx in range(M):
             hi[m_idx, b_idx] = np.percentile(finite_boots, 75)
 
 
+# absolute eldr error per (method, beta): mean +/- se over the P*D cells.
+err_mean = np.full((M, B), np.nan, dtype=np.float64)
+err_se = np.full((M, B), np.nan, dtype=np.float64)
+for m_idx in range(M):
+    for b_idx in range(B):
+        vals = err[m_idx, :, b_idx, :].ravel()
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        err_mean[m_idx, b_idx] = vals.mean()
+        if vals.size >= 2:
+            err_se[m_idx, b_idx] = vals.std(ddof=1) / np.sqrt(vals.size)
+
+
 os.makedirs(PROCESSED_RESULTS_DIR, exist_ok=True)
 with h5py.File(processed_results_filename, 'w') as out_file:
     out_file.create_dataset('design_eig_percentages', data=betas_grid)
@@ -139,6 +164,8 @@ with h5py.File(processed_results_filename, 'w') as out_file:
         out_file.create_dataset(f'regret_by_beta_{name}',    data=point[m_idx].astype(np.float32))
         out_file.create_dataset(f'regret_lo_by_beta_{name}', data=lo[m_idx].astype(np.float32))
         out_file.create_dataset(f'regret_hi_by_beta_{name}', data=hi[m_idx].astype(np.float32))
+        out_file.create_dataset(f'eldr_err_by_beta_{name}',    data=err_mean[m_idx].astype(np.float32))
+        out_file.create_dataset(f'eldr_err_se_by_beta_{name}', data=err_se[m_idx].astype(np.float32))
 
 print(f'wrote {processed_results_filename}')
 print(f'  methods: {", ".join(method_names)}')

@@ -1,12 +1,14 @@
 """
 Step 4: Plot Results for ELBO Estimation
 
-eig-/occupancy-style line plots: one figure per alpha, every method on the same
-axes (thin lines + translucent +/- SE band), colors/markers from ex.utils.plot_style.
-the shared legend is emitted as its own figure.
-
-plots ABSOLUTE ELDR error (mae_{m} from step3): relative error is degenerate for
-ELBO because the true ELDR is identically 0 at alpha=1 (division by zero).
+one figure per (metric, alpha): a single row of method-group panels
+(vfm_fmdre / tsm_ctsm / cls) concatenated left to right via ex.utils.group_panels,
+with a shared y-range across alphas for comparability. sibling {stem}.md/.tex
+tables carry the plotted values (one section per alpha). metrics:
+  regret   -- per-cell normalized ELDR regret, MoM point + bootstrap IQR band
+  eldr_err -- absolute ELDR error (mae_{m} from step3), mean +/- SE band
+pointwise LDR MAE is not available for elbo: the raw campaign stored only the
+integrated est_eldrs per cell, not per-sample LDR estimates.
 """
 import argparse
 import os
@@ -15,7 +17,8 @@ import h5py
 import numpy as np
 import yaml
 
-from ex.utils.faceted_lines import plot_panels, plot_legend
+from ex.utils.group_panels import plot_group_row
+from ex.utils.tables import fmt_pm, fmt_iqr, write_tables
 
 
 def parse_args():
@@ -23,6 +26,52 @@ def parse_args():
     p.add_argument("--config",  default="ex/synth/elbo/config1.yaml")
     p.add_argument("--winners", default="scratch/gold_winners/winners.elbo.yaml")
     return p.parse_args()
+
+
+def load_grids(f, pattern, methods):
+    """dict method -> (n_dep, n_alpha) for '{pattern}' with {m} substituted."""
+    out = {}
+    for m in methods:
+        key = pattern.format(m=m)
+        if key in f:
+            out[m] = f[key][:]
+    return out
+
+
+def shared_ylim(lo, hi, yscale):
+    """global (lo, hi) across all methods/alphas so per-alpha figures compare."""
+    los = [np.nanmin(v) for v in lo.values() if np.isfinite(v).any()]
+    his = [np.nanmax(v) for v in hi.values() if np.isfinite(v).any()]
+    y_lo, y_hi = min(los), max(his)
+    if yscale == "log":
+        return (max(y_lo, 1e-4) * 0.8, y_hi * 1.25)
+    return (min(0.0, y_lo), y_hi * 1.08)
+
+
+def plot_metric(deps, alphas, mean, lo, hi, *, ylabel, prefix, yscale,
+                cell_fn, table_title, figures_dir):
+    """per-alpha group-row figures + one table file with a section per alpha."""
+    ylim = shared_ylim(lo, hi, yscale)
+    sections = []
+    for ai, a in enumerate(alphas):
+        tag = f"alpha_{a:.2g}".replace(".", "p")
+        col = lambda d, m: d[m][:, ai]
+        drawn = plot_group_row(
+            deps,
+            {m: col(mean, m) for m in mean},
+            {m: col(lo, m) for m in mean},
+            {m: col(hi, m) for m in mean},
+            xlabel=r"$\beta$ (Design EIG %)", ylabel=ylabel,
+            out_dir=figures_dir, prefix=f"{prefix}_{tag}",
+            yscale=yscale, ylim=ylim,
+        )
+        if drawn:
+            header = ["Method"] + [f"beta={d:g}" for d in deps]
+            rows = [[m] + [cell_fn(m, di, ai) for di in range(len(deps))]
+                    for m in drawn]
+            sections.append((fr"{table_title} -- alpha = {a:.2g}", header, rows))
+    if sections:
+        write_tables(os.path.join(figures_dir, f"{prefix}_table"), sections)
 
 
 def main():
@@ -40,33 +89,42 @@ def main():
 
     with open(args.winners) as f:
         winners = yaml.safe_load(f)
-    present_methods = set(winners["methods"].keys())
+    present = set(winners["methods"].keys())
 
-    # mae_{m}_mean / _se are grids of shape (n_dep, n_alpha) = absolute ELDR error.
     with h5py.File(summary_path, "r") as f:
         alphas = f["alphas"][:]
         deps   = f["design_eig_percentages"][:]
-        methods = [k[len("mae_"):-len("_mean")] for k in f.keys() if k.endswith("_mean")]
-        methods = [m for m in methods if m in present_methods]
-        mean = {m: f[f"mae_{m}_mean"][:] for m in methods}   # (n_dep, n_alpha)
-        se   = {m: f[f"mae_{m}_se"][:]   for m in methods}
+        methods = sorted({k[len("mae_"):-len("_mean")] for k in f.keys()
+                          if k.startswith("mae_") and k.endswith("_mean")} & present)
+        mae    = load_grids(f, "mae_{m}_mean", methods)
+        mae_se = load_grids(f, "mae_{m}_se", methods)
+        reg    = load_grids(f, "regret_{m}_mom", methods)
+        reg_lo = load_grids(f, "regret_{m}_lo", methods)
+        reg_hi = load_grids(f, "regret_{m}_hi", methods)
 
-    # facets = alphas; x = design_eig_percentage (beta). grids are already
-    # [n_dep, n_alpha] == [len(x), n_facets], so they feed plot_panels directly.
-    facets = [(f"alpha_{a:.2g}".replace(".", "p"), fr"$\alpha = {a:.2g}$")
-              for a in alphas]
+    os.makedirs(figures_dir, exist_ok=True)
 
-    plotted = plot_panels(
-        deps, facets, mean, se,
-        xlabel=r"$\beta$ (Design EIG %)",
-        ylabel="ELDR Error (abs)",
-        out_dir=figures_dir, prefix="elbo_eldr_err",
-        xscale="linear", yscale="log",
+    if reg:
+        plot_metric(
+            deps, alphas, reg, reg_lo, reg_hi,
+            ylabel="Rel. ELDR regret (MoM, IQR band)", prefix="elbo_regret_mom",
+            yscale="linear",
+            cell_fn=lambda m, di, ai: fmt_iqr(reg[m][di, ai], reg_lo[m][di, ai], reg_hi[m][di, ai]),
+            table_title="ELDR regret MoM [bootstrap IQR]", figures_dir=figures_dir,
+        )
+
+    mae_lo = {m: mae[m] - mae_se[m] for m in mae}
+    mae_hi = {m: mae[m] + mae_se[m] for m in mae}
+    plot_metric(
+        deps, alphas, mae, mae_lo, mae_hi,
+        ylabel="ELDR error (abs)", prefix="elbo_eldr_err", yscale="log",
+        cell_fn=lambda m, di, ai: fmt_pm(mae[m][di, ai], mae_se[m][di, ai]),
+        table_title="Absolute ELDR error, mean +/- SE", figures_dir=figures_dir,
     )
-    plot_legend(plotted, figures_dir, prefix="elbo_eldr_err")
 
+    print("note: pointwise LDR MAE unavailable for elbo (raw results hold integrated "
+          "est_eldrs only); plotted regret + eldr_err.")
     print(f"\nDone. Figures in: {figures_dir}")
-    print(f"Methods plotted: {len(plotted)}")
 
 
 if __name__ == "__main__":

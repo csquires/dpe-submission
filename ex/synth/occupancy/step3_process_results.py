@@ -90,6 +90,18 @@ def main():
     n_k1 = len(k1_values)
     n_beta = len(beta_values)
     n_seeds = kl_targets["seeds_default"]
+
+    # the gather file's layout fixes the seed count actually campaigned; decode
+    # with that, not the config (which may already stage a larger campaign).
+    with h5py.File(gather_path, "r") as gf:
+        est_keys = [k for k in gf.keys() if k.startswith("est_ldrs_")]
+        nrows = gf[est_keys[0]].shape[0] if est_keys else 0
+    if nrows and nrows != n_k1 * n_beta * n_seeds:
+        n_seeds_gather = nrows // (n_k1 * n_beta)
+        print(f"warning: gather has {nrows} rows -> {n_seeds_gather} seeds/cell "
+              f"(config says {n_seeds}); using the gather layout.")
+        n_seeds = n_seeds_gather
+
     n_cells = n_k1 * n_beta * n_seeds
 
     def _decode_cell(flat_idx):
@@ -101,6 +113,11 @@ def main():
 
     # results[method][k1_idx][beta_idx] = list of (pointwise_mae, eldr_err)
     results = {m: [[[] for _ in range(n_beta)] for _ in range(n_k1)] for m in methods}
+
+    # aligned per-cell eldr_err grid (column = beta_idx * n_seeds + seed) so a
+    # cross-method per-cell regret can be computed after the loop; nan = missing.
+    n_cols = n_beta * n_seeds
+    aligned_eldr = {m: np.full((n_k1, n_cols), np.nan, dtype=np.float64) for m in methods}
 
     missing_data = []
     skipped_nan = 0
@@ -140,6 +157,7 @@ def main():
                 pointwise_mae = float(np.mean(np.abs(est_ldrs - true_ldrs)))
                 eldr_err = float(abs(np.mean(est_ldrs) - integrated_eldr))
                 results[method][k1_idx][beta_idx].append((pointwise_mae, eldr_err))
+                aligned_eldr[method][k1_idx, beta_idx * n_seeds + seed] = eldr_err
 
     if missing_data:
         logging.warning(f"missing {len(missing_data)} data files (cells skipped)")
@@ -176,13 +194,36 @@ def main():
                 se_eldr[m][k1_idx, beta_idx]   = se
                 n_eldr[m][k1_idx, beta_idx]     = n
 
-    # collect flattened per-seed arrays (all valid seeds across all cells)
-    seed_mae  = {m: np.array([p[0] for k1 in range(n_k1) for b in range(n_beta)
-                               for p in results[m][k1][b]], dtype=np.float32)
-                 for m in methods}
-    seed_eldr = {m: np.array([p[1] for k1 in range(n_k1) for b in range(n_beta)
-                               for p in results[m][k1][b]], dtype=np.float32)
-                 for m in methods}
+    # per-k1 raw seed distributions, nan-padded to a rectangular [n_k1, max_pairs]
+    # grid so step4 can draw one box per k1 (hardness) within each method family.
+    # the pair axis flattens (beta, seed); beta is a singleton in the peak campaign.
+    def _by_k1(metric_idx):
+        rows = {m: [[p[metric_idx] for b in range(n_beta) for p in results[m][k1][b]]
+                    for k1 in range(n_k1)] for m in methods}
+        max_pairs = max((len(r) for m in methods for r in rows[m]), default=0)
+        out = {}
+        for m in methods:
+            arr = np.full((n_k1, max_pairs), np.nan, dtype=np.float32)
+            for k1 in range(n_k1):
+                r = rows[m][k1]
+                arr[k1, :len(r)] = r
+            out[m] = arr
+        return out
+
+    seed_mae  = _by_k1(0)   # [n_k1, max_pairs]
+    seed_eldr = _by_k1(1)   # [n_k1, max_pairs]
+
+    # per-cell normalized eldr regret across methods (0 = best on a cell,
+    # 1 = worst, exact tie -> 0), from the aligned per-cell grids.
+    E = np.stack([aligned_eldr[m] for m in methods])   # (M, n_k1, n_cols)
+    finite = np.isfinite(E)
+    best = np.where(finite, E, np.inf).min(axis=0)
+    worst = np.where(finite, E, -np.inf).max(axis=0)
+    span = worst - best
+    reg = (E - best[None]) / np.where(span > 0, span, np.nan)[None]
+    tied = (span == 0) & np.isfinite(best)
+    reg = np.where(np.broadcast_to(tied[None], reg.shape) & finite, 0.0, reg)
+    seed_regret = {m: reg[mi].astype(np.float32) for mi, m in enumerate(methods)}
 
     # write summary h5
     out_dir = os.path.join(processed_results_dir, encoding_subdir)
@@ -201,6 +242,7 @@ def main():
             f.create_dataset(f"eldr_err_{m}_n",         data=n_eldr[m])
             f.create_dataset(f"pointwise_mae_{m}_seed_values", data=seed_mae[m])
             f.create_dataset(f"eldr_err_{m}_seed_values",      data=seed_eldr[m])
+            f.create_dataset(f"regret_{m}_seed_values",        data=seed_regret[m])
 
     # print summary table (pointwise_mae)
     col_w = 26

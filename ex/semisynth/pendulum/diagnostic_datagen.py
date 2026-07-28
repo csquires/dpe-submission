@@ -61,7 +61,80 @@ def parse_args(args=None):
                    default="ex/semisynth/pendulum/config.yaml")
     p.add_argument("--show-grid", action="store_true",
                    help="plot the cached traj_kl grid (no per-cell HDF5 needed)")
+    p.add_argument("--skip-card", action="store_true",
+                   help="skip the per-stratum data-card table + figure")
+    p.add_argument("--skip-render", action="store_true",
+                   help="skip the phase-space ground-truth sample sheet")
     return p.parse_args(args)
+
+
+def run_data_card(cells, k1_values, config):
+    """per-stratum data card: dimensionality / multimodality / irregularity.
+
+    metrics on the flattened (theta, theta_dot, action) trajectory samples of
+    p* + true ldrs. emits data_card.{md,tex,png,pdf} into figures_dir.
+    """
+    from ex.utils import data_card as dc
+    names = ['twonn_id', 'part_ratio', 'gmm_modes', 'lip_q90', 'hill_tail']
+    vals = {m: [[] for _ in k1_values] for m in names}
+    for ki in range(len(k1_values)):
+        for rec in cells.get((ki, 0), []):
+            if 'samples_pstar' not in rec or 'true_ldrs' not in rec:
+                continue
+            X, ldr = rec['samples_pstar'], rec['true_ldrs']
+            vals['twonn_id'][ki].append(dc.twonn_id(X))
+            vals['part_ratio'][ki].append(dc.participation_ratio(X))
+            vals['gmm_modes'][ki].append(dc.gmm_modes(X))
+            vals['lip_q90'][ki].append(dc.lip_q(X, ldr))
+            vals['hill_tail'][ki].append(dc.hill_tail(ldr))
+    fig_dir = config['figures_dir']
+    dc.write_card(str(Path(fig_dir) / 'data_card'),
+                  [f'K1={v:g}' for v in k1_values], vals,
+                  title='pendulum data card (pstar trajectories) -- med [q1, q3] over seeds')
+    dc.plot_metric_boxes(vals, k1_values, sweep_name='K1',
+                         out_dir=fig_dir, prefix='data_card')
+
+
+def run_sample_render(cells, k1_values, config, n_show=10, n_seeds=2):
+    """ground-truth rendering: phase-space (theta, theta_dot) rollouts.
+
+    n_show sampled trajectories per distribution for n_seeds seeds per K1;
+    samples reshape to (T+1, 3) = per-step (theta, theta_dot, action).
+    """
+    dists = [('samples_p0', r'$p_0$ ($\pi_O$)'),
+             ('samples_p1', r'$p_1$ ($\pi_E$)'),
+             ('samples_pstar', r'$p_*$')]
+    rng = np.random.default_rng(0)
+    out = Path(config['figures_dir'])
+    # one file per K1 so figures stay paper-sized and composable
+    for ki, k1 in enumerate(k1_values):
+        recs = cells.get((ki, 0), [])[:n_seeds]
+        if not recs:
+            continue
+        fig, axes = plt.subplots(len(recs), 3,
+                                 figsize=(3.4 * 3, 2.8 * len(recs)),
+                                 sharex=True, sharey=True, squeeze=False)
+        for r, rec in enumerate(recs):
+            for ci, (dk, lab) in enumerate(dists):
+                ax = axes[r, ci]
+                X = rec[dk]
+                idx = rng.choice(X.shape[0], n_show, replace=False)
+                for t in X[idx].reshape(n_show, -1, 3):
+                    ax.plot(t[:, 0], t[:, 1], '-o', markersize=2.5,
+                            linewidth=0.9, alpha=0.7)
+                    ax.plot(t[0, 0], t[0, 1], 'k.', markersize=6)
+                ax.set_title(f'{lab}  seed={rec["seed"]}', fontsize=11)
+                ax.grid(True, alpha=0.3)
+        for ax in axes[-1]:
+            ax.set_xlabel(r'$\theta$')
+        for ax in axes[:, 0]:
+            ax.set_ylabel(r'$\dot\theta$')
+        fig.tight_layout()
+        for ext in ('pdf', 'png'):
+            fig.savefig(out / f'datagen_samples_k1_{k1:g}.{ext}', dpi=150,
+                        bbox_inches='tight')
+        plt.close(fig)
+        print(f'saved datagen_samples_k1_{k1:g}.{{pdf,png}}')
 
 
 # ----------------------------------------------------------------------
@@ -637,6 +710,11 @@ def main():
                            config["kl_targets"]["k1_values"],
                            config["kl_targets"]["beta_values"],
                            str(Path(config["figures_dir"]) / "datagen_variance.png"))
+
+    if not args.skip_card:
+        run_data_card(cells, config["kl_targets"]["k1_values"], config)
+    if not args.skip_render:
+        run_sample_render(cells, config["kl_targets"]["k1_values"], config)
 
 
 if __name__ == "__main__":

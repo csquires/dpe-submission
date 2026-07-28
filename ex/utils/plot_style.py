@@ -22,7 +22,7 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 
 
-FONT_SIZE = 11
+FONT_SIZE = 16
 ERROR_BAND_ALPHA = 0.18
 LINE_WIDTH = 1.8
 
@@ -123,9 +123,9 @@ def apply() -> None:
         "font.size":           FONT_SIZE,
         "axes.titlesize":      FONT_SIZE,
         "axes.labelsize":      FONT_SIZE,
-        "xtick.labelsize":     FONT_SIZE - 1,
-        "ytick.labelsize":     FONT_SIZE - 1,
-        "legend.fontsize":     FONT_SIZE - 2,
+        "xtick.labelsize":     FONT_SIZE - 2,
+        "ytick.labelsize":     FONT_SIZE - 2,
+        "legend.fontsize":     FONT_SIZE - 3,
         "axes.grid":           True,
         "grid.alpha":          0.3,
         "legend.frameon":      True,

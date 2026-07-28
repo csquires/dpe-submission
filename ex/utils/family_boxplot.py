@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch
 
+from ex.utils.tables import fmt_iqr, write_tables
+
 
 COLOR_NON_TRI = "#4878d0"                        # steel blue (base methods)
 TRI_COLORS = ["#ff7f0e", "#2ca02c", "#d62728"]   # V1 orange, V2 green, V3 red
@@ -118,10 +120,11 @@ def plot_family_boxplot(data, sweep_values, *, sweep_name="K1",
                           _shade(c, fracs[ki]), zorder=3 + oi)
 
     ax.set_xticks(xticks)
-    ax.set_xticklabels(xlabels, rotation=40, ha='right', fontsize=10)
+    ax.set_xticklabels(xlabels, rotation=40, ha='right', fontsize=15)
     ax.set_xlim(0.4, n_fam + 0.6)
-    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=17)
     ax.set_yscale(yscale)
+    ax.tick_params(axis='y', labelsize=14)
     ax.grid(True, axis='y', alpha=0.3)
 
     hue_handles = [
@@ -133,16 +136,46 @@ def plot_family_boxplot(data, sweep_values, *, sweep_name="K1",
     ]
     sw_handles = [Patch(facecolor=_shade(COLOR_NON_TRI, fracs[ki]), alpha=BOX_ALPHA,
                         label=f'{sweep_name} = {sweep_values[ki]:g}') for ki in range(n_sw)]
-    leg1 = ax.legend(handles=hue_handles, title='Method (hue)', fontsize=9,
-                     loc='upper left', bbox_to_anchor=(1.005, 1.0),
+    leg1 = ax.legend(handles=hue_handles, title='Method (hue)', fontsize=13,
+                     title_fontsize=14, loc='upper left', bbox_to_anchor=(1.005, 1.0),
                      borderaxespad=0, framealpha=0.9)
     ax.add_artist(leg1)
-    ax.legend(handles=sw_handles, title=f'{sweep_name} (lightness)', fontsize=9,
-              loc='upper left', bbox_to_anchor=(1.005, 0.5),
+    ax.legend(handles=sw_handles, title=f'{sweep_name} (lightness)', fontsize=13,
+              title_fontsize=14, loc='upper left', bbox_to_anchor=(1.005, 0.42),
               borderaxespad=0, framealpha=0.9)
+    fig.tight_layout()
 
     os.makedirs(out_dir, exist_ok=True)
     for ext in ('pdf', 'png'):
         fig.savefig(os.path.join(out_dir, f'{prefix}_boxplot.{ext}'), dpi=150, bbox_inches='tight')
     print(f"saved {prefix}_boxplot.{{pdf,png}}")
     plt.close(fig)
+
+    _write_box_tables(data, sweep_values, sweep_name, valid, s2_of, ylabel,
+                      os.path.join(out_dir, f'{prefix}_table'))
+
+
+def _write_box_tables(data, sweep_values, sweep_name, families, s2_of, ylabel, stem):
+    """emit {stem}.md/.tex: per (method, sweep) median [q1, q3] of the box data.
+
+    row order mirrors the figure: per family the base method, then triangular
+    variants, then the sigma2 sibling. columns are the sweep values.
+    """
+    header = ['Method'] + [f'{sweep_name}={v:g}' for v in sweep_values]
+    rows = []
+    for base, variants in families:
+        drawn = ([base] if base and base in data else []) \
+            + [v for v in variants if v in data] \
+            + ([s2_of[base]] if s2_of.get(base) in data else [])
+        for m in drawn:
+            cells = []
+            for ki in range(len(sweep_values)):
+                vals = np.asarray(data[m][ki])
+                vals = vals[np.isfinite(vals)]
+                if vals.size == 0:
+                    cells.append('--')
+                else:
+                    q1, med, q3 = np.percentile(vals, [25, 50, 75])
+                    cells.append(fmt_iqr(med, q1, q3))
+            rows.append([m] + cells)
+    write_tables(stem, [(f'{ylabel} -- median [q1, q3] per {sweep_name}', header, rows)])

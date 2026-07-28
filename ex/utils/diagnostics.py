@@ -147,14 +147,53 @@ def plot_qq(ax, log_p0, log_p1, alpha, pair_idx):
     ax.set_ylabel("flow log-prob")
 
 
+def plot_pair_section(data, alphas, fig_dir, name, draw, num_pairs,
+                      pairs_per_file=10, row_h=2.2, stem="datagen_diagnostic"):
+    """emit one per-pair diagnostic section as pair-chunked files.
+
+    draw(ax, ai, alpha, pi) renders one panel. each file holds up to
+    pairs_per_file rows x n_alphas cols and is named
+    {stem}_{name}_p{lo}-{hi}.png -- keeps every file paper-sized instead of
+    one mega-grid.
+    """
+    n_alphas = len(alphas)
+    for lo in range(0, num_pairs, pairs_per_file):
+        hi = min(lo + pairs_per_file, num_pairs)
+        fig, axes = plt.subplots(hi - lo, n_alphas,
+                                 figsize=(4 * n_alphas, row_h * (hi - lo)),
+                                 squeeze=False)
+        for r, pi in enumerate(range(lo, hi)):
+            for ai, alpha in enumerate(alphas):
+                draw(axes[r][ai], ai, alpha, pi)
+        fig.tight_layout()
+        out = Path(fig_dir) / f"{stem}_{name}_p{lo:02d}-{hi - 1:02d}.png"
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"saved {out.name}")
+
+
+def plot_summary_figure(data, alphas, fig_dir):
+    """ldr histograms (1 row) + kl scatter / ldr stats: the aggregate panels."""
+    n_alphas = len(alphas)
+    fig = plt.figure(figsize=(4 * n_alphas, 5))
+    gs = gridspec.GridSpec(2, n_alphas, figure=fig, hspace=0.45, wspace=0.3)
+    for ai, alpha in enumerate(alphas):
+        plot_ldr_histograms(fig.add_subplot(gs[0, ai]), data[ai], alpha)
+    plot_kl_scatter(fig.add_subplot(gs[1, 0:max(1, n_alphas // 2)]), data, alphas)
+    plot_ldr_stats(fig.add_subplot(gs[1, max(1, n_alphas // 2):n_alphas]), data, alphas)
+    out = Path(fig_dir) / "datagen_diagnostic_summary.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"saved {out.name}")
+
+
 def plot_lightweight_figure(data, dataset, alphas, config, plot_weight_bars_fn, plot_class_counts_fn):
-    """create lightweight diagnostic figure covering all pairs.
+    """emit the lightweight diagnostics as per-section, pair-chunked files.
 
-    layout: 4 sections stacked vertically, each num_pairs rows x 4 cols,
-    plus 1 row for ldr histograms and 1 row for kl summary.
-
-    section order: weight bars, class counts, ldr histograms (1 row),
-    pca scatter, kl summary (1 row).
+    replaces the old single mega-grid: weight bars / class counts / pca each
+    become datagen_diagnostic_{section}_p{lo}-{hi}.png chunks, and the
+    aggregate panels (ldr histograms, kl + ldr summary) go to
+    datagen_diagnostic_summary.png.
 
     args:
         data: nested dict from load_all_pairs
@@ -165,53 +204,26 @@ def plot_lightweight_figure(data, dataset, alphas, config, plot_weight_bars_fn, 
         plot_class_counts_fn: callable(ax, dataset, w0, w1, alpha, pair_idx) for class counts
     """
     num_pairs = config["num_pairs_per_alpha"]
-    n_alphas = len(alphas)
-    # rows: weights(num_pairs) + counts(num_pairs) + ldr(1) + pca(num_pairs) + summary(1)
-    total_rows = 3 * num_pairs + 2
-    fig = plt.figure(figsize=(4 * n_alphas, 2 * total_rows))
-    gs = gridspec.GridSpec(total_rows, n_alphas, figure=fig, hspace=0.4, wspace=0.3)
-
-    r = 0  # current row cursor
-
-    # weight bars: num_pairs rows
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[r, ai])
-            plot_weight_bars_fn(ax, data[ai][pi]["w0"], data[ai][pi]["w1"], alpha, pi)
-        r += 1
-
-    # class counts: num_pairs rows
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[r, ai])
-            plot_class_counts_fn(ax, dataset, data[ai][pi]["w0"], data[ai][pi]["w1"], alpha, pi)
-        r += 1
-
-    # ldr histograms: 1 row (all pairs overlaid per alpha)
-    for ai, alpha in enumerate(alphas):
-        ax = fig.add_subplot(gs[r, ai])
-        plot_ldr_histograms(ax, data[ai], alpha)
-    r += 1
-
-    # pca scatter: num_pairs rows
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[r, ai])
-            plot_pca(ax, data[ai][pi]["pstar"], data[ai][pi]["p0"],
-                     data[ai][pi]["p1"], alpha, pi, n_plot=2000)
-        r += 1
-
-    # kl summary: 1 row, 2 wide panels
-    ax_kl = fig.add_subplot(gs[r, 0:n_alphas // 2])
-    plot_kl_scatter(ax_kl, data, alphas)
-    ax_ldr = fig.add_subplot(gs[r, n_alphas // 2:n_alphas])
-    plot_ldr_stats(ax_ldr, data, alphas)
-
     fig_dir = Path(config["figures_dir"])
     fig_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(fig_dir / "datagen_diagnostic.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"saved datagen_diagnostic.png to {fig_dir}")
+
+    plot_pair_section(
+        data, alphas, fig_dir, "weights",
+        lambda ax, ai, alpha, pi: plot_weight_bars_fn(
+            ax, data[ai][pi]["w0"], data[ai][pi]["w1"], alpha, pi),
+        num_pairs)
+    plot_pair_section(
+        data, alphas, fig_dir, "counts",
+        lambda ax, ai, alpha, pi: plot_class_counts_fn(
+            ax, dataset, data[ai][pi]["w0"], data[ai][pi]["w1"], alpha, pi),
+        num_pairs)
+    plot_pair_section(
+        data, alphas, fig_dir, "pca",
+        lambda ax, ai, alpha, pi: plot_pca(
+            ax, data[ai][pi]["pstar"], data[ai][pi]["p0"], data[ai][pi]["p1"],
+            alpha, pi, n_plot=2000),
+        num_pairs)
+    plot_summary_figure(data, alphas, fig_dir)
 
 
 def compute_hardness(data, alphas, num_pairs):
@@ -273,8 +285,7 @@ def plot_hardness_figure(stats, alphas, config, heavy_stats=None, K=None):
     """box plot grid of hardness metrics per alpha.
 
     saves to figures_dir/datagen_variance.png. when K is provided, the kl_cat
-    panel additionally shows analytical references derived in
-    notes/semisynth_appendix.tex (appendix:weight-kl-bounds): the Dirichlet-mean
+    panel additionally shows analytical references: the Dirichlet-mean
     pointwise lower bound E[ell(w)] (always valid, all alpha > 0), and the
     outer-Jensen upper bound on E[KL] (valid only for alpha > 1).
 

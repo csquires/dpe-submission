@@ -93,6 +93,10 @@ def parse_args(args=None):
                    help="samples per pair-side for KL estimation (heavy mode)")
     p.add_argument("--log-prob-steps", type=int, default=100,
                    help="ODE steps for heavy-mode log_p_y (default 100)")
+    p.add_argument("--skip-card", action="store_true",
+                   help="skip the per-stratum data-card table + figure")
+    p.add_argument("--skip-render", action="store_true",
+                   help="skip the decoded ground-truth sample sheet")
     return p.parse_args(args)
 
 
@@ -246,25 +250,26 @@ def plot_kl_figure(data, config, alphas, heavy):
             left half:  KL(w0||w1) (x) vs KL(p0||p1) latent (y) with y=x ref.
             right half: KL(p0||p1) (x) vs KL(p1||p0) (y) with y=x ref.
     """
+    from ex.utils.diagnostics import plot_pair_section
     num_pairs = config["num_pairs_per_alpha"]
     n_a = len(alphas)
-    rows = num_pairs + 1
-    fig = plt.figure(figsize=(4 * n_a, 2.5 * rows))
-    gs = gridspec.GridSpec(rows, n_a, figure=fig, hspace=0.4, wspace=0.3)
+    fig_dir = Path(config["figures_dir"])
 
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[pi, ai])
-            plot_qq(ax,
-                    heavy["log_p0_pstar"][(ai, pi)],
-                    heavy["log_p1_pstar"][(ai, pi)],
-                    alpha, pi)
+    # qq grid: pair-chunked files instead of one mega-grid
+    plot_pair_section(
+        data, alphas, fig_dir, "qq",
+        lambda ax, ai, alpha, pi: plot_qq(
+            ax, heavy["log_p0_pstar"][(ai, pi)],
+            heavy["log_p1_pstar"][(ai, pi)], alpha, pi),
+        num_pairs, row_h=2.5, stem="datagen_kl")
 
     fwd = heavy["kl_p0_p1"]
     rev = heavy["kl_p1_p0"]
     colors = [plt.cm.viridis(ai / max(1, n_a - 1)) for ai in range(n_a)]
 
-    ax_corr = fig.add_subplot(gs[num_pairs, 0:n_a // 2])
+    fig = plt.figure(figsize=(4 * n_a, 3))
+    gs = gridspec.GridSpec(1, n_a, figure=fig, wspace=0.3)
+    ax_corr = fig.add_subplot(gs[0, 0:n_a // 2])
     for ai in range(n_a):
         for pi in range(num_pairs):
             ax_corr.scatter(data[ai][pi]["kl_weights"], fwd[ai, pi],
@@ -278,7 +283,7 @@ def plot_kl_figure(data, config, alphas, heavy):
     ax_corr.set_ylabel("KL(p0 || p1) latent")
     ax_corr.set_title("categorical vs latent KL")
 
-    ax_sym = fig.add_subplot(gs[num_pairs, n_a // 2:n_a])
+    ax_sym = fig.add_subplot(gs[0, n_a // 2:n_a])
     for ai in range(n_a):
         for pi in range(num_pairs):
             ax_sym.scatter(fwd[ai, pi], rev[ai, pi],
@@ -290,8 +295,7 @@ def plot_kl_figure(data, config, alphas, heavy):
     ax_sym.set_ylabel("KL(p1 || p0)")
     ax_sym.set_title("KL symmetry check")
 
-    fig_dir = Path(config["figures_dir"])
-    out = fig_dir / "datagen_kl_diagnostic.png"
+    out = fig_dir / "datagen_kl_summary.png"
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"saved {out}")
@@ -306,13 +310,98 @@ def plot_kl_figure(data, config, alphas, heavy):
                   f"{mean_ldr:<10.4f}")
 
 
+def run_data_card(data, alphas, num_pairs, config):
+    """per-stratum data card: dimensionality / multimodality / irregularity.
+
+    metrics on pstar samples + true ldrs per cell; emits data_card.{md,tex}
+    and data_card.{png,pdf} (metric boxes vs alpha) into figures_dir.
+    """
+    from ex.utils import data_card as dc
+    names = ['twonn_id', 'part_ratio', 'gmm_modes', 'eff_modes_w0',
+             'eff_modes_w1', 'lip_q90', 'hill_tail']
+    vals = {m: [[] for _ in alphas] for m in names}
+    for ai in range(len(alphas)):
+        for pi in range(num_pairs):
+            d = data[ai][pi]
+            X, ldr = d['pstar'], d['true_ldrs']
+            vals['twonn_id'][ai].append(dc.twonn_id(X))
+            vals['part_ratio'][ai].append(dc.participation_ratio(X))
+            vals['gmm_modes'][ai].append(dc.gmm_modes(X))
+            vals['eff_modes_w0'][ai].append(dc.eff_modes(d['w0']))
+            vals['eff_modes_w1'][ai].append(dc.eff_modes(d['w1']))
+            vals['lip_q90'][ai].append(dc.lip_q(X, ldr))
+            vals['hill_tail'][ai].append(dc.hill_tail(ldr))
+    fig_dir = config['figures_dir']
+    dc.write_card(str(Path(fig_dir) / 'data_card'),
+                  [f'alpha={a:g}' for a in alphas], vals,
+                  title='mnist data card (pstar VAE latents) -- med [q1, q3] over pairs')
+    dc.plot_metric_boxes(vals, alphas, sweep_name='alpha',
+                         out_dir=fig_dir, prefix='data_card')
+
+
+def run_sample_render(data, alphas, config, n_show=10, n_pairs=2):
+    """ground-truth rendering: decode n_show VAE-latent samples per
+    distribution (p0/p1/p*) for n_pairs pairs per alpha to 28x28 images."""
+    import os
+    from src.models.vae.mnist_vae import MNISTVAE
+    ckpt_dir = os.path.expandvars(config['ckpt_dir'])
+    if not Path(f'{ckpt_dir}/vae_global.pt').exists():
+        ckpt_dir = os.path.expandvars('${DPE_DATA_ROOT}/mnist_eldr_cond_flow/ckpt')
+    vae = MNISTVAE(latent_dim=config['latent_dim'])
+    vae.load_state_dict(torch.load(f'{ckpt_dir}/vae_global.pt', map_location='cpu'))
+    vae.eval()
+
+    dists = ['p0', 'p1', 'pstar']
+    rng = np.random.default_rng(0)
+    out = Path(config['figures_dir'])
+    # one file per alpha so figures stay paper-sized and composable
+    for ai, alpha in enumerate(alphas):
+        nrows = n_pairs * len(dists)
+        fig, axes = plt.subplots(nrows, n_show,
+                                 figsize=(n_show * 0.62, nrows * 0.62))
+        r = 0
+        for pi in range(n_pairs):
+            for dist in dists:
+                X = data[ai][pi][dist]
+                idx = rng.choice(X.shape[0], n_show, replace=False)
+                with torch.no_grad():
+                    imgs = vae.decode(torch.from_numpy(X[idx]).float()).numpy()
+                imgs = imgs.reshape(n_show, 28, 28)
+                for c in range(n_show):
+                    axes[r, c].imshow(imgs[c], cmap='gray_r')
+                    axes[r, c].set_axis_off()
+                label = dist.replace('pstar', 'p*')
+                axes[r, 0].text(-0.35, 0.5, f'#{pi} {label}',
+                                transform=axes[r, 0].transAxes, ha='right',
+                                va='center', fontsize=9)
+                r += 1
+        fig.tight_layout(pad=0.2)
+        tag = f'alpha_{alpha:g}'.replace('.', 'p')
+        for ext in ('pdf', 'png'):
+            fig.savefig(out / f'datagen_samples_{tag}.{ext}', dpi=150,
+                        bbox_inches='tight')
+        plt.close(fig)
+        print(f'saved datagen_samples_{tag}.{{pdf,png}}')
+
+
 def main():
     """top-level: load data, run lightweight + hardness, optionally heavy KL."""
+    import glob
+    import os
     args = parse_args()
     config = yaml.safe_load(open(args.config))
     alphas = config["alphas"]
     num_pairs = config["num_pairs_per_alpha"]
-    data_dir = config["data_dir"]
+    data_dir = os.path.expandvars(config["data_dir"])
+
+    # config may stage a larger campaign than what is on disk; clamp.
+    avail = min(len(glob.glob(f'{data_dir}/alpha_{ai}_pair_*.h5'))
+                for ai in range(len(alphas)))
+    if avail < num_pairs:
+        print(f'warning: config has num_pairs_per_alpha={num_pairs} but only '
+              f'{avail} pairs on disk; using {avail}')
+        num_pairs = avail
+        config["num_pairs_per_alpha"] = num_pairs   # helpers re-read config
 
     data = load_all_pairs(data_dir, alphas, num_pairs)
     dataset = get_mnist_dataset(root="./data", train=True)
@@ -337,6 +426,11 @@ def main():
         }
     print_hardness_table(stats, alphas, aug)
     plot_hardness_figure(stats, alphas, config, aug, K=10)
+
+    if not args.skip_card:
+        run_data_card(data, alphas, num_pairs, config)
+    if not args.skip_render:
+        run_sample_render(data, alphas, config)
 
     if heavy_stats is not None:
         plot_kl_figure(data, config, alphas, heavy_stats)

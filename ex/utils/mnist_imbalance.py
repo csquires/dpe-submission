@@ -134,7 +134,7 @@ def invert_weights(w: np.ndarray) -> np.ndarray:
 def bound_moments(alpha: float, K: int) -> dict:
     """closed-form moments of the pointwise sandwich on KL(w || invert(w)).
 
-    pointwise bracket from semisynth appendix:
+    pointwise bracket:
         ell(w) = 2 T1 - T2/K + log K  <=  KL(w || invert(w))  <=  2 T1 - T2 + log K = u(w)
     where T1 = sum_j w_j log w_j, T2 = sum_j log w_j, w ~ Dir(alpha 1_K).
 
@@ -149,7 +149,7 @@ def bound_moments(alpha: float, K: int) -> dict:
         1. evaluate the digamma table at alpha + s, K alpha + s for s in {0,1,2}
            and the trigamma analogues.
         2. assemble mu1, mu2 (means of T1, T2), Var(T2), E[T1^2], Var(T1),
-           E[T1 T2], Cov(T1, T2) per the appendix derivation.
+           E[T1 T2], Cov(T1, T2).
         3. apply linear combinations to get E[ell], E[u], Var(ell), Var(u).
     """
     psi1_a1 = digamma(alpha + 1.0)

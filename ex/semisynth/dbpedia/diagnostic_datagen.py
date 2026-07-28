@@ -12,6 +12,8 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.gridspec as gridspec
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -56,6 +58,10 @@ def parse_args(args=None):
                    help="samples per pair-side for KL estimation (heavy mode)")
     p.add_argument("--log-prob-steps", type=int, default=100,
                    help="ODE steps for heavy-mode log_p_y (default 100)")
+    p.add_argument("--skip-card", action="store_true",
+                   help="skip the per-stratum data-card table + figure")
+    p.add_argument("--skip-render", action="store_true",
+                   help="skip the ground-truth mixture-weight sheet")
     return p.parse_args(args)
 
 
@@ -97,58 +103,34 @@ def plot_label_targets(ax, w0, w1, alpha, pair_idx):
 
 
 def plot_lightweight_figure(data, alphas, config):
-    """create lightweight diagnostic figure covering all pairs.
+    """emit the lightweight diagnostics as per-section, pair-chunked files.
 
-    layout (per alpha column):
-        weight bars (num_pairs rows)
-        label targets (num_pairs rows)        # dbpedia-specific (K=14, named)
-        ldr histograms (1 row, all pairs overlaid)
-        pca scatter (num_pairs rows)
-        kl + ldr summary (1 row, two wide panels)
+    replaces the old single mega-grid: label targets and pca become
+    datagen_diagnostic_{section}_p{lo}-{hi}.png chunks; aggregate panels go
+    to datagen_diagnostic_summary.png (see ex.utils.diagnostics helpers).
 
     args:
         data: nested dict from load_all_pairs (pstar/p0/p1 are 64-dim here).
         alphas: list of alpha values.
         config: config dict with figures_dir, num_pairs_per_alpha.
     """
+    from ex.utils.diagnostics import plot_pair_section, plot_summary_figure
     num_pairs = config["num_pairs_per_alpha"]
-    n_alphas = len(alphas)
-    total_rows = 2 * num_pairs + 2
-    fig = plt.figure(figsize=(4 * n_alphas, 2 * total_rows))
-    gs = gridspec.GridSpec(total_rows, n_alphas, figure=fig,
-                           hspace=0.55, wspace=0.3)
-
-    r = 0
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[r, ai])
-            plot_label_targets(ax, data[ai][pi]["w0"], data[ai][pi]["w1"],
-                               alpha, pi)
-        r += 1
-
-    for ai, alpha in enumerate(alphas):
-        ax = fig.add_subplot(gs[r, ai])
-        plot_ldr_histograms(ax, data[ai], alpha)
-    r += 1
-
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[r, ai])
-            plot_pca(ax, data[ai][pi]["pstar"], data[ai][pi]["p0"],
-                     data[ai][pi]["p1"], alpha, pi, n_plot=2000)
-        r += 1
-
-    ax_kl = fig.add_subplot(gs[r, 0:max(1, n_alphas // 2)])
-    plot_kl_scatter(ax_kl, data, alphas)
-    ax_ldr = fig.add_subplot(gs[r, max(1, n_alphas // 2):n_alphas])
-    plot_ldr_stats(ax_ldr, data, alphas)
-
     fig_dir = Path(config["figures_dir"])
     fig_dir.mkdir(parents=True, exist_ok=True)
-    out = fig_dir / "datagen_diagnostic.png"
-    fig.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"saved {out}")
+
+    plot_pair_section(
+        data, alphas, fig_dir, "weights",
+        lambda ax, ai, alpha, pi: plot_label_targets(
+            ax, data[ai][pi]["w0"], data[ai][pi]["w1"], alpha, pi),
+        num_pairs)
+    plot_pair_section(
+        data, alphas, fig_dir, "pca",
+        lambda ax, ai, alpha, pi: plot_pca(
+            ax, data[ai][pi]["pstar"], data[ai][pi]["p0"], data[ai][pi]["p1"],
+            alpha, pi, n_plot=2000),
+        num_pairs)
+    plot_summary_figure(data, alphas, fig_dir)
 
 
 def stack_log_p_y(flow, points, steps, device, chunk_size=250):
@@ -296,25 +278,26 @@ def plot_kl_figure(data, config, alphas, heavy):
     layout matches the mnist sibling: rows 0..num_pairs-1 are QQ plots,
     last row is two wide summary panels.
     """
+    from ex.utils.diagnostics import plot_pair_section
     num_pairs = config["num_pairs_per_alpha"]
     n_a = len(alphas)
-    rows = num_pairs + 1
-    fig = plt.figure(figsize=(4 * n_a, 2.5 * rows))
-    gs = gridspec.GridSpec(rows, n_a, figure=fig, hspace=0.4, wspace=0.3)
+    fig_dir = Path(config["figures_dir"])
 
-    for pi in range(num_pairs):
-        for ai, alpha in enumerate(alphas):
-            ax = fig.add_subplot(gs[pi, ai])
-            plot_qq(ax,
-                    heavy["log_p0_pstar"][(ai, pi)],
-                    heavy["log_p1_pstar"][(ai, pi)],
-                    alpha, pi)
+    # qq grid: pair-chunked files instead of one mega-grid
+    plot_pair_section(
+        data, alphas, fig_dir, "qq",
+        lambda ax, ai, alpha, pi: plot_qq(
+            ax, heavy["log_p0_pstar"][(ai, pi)],
+            heavy["log_p1_pstar"][(ai, pi)], alpha, pi),
+        num_pairs, row_h=2.5, stem="datagen_kl")
 
     fwd = heavy["kl_p0_p1"]
     rev = heavy["kl_p1_p0"]
     colors = [plt.cm.viridis(ai / max(1, n_a - 1)) for ai in range(n_a)]
 
-    ax_corr = fig.add_subplot(gs[num_pairs, 0:max(1, n_a // 2)])
+    fig = plt.figure(figsize=(4 * n_a, 3))
+    gs = gridspec.GridSpec(1, n_a, figure=fig, wspace=0.3)
+    ax_corr = fig.add_subplot(gs[0, 0:max(1, n_a // 2)])
     for ai in range(n_a):
         for pi in range(num_pairs):
             ax_corr.scatter(data[ai][pi]["kl_weights"], fwd[ai, pi],
@@ -328,7 +311,7 @@ def plot_kl_figure(data, config, alphas, heavy):
     ax_corr.set_ylabel("KL(p0 || p1) latent")
     ax_corr.set_title("categorical vs latent KL")
 
-    ax_sym = fig.add_subplot(gs[num_pairs, max(1, n_a // 2):n_a])
+    ax_sym = fig.add_subplot(gs[0, max(1, n_a // 2):n_a])
     for ai in range(n_a):
         for pi in range(num_pairs):
             ax_sym.scatter(fwd[ai, pi], rev[ai, pi],
@@ -340,8 +323,7 @@ def plot_kl_figure(data, config, alphas, heavy):
     ax_sym.set_ylabel("KL(p1 || p0)")
     ax_sym.set_title("KL symmetry check")
 
-    fig_dir = Path(config["figures_dir"])
-    out = fig_dir / "datagen_kl_diagnostic.png"
+    out = fig_dir / "datagen_kl_summary.png"
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"saved {out}")
@@ -354,6 +336,71 @@ def plot_kl_figure(data, config, alphas, heavy):
                   f"{data[ai][pi]['kl_weights']:<10.2f}  "
                   f"{fwd[ai, pi]:<10.2f}  {rev[ai, pi]:<10.2f}  "
                   f"{mean_ldr:<10.4f}")
+
+
+def run_data_card(data, alphas, num_pairs, config):
+    """per-stratum data card: dimensionality / multimodality / irregularity.
+
+    dbpedia adds embedding-space metrics (anisotropy, hubness) on the 64-d
+    SBERT-PCA codes. emits data_card.{md,tex,png,pdf} into figures_dir.
+    """
+    from ex.utils import data_card as dc
+    names = ['twonn_id', 'part_ratio', 'mean_cos', 'hubness', 'gmm_modes',
+             'eff_modes_w0', 'eff_modes_w1', 'lip_q90', 'hill_tail']
+    vals = {m: [[] for _ in alphas] for m in names}
+    for ai in range(len(alphas)):
+        for pi in range(num_pairs):
+            d = data[ai][pi]
+            X, ldr = d['pstar'], d['true_ldrs']
+            vals['twonn_id'][ai].append(dc.twonn_id(X))
+            vals['part_ratio'][ai].append(dc.participation_ratio(X))
+            vals['mean_cos'][ai].append(dc.mean_cos(X))
+            vals['hubness'][ai].append(dc.hubness(X))
+            vals['gmm_modes'][ai].append(dc.gmm_modes(X))
+            vals['eff_modes_w0'][ai].append(dc.eff_modes(d['w0']))
+            vals['eff_modes_w1'][ai].append(dc.eff_modes(d['w1']))
+            vals['lip_q90'][ai].append(dc.lip_q(X, ldr))
+            vals['hill_tail'][ai].append(dc.hill_tail(ldr))
+    fig_dir = config['figures_dir']
+    dc.write_card(str(Path(fig_dir) / 'data_card'),
+                  [f'alpha={a:g}' for a in alphas], vals,
+                  title='dbpedia data card (pstar SBERT-PCA codes) -- med [q1, q3] over pairs')
+    dc.plot_metric_boxes(vals, alphas, sweep_name='alpha',
+                         out_dir=fig_dir, prefix='data_card')
+
+
+def run_weight_render(data, alphas, config, n_pairs=2):
+    """ground-truth rendering: exact class-mixture weights (w0 vs w1) per cell.
+
+    dbpedia samples are sentence embeddings with no decoder, so the honest
+    human-viewable ground truth is the mixture composition itself.
+    """
+    K = len(DBPEDIA_LABEL_NAMES)
+    x = np.arange(K)
+    out = Path(config['figures_dir'])
+    # one file per alpha so figures stay paper-sized and composable
+    for ai, alpha in enumerate(alphas):
+        fig, axes = plt.subplots(n_pairs, 1, figsize=(7.5, 1.9 * n_pairs),
+                                 sharex=True, squeeze=False)
+        for pi in range(n_pairs):
+            ax = axes[pi, 0]
+            d = data[ai][pi]
+            ax.bar(x - 0.2, d['w0'], width=0.4, label='w0 (p0)', color='#4878d0')
+            ax.bar(x + 0.2, d['w1'], width=0.4, label='w1 (p1)', color='#d65f5f')
+            ax.set_ylabel(f'#{pi}', fontsize=10)
+            ax.grid(True, axis='y', alpha=0.3)
+            if pi == 0:
+                ax.legend(fontsize=9, ncol=2)
+        axes[-1, 0].set_xticks(x)
+        axes[-1, 0].set_xticklabels([n[:10] for n in DBPEDIA_LABEL_NAMES],
+                                    rotation=40, ha='right', fontsize=9)
+        fig.tight_layout()
+        tag = f'alpha_{alpha:g}'.replace('.', 'p')
+        for ext in ('pdf', 'png'):
+            fig.savefig(out / f'datagen_gt_weights_{tag}.{ext}', dpi=150,
+                        bbox_inches='tight')
+        plt.close(fig)
+        print(f'saved datagen_gt_weights_{tag}.{{pdf,png}}')
 
 
 def main():
@@ -385,6 +432,11 @@ def main():
         }
     print_hardness_table(stats, alphas, aug)
     plot_hardness_figure(stats, alphas, config, aug, K=14)
+
+    if not args.skip_card:
+        run_data_card(data, alphas, num_pairs, config)
+    if not args.skip_render:
+        run_weight_render(data, alphas, config)
 
     if heavy_stats is not None:
         plot_kl_figure(data, config, alphas, heavy_stats)
