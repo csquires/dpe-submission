@@ -1,13 +1,12 @@
 """define-by-run optuna suggest_hp for TSM (time score matching).
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
-calls. implements conditional suggestion of inert params per
-notes/hpo_search_space_finalization.md. fixes n_steps at 2000 (HPO decision:
-uniform multi-fidelity resource axis).
+calls. implements conditional suggestion of inert params. fixes n_steps at
+N_STEPS (uniform multi-fidelity resource axis).
 
-inertness edges (from static + scratch/tsm_inertness_probe.py):
+inertness edges (static scan + probe):
   - apply_iw inert when time_dist == "uniform" (UniformSampler returns iw=1;
-    only behavioral edge -- TSM has no path schedule, no precond, no inner_eps)
+    only behavioral edge -- TSM lacks a path schedule, precond, and inner_eps)
 
 not searched -- pinned:
   - n_hidden_layers: per-experiment via StudyConfig.fixed_hp

@@ -1,4 +1,4 @@
-"""pure-math atoms for path interpolants. no clamping, no eps.
+"""pure-math atoms for path interpolants (clamping and eps are left to builders).
 
 core schedule and weight atoms used by path builders to compose regularized
 diffusion paths. all functions are pure; derivatives are a.e. analytic with

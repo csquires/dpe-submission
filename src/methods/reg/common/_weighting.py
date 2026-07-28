@@ -1,9 +1,7 @@
 """time-weighting helpers for Hyvarinen-style losses.
 
-mirrors the ``ProbPath.get_time_weighting_quantities`` contract from
-dre-prob-paths: each helper returns the quadruple
-(lam_t, lam_t0, lam_t1, lam_dt) consumed by tsm-family losses to
-reweight interior and boundary terms.
+each helper returns the quadruple (lam_t, lam_t0, lam_t1, lam_dt)
+consumed by tsm-family losses to reweight interior and boundary terms.
 
 the per-mode contract:
   - ``identity``: lam_t = lam_t0 = lam_t1 = 1, lam_dt = 0; recovers the
@@ -13,7 +11,7 @@ the per-mode contract:
     lam_dt = -2 tau; lam_t0/lam_t1 are evaluated at the boundary times
     (with a tiny eps^2 regularizer at t=1). matches the
     ``reweight=True`` formulas previously inlined in tsm_loss /
-    tri_tsm_loss and the OneVP ``path_var`` weights in dre-prob-paths.
+    tri_tsm_loss.
 
 the future ``obj_var`` mode (parameterized by a mixing factor) is the
 analog of CTSM's optimal weighting; it is path-specific and not
@@ -62,8 +60,7 @@ def path_var_lambdas(
     """path-variance weighting for the linear interpolant.
 
     matches the ``reweight=True`` formulas previously inlined in
-    tsm_loss / tri_tsm_loss; equivalent to ``OneVP.path_var`` in
-    dre-prob-paths.
+    tsm_loss / tri_tsm_loss.
 
     Args:
         interior_tau: [B, 1] sampled time used by interior terms.
@@ -105,8 +102,7 @@ def outer_path_var(tau: Tensor) -> Tensor:
     returns ``(1 - tau^2).squeeze(-1)``; the same path_var lambda used by
     tsm/tri_tsm but exposed as a single per-sample multiplier for losses
     that apply a single outer weight rather than a (lam_t0/lam_t1/lam_dt)
-    quadruple. matches the dre-prob-paths ``path_var`` mode applied at
-    the loss level. composes multiplicatively with the importance weight
+    quadruple. composes multiplicatively with the importance weight
     (iw) from non-uniform tau sampling.
 
     Args:

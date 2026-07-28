@@ -1,6 +1,6 @@
 """
 single source of truth for per-method walltime caps used by watchdog
-and pilot-launchers. preempt caps are halved per D3 ratified decision
+and pilot-launchers. preempt caps are halved relative to array caps
 (gen_tramp.sh:TIME_LIMITS); array caps for reference and non-preempt
 usage (submit_hpo.sh:TIME_LIMITS).
 """

@@ -1,7 +1,6 @@
 """Base factory for model_selection HPO configs; replaces 8 thin modules.
 
-builds StudyConfig for any (variant_tag, tier) pair. shared settings
-extracted from model_selection_avi.py and model_selection_gpu_avi.py.
+builds StudyConfig for any (variant_tag, tier) pair.
 
 intended use: thin client config modules import make() and set
 CONFIG = make(tag=..., tier=...).

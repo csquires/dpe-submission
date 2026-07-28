@@ -4,7 +4,7 @@ same conditionality structure as fmdre.py with one extra always-active knob
 (`p_uncond`, the cfg dropout probability). search space mirrors FMDRE_S2's
 entry in method_specs.py.
 
-inertness edges (from static + scratch/fmdre_inertness_probe.py):
+inertness edges (static scan + probe):
   - reweight inert when precond == True (EDM lambda bypasses reweight)
   - apply_iw inert when time_dist == "uniform"
 

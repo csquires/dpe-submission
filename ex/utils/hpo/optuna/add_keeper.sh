@@ -3,8 +3,8 @@
 #
 # appends the StudyConfig module to $DPE_DATA_ROOT/redis/keepers.txt; the redis
 # job's keeper supervisor (see redis_server.sh) picks it up within ~30s and
-# spawns the keeper as a child process. no new slurm job, no redis restart --
-# campaigns can be started while others are already running.
+# spawns the keeper as a child process, so campaigns can be started alongside
+# already-running ones without a new slurm job or a redis restart.
 #
 #   bash add_keeper.sh ex.utils.hpo.optuna.configs.eig_reg
 #

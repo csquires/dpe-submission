@@ -1,11 +1,10 @@
 """define-by-run optuna suggest_hp for FMDRE (S1, two-source flow-matching DRE).
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
-calls. implements conditional suggestion of inert params per
-notes/hpo_search_space_finalization.md. fixes n_steps at 2000 (HPO decision:
-uniform multi-fidelity resource axis).
+calls. implements conditional suggestion of inert params. fixes n_steps at
+N_STEPS (uniform multi-fidelity resource axis).
 
-inertness edges (from static + scratch/fmdre_inertness_probe.py):
+inertness edges (static scan + probe):
   - reweight inert when precond == True (EDM lambda outer_weight bypasses
     reweight inside make_fm_loss; warning emitted by FMDRE.fit when both set)
   - apply_iw inert when time_dist == "uniform" (UniformSampler returns iw=1)

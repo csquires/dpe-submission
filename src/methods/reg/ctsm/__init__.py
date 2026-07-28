@@ -1,7 +1,7 @@
 """CTSM family: continuous-time score matching DRE.
 
 The two-source (DRE) variant CTSM uses the four-slot surface (path, time, curve,
-integrator) defined in Pillar E of notes/waypoints_unification_mid_level.md.
+integrator).
 
 Stock CTSM trains a single score network s_phi(x, tau) under SB loss
 (Schroedinger-bridge setting, path parameterization via DirectPath1D).
@@ -129,8 +129,8 @@ class CTSM(DRE):
         samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
         if (samp_ie > 0) != (inner_eps > 0):
             warnings.warn(
-                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
-                "Probably unintentional.", UserWarning, stacklevel=2,
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}; "
+                "probably unintentional.", UserWarning, stacklevel=2,
             )
         elif samp_ie > 0 and inner_eps > 0:
             assert abs(samp_ie - inner_eps) < 1e-9, \

@@ -5,7 +5,7 @@ invocation:
     DPE_DATA_ROOT=... DPE_CKPT_ROOT=... \
     python -m ex.utils.step2_runner.dispatch \
         --experiment model_selection \
-        --winners scratch/200broad/winners_pinned/winners.model_selection.uniform_200broad.yaml \
+        --winners path/to/winners.yaml \
         --max-cells-per-job 20 \
         [--methods CTSM,VFM,FMDRE]   # default: all methods in winners
 
@@ -82,6 +82,11 @@ def main() -> None:
                    help="comma-separated method whitelist (default: all in winners)")
     p.add_argument("--config", default=None,
                    help="experiment config.yaml (default: ex/<exp>/config.yaml)")
+    p.add_argument("--output-dir", default=None,
+                   help="root for per-cell results (default: "
+                        "$DPE_DATA_ROOT/<experiment>/step2_results). set this "
+                        "per variant when one adapter serves several variants, "
+                        "or they collide via --skip-existing.")
     p.add_argument("--out", default=None,
                    help="queue file path (default: $DPE_DATA_ROOT/step2_<exp>_queue.txt)")
     p.add_argument("--skip-existing", action="store_true", default=True,
@@ -110,9 +115,16 @@ def main() -> None:
         methods = yaml_methods
     print(f"methods to dispatch: {methods}")
 
-    # output paths
+    # output paths. --output-dir is required when one adapter serves several
+    # variants (e.g. the dokls ablation runs 8 (pstar_idx, nsamples) variants
+    # through ex.ablations.dokls): the default is keyed only on --experiment, so
+    # every variant would share <exp>/step2_results, and --skip-existing would
+    # make variants 2..N skip cells written by variant 1 -- silently yielding
+    # identical results for all of them.
     data_root = _data_root()
-    output_dir = data_root / args.experiment / "step2_results"
+    output_dir = Path(args.output_dir) if args.output_dir else (
+        data_root / args.experiment / "step2_results"
+    )
     queue_path = Path(args.out) if args.out else (data_root / f"step2_{args.experiment}_queue.txt")
 
     # build queue lines

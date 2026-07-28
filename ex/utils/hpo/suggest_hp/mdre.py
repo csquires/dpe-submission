@@ -1,11 +1,10 @@
 """define-by-run optuna suggest_hp for MDRE.
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
-calls. flat parameter space; the behavioral inertness probe
-(scratch/bdre_mdre_inertness_probe.py + bdre_mdre_inertness_results.txt)
-confirmed all parameters active in every training context, so no conditional
-branching. fixes n_steps at N_STEPS = 6400 (HPO decision: uniform
-multi-fidelity resource axis, mirroring VFM / MultiHeadTDRE).
+calls. flat parameter space; the behavioral inertness probe confirmed all
+parameters active in every training context, so no conditional branching.
+fixes n_steps at N_STEPS (uniform multi-fidelity resource axis, mirroring
+VFM / MultiHeadTDRE).
 """
 
 from typing import Any

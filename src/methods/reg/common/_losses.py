@@ -64,8 +64,7 @@ def tsm_loss(
       term5 = model(x_tau, tau)^2 \\lambda_t
     weights default to 1 (reweight=False -> identity_lambdas);
     reweight=True picks path_var_lambdas (lambda_t=1-tau^2, lambda_{dt}=-2 tau).
-    delegated to `_weighting.resolve_lambdas`; mirrors the
-    `prob_path.get_time_weighting_quantities` contract from dre-prob-paths.
+    delegated to `_weighting.resolve_lambdas`.
 
     Args:
         model: f(x [B,D], t [B,1]) -> [B,1].

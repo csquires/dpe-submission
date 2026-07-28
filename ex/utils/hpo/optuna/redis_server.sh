@@ -8,7 +8,7 @@
 # spawns one keeper per config listed in $DPE_DATA_ROOT/redis/keepers.txt, so
 # a keeper is a child process here rather than its own slurm job. add_keeper.sh
 # appends to that registry to start a campaign into an already-running redis
-# job -- no restart, no extra slurm job.
+# job without a restart or an extra slurm job.
 #
 #   bash redis_server.sh                                    # sbatch this job
 #   bash add_keeper.sh ex.utils.hpo.optuna.configs.eig_reg  # add a campaign
@@ -48,7 +48,12 @@ echo "redis endpoint: ${HOST}:${PORT}   jobid: ${SLURM_JOB_ID}"
 # self-chaining is the only way to keep an uninterrupted optredis line up.
 # guarded by OPTREDIS_NOCHAIN=1 for manual one-shot runs.
 if [[ "${OPTREDIS_NOCHAIN:-0}" != "1" ]]; then
+    # --export=ALL + --chdir keep DPE_* env and a VALID working dir across the
+    # chain. without them a successor lost DPE_DATA_ROOT and ran with a broken
+    # cwd (/dpe-submission), so keepers' sbatch died on "getcwd failed" and
+    # dispatched nothing. WORKDIR is this job's (valid) dir, propagated forward.
     SUCC=$(sbatch --parsable --dependency=afterany:"${SLURM_JOB_ID}" \
+        --export=ALL --chdir="$WORKDIR" \
         "${BASH_SOURCE[0]}" 2>/dev/null || echo "")
     if [[ -n "$SUCC" ]]; then
         echo "[redis] self-chained successor jobid: $SUCC"
@@ -60,6 +65,12 @@ fi
 # minimal config: reachable from all nodes, AOF persistence so a requeue
 # replays cleanly. redis is single-threaded -> its AOF append is the only
 # disk write and is never concurrent.
+#
+# RDB snapshots are DISABLED (save ""): the journal DB grows to tens of millions
+# of keys, whose 6GB+ bgsave forks fail/get-killed and, with the default
+# stop-writes-on-bgsave-error yes, that BLOCKS all writes (workers can't record
+# trials) and litters temp-*.rdb files. AOF is the intended persistence anyway,
+# so drop RDB and also disable the write-block as belt-and-suspenders.
 cat > "$RDIR/redis.conf" <<EOF
 bind 0.0.0.0
 port ${PORT}
@@ -67,7 +78,8 @@ protected-mode no
 dir ${RDIR}/data
 appendonly yes
 appendfsync everysec
-save 300 1
+save ""
+stop-writes-on-bgsave-error no
 EOF
 
 redis-server "$RDIR/redis.conf" &

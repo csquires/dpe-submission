@@ -68,11 +68,9 @@ class LaneProfile:
 
 
 LANES: dict[str, LaneProfile] = {
-    # array: profiled-optimal throughput shape (scratch/holdout_sweep_aggregate.py
-    # + the zen 4/5 reps in scratch/holdout_profile_results_zen45/): cpus=32,
-    # B=32, cores=1 -> 13.28 elem/min on epyc 7763, 1.43x cpus=16/B=8. consumers
-    # (submit.py worker, submit_holdout.sh) read the lane to avoid duplicating
-    # the shape.
+    # array: profiled-optimal throughput shape: cpus=32, B=32, cores=1 ->
+    # 13.28 elem/min on epyc 7763, 1.43x cpus=16/B=8. consumers (submit.py
+    # worker, submit_holdout.sh) read the lane to avoid duplicating the shape.
     "array": LaneProfile(
         partition="array",
         qos="",
@@ -80,6 +78,24 @@ LANES: dict[str, LaneProfile] = {
         cpus_per_task=32,
         mem="128G",
         batch_size=32,
+        worker_walltime="18:00:00",
+        max_concurrent=96,
+        cores_per_trial=1,
+    ),
+    # array_small: the "array" lane's cores=1 shape at the holdout lane's small
+    # 8-cpu/8-trial footprint, for optuna workers when the array partition is
+    # fragmented. cpus=32 is throughput-optimal per element but needs 32
+    # contiguous idle cores; when the partition is saturated (e.g. ~600 idle
+    # cores scattered over allocated nodes) those jobs sit PD "Priority"
+    # indefinitely, while 8-cpu elements backfill and actually run. ~1.4x worse
+    # per element, far better wall-clock when nothing else schedules.
+    "array_small": LaneProfile(
+        partition="array",
+        qos="",
+        gpus=0,
+        cpus_per_task=8,
+        mem="64G",
+        batch_size=8,
         worker_walltime="18:00:00",
         max_concurrent=96,
         cores_per_trial=1,
@@ -145,7 +161,7 @@ LANES: dict[str, LaneProfile] = {
     # B=1: one trial per gpu. profiled 2026-07-05 -- B=8 (8 loky trials/gpu) ran
     # 2.2x SLOWER at steady state (1.8 vs 4 completes/min across 7 studies): the
     # dim-64 vfm/fmdre trials saturate the gpu so concurrency just time-slices,
-    # and 56 workers contend on the aviamala redis journal (comms-bound).
+    # and 56 workers contend on the shared redis journal (comms-bound).
     # dispatched as a job array (the array partition only accepts arrays) via
     # keeper.dispatch_array_gpu; the cpu "array" lane is left untouched.
     "array_gpu": LaneProfile(

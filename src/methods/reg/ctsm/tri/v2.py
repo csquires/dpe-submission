@@ -125,8 +125,8 @@ class TriangularCTSMV2(ELDR):
         samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
         if (samp_ie > 0) != (inner_eps > 0):
             warnings.warn(
-                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
-                "Probably unintentional.",
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}; "
+                "probably unintentional.",
                 UserWarning,
                 stacklevel=2,
             )

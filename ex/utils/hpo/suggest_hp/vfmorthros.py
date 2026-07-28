@@ -1,8 +1,7 @@
 """define-by-run optuna suggest_hp for VFMOrthros.
 
 velocity flow matching with orthogonal shared backbone; conditional suggestion
-of inert params. see notes/vfm_vfmorthros_conditionality.md for conditionality
-rationale.
+of inert params.
 """
 
 from typing import Any

@@ -62,7 +62,7 @@ if __name__ == '__main__':
     NSAMPLES_TEST = 10
     KL_DIVERGENCE = 5
 
-    # === CREATE SYNTHETIC DATA ===
+    # === create synthetic data ===
     gaussian_pair = create_two_gaussians_kl(DIM, KL_DIVERGENCE, beta=0.5)
     mu0, Sigma0 = gaussian_pair['mu0'], gaussian_pair['Sigma0']
     mu1, Sigma1 = gaussian_pair['mu1'], gaussian_pair['Sigma1']
@@ -71,7 +71,7 @@ if __name__ == '__main__':
     samples_p0 = p0.sample((NSAMPLES_TRAIN//2,))
     samples_p1 = p1.sample((NSAMPLES_TRAIN,))
 
-    # === BUILD WAYPOINTS ===
+    # === build waypoints ===
     waypoint_builder = DefaultWaypointBuilder()
     waypoint_samples = waypoint_builder.build_waypoints(samples_p0, samples_p1, num_waypoints=10)
     

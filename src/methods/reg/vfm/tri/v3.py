@@ -152,8 +152,8 @@ class TriangularVFM2D(ELDR):
         samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
         if (samp_ie > 0) != (inner_eps > 0):
             warnings.warn(
-                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
-                "Probably unintentional.", UserWarning, stacklevel=2,
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}; "
+                "probably unintentional.", UserWarning, stacklevel=2,
             )
         elif samp_ie > 0 and inner_eps > 0:
             assert abs(samp_ie - inner_eps) < 1e-9, \
@@ -257,7 +257,7 @@ class TriangularVFM2D(ELDR):
 
         called once at the start of fit(); networks are moved to self.device
         and ready for training. layer norm and activation are read from
-        self.activation and self.layernorm (from Pillar A / spec 04).
+        self.activation and self.layernorm.
         """
         self.net_b1 = MLP2D(
             self.input_dim,

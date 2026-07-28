@@ -53,7 +53,7 @@ def vfm_velocity_target_direct_1d(
     tau: Tensor,   # [B, 1]
     z: Tensor,     # [B, D]
 ) -> tuple[Tensor, Tensor]:
-    """Return (x_t, v_star) where v_star is detached. No xstar.
+    """Return (x_t, v_star) where v_star is detached.
 
     Direct (two-source) variant. Identical numeric logic to triangular,
     omitting the xstar and w_star terms.
@@ -153,8 +153,7 @@ def ctsm_regression_target_1d(
     delta_dot_epsilon = (Delta * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
     dim = epsilon.shape[-1]
 
-    # factor-aware temp from dre-prob-paths reference (see
-    # notes/dre_prob_paths_audit.md). factor=2 -> temp == 1 uniformly,
+    # factor-aware temp. factor=2 -> temp == 1 uniformly,
     # removing the close-pair outlier-spike (lambda_t.max/median ~ 532 -> ~1)
     # without changing the bayes-optimal target (per-sample identity
     # target/lambda_t = d_tau log p_tau is invariant under temp choice).
@@ -177,7 +176,7 @@ def ctsm_regression_target_direct_1d(
     tau: Tensor,    # [B, 1]
     epsilon: Tensor, # [B, D]
 ) -> tuple[Tensor, Tensor, Tensor]:
-    """Return (x_t, target, lambda_t) where target and lambda_t detached. No xstar.
+    """Return (x_t, target, lambda_t) where target and lambda_t detached.
 
     Direct (two-source) CTSM target. Identical numeric logic to triangular,
     omitting xstar terms.
@@ -208,8 +207,7 @@ def ctsm_regression_target_direct_1d(
     delta_dot_epsilon = (Delta * epsilon).sum(dim=-1, keepdim=True)  # [B, 1]
     dim = epsilon.shape[-1]
 
-    # factor-aware temp from dre-prob-paths reference (see
-    # notes/dre_prob_paths_audit.md). factor=2 -> temp == 1 uniformly,
+    # factor-aware temp. factor=2 -> temp == 1 uniformly,
     # removing the close-pair outlier-spike (lambda_t.max/median ~ 532 -> ~1)
     # without changing the bayes-optimal target (per-sample identity
     # target/lambda_t = d_tau log p_tau is invariant under temp choice).

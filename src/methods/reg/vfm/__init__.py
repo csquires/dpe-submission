@@ -38,7 +38,7 @@ class VFM(DRE):
     via predict_ldr_via_curve with IdentityCurve1D to predict log(p0/p1).
 
     uses DirectPath1D (no xstar), TimeSampler1D, IdentityCurve1D, and Integrator
-    (Pillar E: four-slot surface). legacy scalar k and n_t parameters preserved
+    (the four-slot surface). legacy scalar k and n_t parameters preserved
     for backward compatibility; k parameterizes the path if path=None.
     """
     def __init__(
@@ -97,8 +97,8 @@ class VFM(DRE):
         samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
         if (samp_ie > 0) != (inner_eps > 0):
             warnings.warn(
-                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
-                "Probably unintentional.", UserWarning, stacklevel=2,
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}; "
+                "probably unintentional.", UserWarning, stacklevel=2,
             )
         elif samp_ie > 0 and inner_eps > 0:
             assert abs(samp_ie - inner_eps) < 1e-9, \
@@ -461,7 +461,7 @@ class VFMOrthros(DRE):
     to predict log(p0/p1).
 
     uses DirectPath1D (no xstar), TimeSampler1D, IdentityCurve1D, and Integrator
-    (Pillar E: four-slot surface). inherits legacy k parameter from VFM for path
+    (the four-slot surface). inherits legacy k parameter from VFM for path
     construction; n_t is not supported (not preserved).
 
     parameterization note: head 0 directly predicts the velocity target (not
@@ -528,8 +528,8 @@ class VFMOrthros(DRE):
         samp_ie = getattr(time, "inner_eps", 0.0) if time is not None else 0.0
         if (samp_ie > 0) != (inner_eps > 0):
             warnings.warn(
-                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}. "
-                "Probably unintentional.", UserWarning, stacklevel=2,
+                f"asymmetric inner_eps: sampler={samp_ie}, path={inner_eps}; "
+                "probably unintentional.", UserWarning, stacklevel=2,
             )
         elif samp_ie > 0 and inner_eps > 0:
             assert abs(samp_ie - inner_eps) < 1e-9, \

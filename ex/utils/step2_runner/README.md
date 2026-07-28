@@ -49,11 +49,10 @@ gather_dataset_name(method, config) -> str   # default: 'est_ldrs_arr_<method>'
 gather_output_path(config) -> str            # default: ex/<exp>/raw_results/results.h5
 ```
 
-## canonical winners path
+## winners path
 
-all winners yamls live at `scratch/gold_winners/winners.<exp>.yaml`. see
-`scratch/gold_winners/README.md` for the gold-set selection rules and per-method
-score schema.
+winners yamls are supplied via `--winners`; the conventional filename is
+`winners.<exp>.yaml`.
 
 most experiments share the same short name as the directory (`model_selection`,
 `elbo`, etc.) but a few experiment dirs have an `_eldr` suffix that
@@ -78,7 +77,7 @@ the winners filename omits — see the `winners.yaml` column below.
 quirks worth knowing for each:
 
 - **smodice / mnist_eldr_cond_flow / dbpedia_eldr_cond_flow / pstar_sample_complexity**: the original step2 wrote one h5 per cell with multiple method datasets inside; this runner emits a single combined h5 instead. step3/4 may need a small slicing update for these.
-- **pstar_sample_complexity**: no v2 winners yaml exists (no non-triangular HPO data in 200broad); pass a custom `--winners` if you have one, or add per-bucket overrides for triangular methods to a hand-written yaml.
+- **pstar_sample_complexity**: no v2 winners yaml exists (no non-triangular HPO data); pass a custom `--winners` if you have one, or add per-bucket overrides for triangular methods to a hand-written yaml.
 - **plugin_dre / dre_sample_complexity**: builders take an extra `config` kwarg (`build_X(input_dim, device, config, **hp)`) — passed through automatically by these adapters.
 - **eig**: writes a `true_eigs_arr` post-step via `adapter.gather_postprocess(config, out_path)` — a deterministic function of dataset (`Sigma_pi`, `design`). gather.py invokes it automatically if defined.
 - **model_selection**: `ex/synth/model_selection/hpo_search_spaces.py` is broken (stale TDRE_5 reference); this adapter bypasses it and uses METHOD_SPECS directly. all other experiments use their own SEARCH_SPACES module which imports cleanly.
@@ -108,13 +107,13 @@ also supported via auto-detection.
 ## usage — single-drain (preempt only)
 
 ```bash
-export DPE_DATA_ROOT=/data/user_data/$USER/dpe-submission
-export DPE_CKPT_ROOT=/scratch/$USER/ckpt/dpe-submission
+export DPE_DATA_ROOT=/path/to/data-root
+export DPE_CKPT_ROOT=/path/to/ckpt-root
 
 # 1. dispatch: emit queue (one line per (method, cell_chunk))
 python -m ex.utils.step2_runner.dispatch \
     --experiment model_selection \
-    --winners scratch/gold_winners/winners.model_selection.yaml \
+    --winners path/to/winners.model_selection.yaml \
     --max-cells-per-job 20 \
     [--methods CTSM,VFM,FMDRE]   # optional whitelist; default = all in yaml
 
@@ -140,7 +139,7 @@ roughly doubles vs single-drain when both partitions have headroom.
 # dispatch the same way (queue is sorted: gpu-only at front, cpu-eligible at back)
 python -m ex.utils.step2_runner.dispatch \
     --experiment model_selection \
-    --winners scratch/gold_winners/winners.model_selection.yaml \
+    --winners path/to/winners.model_selection.yaml \
     --max-cells-per-job 20
 
 # submit BOTH drains via the wrapper

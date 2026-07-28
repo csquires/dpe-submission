@@ -1,4 +1,4 @@
-"""Optuna-based HPO for dpe-submission. See plans/98b66213-... for design notes."""
+"""Optuna-based HPO for dpe-submission."""
 
 from .cores_registry import CORES_REGISTRY, get_cores_for_method
 from .storage import create_or_load, reap_stale_trials, study_prefix

@@ -2,7 +2,7 @@
 
 supports two yaml schemas:
 
-  schema A (current, used by scratch/200broad/winners_pinned/):
+  schema A (current):
     methods:
       <method>:
         hyperparams: { ... }       # default for all buckets

@@ -1,6 +1,7 @@
 """TriangularCTSMV1: continuous-time score matching DRE on a barycentric triangular path.
 
-Uses four-slot unified surface (Pillar E). Single network predicts closed-form
+Uses the four-slot unified surface (path, time, curve, integrator). Single
+network predicts closed-form
 regression target via MSE loss. Default time sampler is uniform (no path-aware
 singularity avoidance like V2).
 """

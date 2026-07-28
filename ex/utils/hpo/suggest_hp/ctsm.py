@@ -1,17 +1,16 @@
 """define-by-run optuna suggest_hp for CTSM (conditional time-score matching).
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
-calls. implements conditional suggestion of inert params per
-notes/hpo_search_space_finalization.md. fixes n_steps at 2000 (HPO decision:
-uniform multi-fidelity resource axis).
+calls. implements conditional suggestion of inert params. fixes n_steps at
+N_STEPS (uniform multi-fidelity resource axis).
 
-inertness edges (from static + scratch/ctsm_inertness_probe.py):
+inertness edges (static scan + probe):
   - k inert when sched == "bridge" (bridge_noise doesn't read k)
   - apply_iw inert when time_dist == "uniform" (UniformSampler returns iw=1)
 
 inner_eps pinned to 0.0 (matches the triangular CTSM convention; the
 clamp-mode alternative was never selected by HPO in the prior eig sweep and
-shadowed gamma_min in compose order -- see notes/hpo_search_space_finalization.md).
+shadowed gamma_min in compose order).
 
 test-path knobs (test_sched, test_sigma, test_inner_eps, test_gamma_min,
 test_k) are derived from the train-side counterparts; only test_eps remains
@@ -68,9 +67,9 @@ def suggest_hp(trial: optuna.Trial) -> dict[str, Any]:
     # conditional params
     if sched == "stiff":
         hp["k"] = trial.suggest_categorical("k", [10, 20, 40, 80])
-    # eig winner sits at 0.095 (well inside this range), and the active-band
-    # check at scratch/gamma_min_audit shows no useful config below 1e-2 for
-    # bridge-scheduled CTSM. lower bound stays at 1e-2.
+    # eig winner sits at 0.095 (well inside this range), and an active-band
+    # audit shows no useful config below 1e-2 for bridge-scheduled CTSM.
+    # lower bound stays at 1e-2.
     hp["gamma_min"] = trial.suggest_float("gamma_min", 1e-2, 2e-1, log=True)
     if time_dist != "uniform":
         hp["apply_iw"] = trial.suggest_categorical("apply_iw", [True, False])

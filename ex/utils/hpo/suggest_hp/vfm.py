@@ -1,9 +1,8 @@
 """define-by-run optuna suggest_hp for VFM.
 
 translates tuple-format search space from method_specs.py to trial.suggest_*
-calls. implements conditional suggestion of inert params per
-notes/vfm_vfmorthros_conditionality.md. fixes n_steps at 2000 (HPO decision:
-uniform multi-fidelity resource axis).
+calls. implements conditional suggestion of inert params. fixes n_steps at
+N_STEPS (uniform multi-fidelity resource axis).
 """
 
 from typing import Any

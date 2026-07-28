@@ -6,7 +6,7 @@ LEGACY SURFACE (deprecated, backward-compatible):
   retained for backward compatibility; new code should use the functional
   builders below.
 
-NEW SURFACE (Pillar C, recommended):
+NEW SURFACE (recommended):
   Functional builders that return callables matching TimeSampler1D or
   TimeSampler2D Protocols. All builders use kw-only args (no **kwargs) to
   surface typos at construction time. Composition operators enable variance
@@ -695,8 +695,7 @@ def make_product(
     where the proposal and target both factorize on the rectangle. The product
     iw = iw1 * iw2 is correct only in this setting. Future 2D geometries with
     non-rectangular domains (simplex, triangle region, importance-sampled
-    rectangle; see notes/2d_path_alternatives.md) require dedicated 2D sampler
-    builders.
+    rectangle) require dedicated 2D sampler builders.
 
     Args:
         s1, s2: TimeSampler1D callables for the t1 and t2 dimensions.

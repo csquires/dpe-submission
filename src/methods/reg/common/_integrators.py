@@ -2,7 +2,7 @@
 
 provides ``integrator_mean``, ``integrator_trapezoid``, ``integrator_simpson``:
 pure functions returning the signed integral. negation and device handling
-are the caller's responsibility (e.g., ``predict_ldr_via_curve`` in Pillar D).
+are the caller's responsibility (e.g., ``predict_ldr_via_curve``).
 """
 from typing import Callable
 

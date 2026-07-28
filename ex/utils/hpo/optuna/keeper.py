@@ -37,6 +37,24 @@ from ex.utils.hpo.optuna.storage import create_or_load, _serialize_slice
 
 logger = logging.getLogger(__name__)
 
+
+def _env_export() -> str:
+    """re-export the keeper's DPE roots inside the worker wrap.
+
+    the wrap does `source ~/.bashrc`, which resets DPE_DATA_ROOT/DPE_CKPT_ROOT to
+    the account default -- wrong when the keeper runs against an isolated root
+    (e.g. a fresh-journal campaign under $DPE_DATA_ROOT/dpe-ns). baking the
+    keeper's own values after the source keeps workers pointed at the same redis
+    endpoint + data tree as the keeper. no-op when they already match bashrc.
+    """
+    parts = []
+    for var in ("DPE_DATA_ROOT", "DPE_CKPT_ROOT"):
+        val = os.environ.get(var)
+        if val:
+            parts.append(f"export {var}={val} && ")
+    return "".join(parts)
+
+
 # states that count toward target_trials; matches the MaxTrialsCallback in
 # worker.py so the keeper and the workers agree on when a study is done.
 _BUDGET_STATES = (TrialState.COMPLETE,)
@@ -75,7 +93,7 @@ _study_handle_cache: dict[tuple, "optuna.Study"] = {}
 # cycles in-process; reset on keeper restart.
 _count_cache: dict[tuple, int] = {}
 
-# soft per-call ceiling. occupancy studies on bv have journals so large
+# soft per-call ceiling. some occupancy studies have journals so large
 # that one full create_or_load + study.trials can run for many minutes per
 # study, freezing a whole cycle. when this fires we return the last-known
 # count (or 0 if none) so the keeper still progresses through pending.
@@ -280,7 +298,7 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
     """
     name = job_name(experiment, method, lane_name, slice=slice)
     wrap = (
-        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && cd {workdir} && "
+        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && {_env_export()}cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
         f"--config {config_module} --lane {lane_name} --combo-index {combo_index}"
     )
@@ -351,7 +369,7 @@ def dispatch_array(config_module: str, combo_index: int, experiment: str,
     array_spec = f"0-{n - 1}%{n}"
 
     wrap = (
-        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && cd {workdir} && "
+        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && {_env_export()}cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
         f"--config {config_module} --lane array --combo-index {combo_index}"
     )
@@ -403,7 +421,7 @@ def dispatch_array_gpu(config_module: str, combo_index: int, experiment: str,
     array_spec = f"0-{n - 1}%{n}"
 
     wrap = (
-        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && cd {workdir} && "
+        f"source ~/.bashrc && conda activate ${{DPE_CONDA_ENV:-fac}} && {_env_export()}cd {workdir} && "
         f"python -m ex.utils.hpo.optuna.submit "
         f"--config {config_module} --lane {lane_name} --combo-index {combo_index}"
     )
@@ -646,7 +664,11 @@ def main() -> int:
             # this study's share of the lane's total running cap.
             per_study = max(1, lane.max_concurrent // n_pending)
 
-            if lane_name == "array":
+            if lane.partition == "array" and lane.gpus == 0:
+                # cpu-on-array lanes ("array", "array_small", ...): the array
+                # partition only accepts job arrays, so any such lane must take
+                # this --array path -- matching the gpus>0 branch below. keyed on
+                # the profile, not the lane name, so new cpu-array lanes work.
                 # array lane: one --array job per under-target study, sized to
                 # min(per_study, study_slots[method] // lane_b). a study that
                 # already has a live array job is skipped here.

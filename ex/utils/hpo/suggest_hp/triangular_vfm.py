@@ -1,9 +1,8 @@
 """define-by-run optuna suggest_hp for TriangularVFM V1/V2/V3.
 
 translates the tuple-format search spaces from method_specs.py to trial.suggest_*
-calls. conditional suggestion of inert params per the inertness edges in
-notes/hpo_search_space_finalization.md (static scan + seeded double-build probe
-in scratch/triangular_vfm_inertness_probe.py). pins n_steps at N_STEPS.
+calls. conditional suggestion of inert params per the inertness edges below
+(static scan + seeded double-build probe). pins n_steps at N_STEPS.
 
 three versions differ in the path family (psb_1d / bary_1d / rect_2d), mirroring
 TriangularCTSM. like stock VFM, the divergence estimator is pinned
@@ -20,11 +19,11 @@ than the training one.
 
 inertness edges (probe + static):
   - k inert when sched == "bridge".
-  - gamma_min searched for V1/V2 (load-bearing inference floor; see 2026-06
-    audit). V3 keeps the pin (low-arc curve avoids gamma-zeros).
+  - gamma_min searched for V1/V2 (load-bearing inference floor). V3 keeps the
+    pin (low-arc curve avoids gamma-zeros).
   - V1 always samples time per-leg via a width-proportional two-leg mixture
     sampler (every TIME_DISTS value applied per leg), so time_dist is
-    unconditional (see notes/triangular_v1_time_dist_coupling.md).
+    unconditional.
   - apply_iw inert when time_dist == "uniform".
   - reweight pinned to False for all variants; precond is the principled
     outer-weighting mechanism. all three versions search precond.

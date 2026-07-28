@@ -1,9 +1,8 @@
 """define-by-run optuna suggest_hp for TriangularCTSM V1/V2/V3.
 
 translates the tuple-format search spaces from method_specs.py to trial.suggest_*
-calls. conditional suggestion of inert params per the inertness edges in
-notes/hpo_search_space_finalization.md (static scan + seeded double-build probe
-in scratch/triangular_ctsm_inertness_probe.py). pins n_steps at N_STEPS
+calls. conditional suggestion of inert params per the inertness edges below
+(static scan + seeded double-build probe). pins n_steps at N_STEPS
 (uniform multi-fidelity resource axis).
 
 three versions share most of the space; they differ in the path family:
@@ -14,9 +13,9 @@ three versions share most of the space; they differ in the path family:
 
 boundary protection. the search is pinned to sampler-side endpoint protection:
 eps > 0 and inner_eps = 0. The path's local_tau clamp (inner_eps) remains
-plumbed through the builders/method classes but is not currently searched (per
-the 2026-05-31 audit, the clamp-mode alternative -- eps = 0, inner_eps > 0 --
-introduces train/inference inconsistencies we have not finished untangling).
+plumbed through the builders/method classes but is not currently searched (the
+clamp-mode alternative -- eps = 0, inner_eps > 0 -- introduces train/inference
+inconsistencies we have not finished untangling).
 
 V1-only `vertex_band` is an independent sampler-side excision of the vertex
 neighbourhood, always > 0 in V1. It is decoupled from `inner_eps`. The
@@ -26,15 +25,14 @@ excision is strictly wider than the training one.
 
 inertness edges (probe + static):
   - k inert when sched == "bridge" (bridge_noise ignores k).
-  - gamma_min searched for V1/V2 (the 2026-06 audit showed the gamma floor is
-    the mechanism that protects the inference integrand near the path's
-    gamma-zeros; the earlier 0.0 pin was based on circular winner evidence).
+  - gamma_min searched for V1/V2 (the gamma floor is the mechanism that
+    protects the inference integrand near the path's gamma-zeros; the earlier
+    0.0 pin was based on circular winner evidence).
     V3 keeps the pin: its low-arc curve never approaches a gamma-zero.
   - apply_iw inert when time_dist == "uniform" (iw == 1).
   - V1 always samples time per-leg via a width-proportional two-leg mixture
     sampler (every TIME_DISTS value applied per leg), so time_dist is
-    unconditional -- same treatment as V2, only the sampler differs
-    (see notes/triangular_v1_time_dist_coupling.md).
+    unconditional -- same treatment as V2, only the sampler differs.
   - V3 path_height is inference-only (curve used only in predict_ldr); searched
     unconditionally, probe blind.
 
@@ -171,9 +169,9 @@ def suggest_hp_v3(trial: optuna.Trial) -> dict[str, Any]:
     """TriangularCTSM V3 (2D stacked path + LowArcCurve2D).
 
     reweight pinned to True (1/gamma^2 is the analytic answer for CTSM time-score
-    regression; no longer a search dimension). No precond (CTSM has no precond
-    plumbing). no time-sampling knobs (the builder hardcodes a product of uniforms).
-    adds t2_max + path_height (path_height is inference-only). conditional: k (stiff).
+    regression). precond and time-sampling knobs are absent (CTSM has no precond
+    plumbing; the builder hardcodes a product of uniforms). adds t2_max +
+    path_height (path_height is inference-only). conditional: k (stiff).
     gamma_min pinned 0 (the low-arc inference curve never approaches a gamma-zero).
     """
     hp: dict[str, Any] = {}
