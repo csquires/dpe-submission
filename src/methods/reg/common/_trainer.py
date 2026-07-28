@@ -25,6 +25,53 @@ def _noop() -> None:
     return None
 
 
+def _make_train_step(
+    model: torch.nn.Module | Callable[..., torch.Tensor],
+    build_batch: Callable[[], dict[str, torch.Tensor]],
+    time_sampler: Callable[[int, torch.device], tuple[torch.Tensor, torch.Tensor]],
+    loss_fn: Callable,
+    loss_kw: dict,
+    optim: torch.optim.Optimizer,
+    do_clip: Callable[[], None],
+    do_sched: Callable[[], None],
+    do_ema: Callable[[], None],
+    batch_size: int,
+    device: torch.device,
+) -> Callable[[], float]:
+    """bind one training step into a reusable 0-arg closure.
+
+    procedure:
+      1. batch = build_batch()
+      2. tau, iw = time_sampler(batch_size, device)
+      3. loss = loss_fn(model, batch, tau, iw, **loss_kw)
+      4. optim.zero_grad()
+      5. loss.backward()
+      6. do_clip()
+      7. optim.step()
+      8. do_sched()
+      9. do_ema()
+      10. return loss.item()
+
+    args: same as train_loop's parameters for a single step.
+    returns: 0-arg callable that executes one step and returns scalar loss.
+    """
+    def step() -> float:
+        batch = build_batch()
+        tau, iw = time_sampler(batch_size, device)
+
+        loss = loss_fn(model, batch, tau, iw, **loss_kw)
+
+        optim.zero_grad()
+        loss.backward()
+        do_clip()
+        optim.step()
+        do_sched()
+        do_ema()
+        return loss.item()
+
+    return step
+
+
 def maybe_clip_grad(
     params: Iterable[torch.nn.Parameter],
     max_norm: float | None,
@@ -200,6 +247,10 @@ def train_loop(
     do_sched = scheduler.step if scheduler is not None else _noop
     do_ema = (lambda: ema.update(model_module)) if ema is not None else _noop
     do_report = _make_report(step_cb, step_cb_interval, eval_fn, model, model_module)
+    step_fn = _make_train_step(
+        model, build_batch, time_sampler, loss_fn, loss_kw, optim,
+        do_clip, do_sched, do_ema, batch_size, device
+    )
 
     # early-stop is opt-in. when disabled, the loop is byte-identical to pre-refactor
     # (no extra .item() sync, no should_stop call).
@@ -211,20 +262,10 @@ def train_loop(
 
     try:
         for step in range(n_steps):
-            batch = build_batch()
-            tau, iw = time_sampler(batch_size, device)
-
-            loss = loss_fn(model, batch, tau, iw, **loss_kw)
-
-            optim.zero_grad()
-            loss.backward()
-            do_clip()
-            optim.step()
-            do_sched()
-            do_ema()
+            loss_val = step_fn()
             do_report()
             if es_enabled:
-                observe(step + 1, loss.item())
+                observe(step + 1, loss_val)
                 stop, reason = should_stop()
                 if stop:
                     final_step = step + 1
@@ -405,6 +446,8 @@ def train_interleaved(
     loss_kwargs_eta: dict | None = None,
     model_module_b: nn.Module | None = None,
     model_module_eta: nn.Module | None = None,
+    build_batch_a: Callable[[], dict[str, torch.Tensor]] | None = None,
+    build_batch_b: Callable[[], dict[str, torch.Tensor]] | None = None,
     step_cb: Callable[[int, float], None] | None = None,
     eval_fn: Callable[[Any], torch.Tensor] | None = None,
     step_cb_interval: int = 50,
@@ -434,6 +477,11 @@ def train_interleaved(
 
     args mirror train_two_phase except n_steps replaces n_steps_b / n_steps_eta:
     b and eta advance in lockstep, so the two counts are necessarily equal.
+
+    new params (backward-compatible):
+      build_batch_a, build_batch_b: optional per-leg batch factories. if both are
+        None (default), a shared batch factory is used (current behavior). if either
+        is provided, they are used independently (dokls ablation).
     """
     mod_b = model_module_b if model_module_b is not None else model_b
     mod_eta = model_module_eta if model_module_eta is not None else model_eta
@@ -475,9 +523,26 @@ def train_interleaved(
     loss_kw_b = loss_kwargs_b if loss_kwargs_b is not None else {}
     loss_kw_eta = loss_kwargs_eta if loss_kwargs_eta is not None else {}
 
-    build_batch = _make_build_batch(
-        samples_p0, samples_p1, samples_pstar, batch_size, device, needs_xstar,
-    )
+    # batch factory setup: shared or independent per leg
+    if build_batch_a is None and build_batch_b is None:
+        # shared batch mode (current behavior): one factory, called twice per iteration
+        shared_batch = _make_build_batch(
+            samples_p0, samples_p1, samples_pstar, batch_size, device, needs_xstar,
+        )
+        batch_fn_b = shared_batch
+        batch_fn_eta = shared_batch
+    else:
+        # independent batch mode: use provided factories, or create if missing
+        if build_batch_a is None:
+            build_batch_a = _make_build_batch(
+                samples_p0, samples_p1, samples_pstar, batch_size, device, needs_xstar,
+            )
+        if build_batch_b is None:
+            build_batch_b = _make_build_batch(
+                samples_p0, samples_p1, samples_pstar, batch_size, device, needs_xstar,
+            )
+        batch_fn_b = build_batch_a
+        batch_fn_eta = build_batch_b
     do_clip_b = _make_clip(mod_b.parameters(), grad_clip_norm_b)
     do_clip_eta = _make_clip(mod_eta.parameters(), grad_clip_norm_eta)
     do_sched_b = scheduler_b.step if scheduler_b is not None else _noop
@@ -486,6 +551,14 @@ def train_interleaved(
     do_ema_eta = (lambda: ema_eta.update(mod_eta)) if ema_eta is not None else _noop
     do_report = _make_report_pair(
         step_cb, step_cb_interval, eval_fn, [mod_b, mod_eta],
+    )
+    step_fn_b = _make_train_step(
+        model_b, batch_fn_b, time_sampler, loss_b, loss_kw_b, optim_b,
+        do_clip_b, do_sched_b, do_ema_b, batch_size, device
+    )
+    step_fn_eta = _make_train_step(
+        model_eta, batch_fn_eta, time_sampler, loss_eta, loss_kw_eta, optim_eta,
+        do_clip_eta, do_sched_eta, do_ema_eta, batch_size, device
     )
 
     # early-stop is opt-in. when disabled, the loop is byte-identical to pre-refactor:
@@ -500,30 +573,11 @@ def train_interleaved(
     mod_eta.train()
     try:
         for step in range(n_steps):
-            # b-update
-            batch_b = build_batch()
-            tau_b, iw_b = time_sampler(batch_size, device)
-            lb = loss_b(model_b, batch_b, tau_b, iw_b, **loss_kw_b)
-            optim_b.zero_grad()
-            lb.backward()
-            do_clip_b()
-            optim_b.step()
-            do_sched_b()
-            do_ema_b()
-            # eta-update
-            batch_eta = build_batch()
-            tau_eta, iw_eta = time_sampler(batch_size, device)
-            le = loss_eta(model_eta, batch_eta, tau_eta, iw_eta, **loss_kw_eta)
-            optim_eta.zero_grad()
-            le.backward()
-            do_clip_eta()
-            optim_eta.step()
-            do_sched_eta()
-            do_ema_eta()
-            # report; may raise optuna.TrialPruned, caught by the finally below.
+            loss_b_val = step_fn_b()
+            loss_eta_val = step_fn_eta()
             do_report()
             if es_enabled:
-                cycle_avg = (lb.item() + le.item()) / 2.0
+                cycle_avg = (loss_b_val + loss_eta_val) / 2.0
                 observe(step + 1, cycle_avg)
                 stop, reason = should_stop()
                 if stop:
