@@ -1,9 +1,15 @@
 # MNIST ELDR Estimation Experiment Configuration
 
 # Experimental Grid
-alphas: [1.0, 1.3, 1.9, 3.7]
+alphas: [2.0, 4.0, 8.0]   # dirichlet conc; gentler than the old [1.0,1.3,1.9,3.7]
+                          # to keep true LDRs tractable (old grid overflowed
+                          # estimators: max|LDR| up to ~665). alpha=2 is the hard
+                          # end, 8 the gentle end. 3 alphas x 40 pairs = 120 cells.
 num_pairs_per_alpha: 40
-num_samples: 40000
+num_samples: 10000            # train p* per distribution (p0, p1, pstar)
+num_samples_test: 44000       # held-out balanced test p* for the GT ELDR; disjoint
+                              # from train, ~max under the mnist balanced-draw cap
+                              # (rarest class 5421; 10k train uses 1000/class)
 
 # Model Architecture
 latent_dim: 14
@@ -25,14 +31,14 @@ vae_weight_decay: 0.0001
 vae_grad_clip: 1.0
 
 # Estimation Configuration
-algorithms: [TriangularMDRE, MultiHeadTriangularTDRE, VFM, TSM, CTSM, TriangularCTSM_V1, TriangularCTSM_V2, TriangularCTSM_V3, TriangularVFM_V1, TriangularVFM_V2, TriangularVFM_V3]
+algorithms: [BDRE, MDRE, MultiHeadTDRE, TriangularMDRE, MultiHeadTriangularTDRE, TSM, TriangularTSM, CTSM, TriangularCTSM_V1, TriangularCTSM_V2, TriangularCTSM_V3, VFM, TriangularVFM_V1, TriangularVFM_V2, TriangularVFM_V3, FMDRE, FMDRE_S2, TriangularFMDRE]
 num_waypoints: 15
 
 # Log-Density Evaluation
 log_prob_steps: 200
 
 # Directory Configuration
-ckpt_dir: "${DPE_CKPT_ROOT}/mnist_eldr_estimation/ckpt"
+ckpt_dir: "${DPE_DATA_ROOT}/mnist_eldr_estimation/ckpt"   # real ckpts live under DATA_ROOT (NFS, all-node-visible)
 data_dir: "${DPE_DATA_ROOT}/mnist_eldr_estimation/data"
 raw_results_dir: "ex/semisynth/mnist_uncond/raw_results"
 processed_results_dir: "ex/semisynth/mnist_uncond/processed_results"

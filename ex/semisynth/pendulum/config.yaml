@@ -79,6 +79,6 @@ num_waypoints: 15          # int >= 3; linear interpolation schedule for triangu
 
 # === Directory Paths ===
 data_dir: ${DPE_DATA_ROOT}/pendulum_eldr_estimation/data
-raw_results_dir: ex/semisynth/pendulum/raw_results
+raw_results_dir: /data/user_data/aviamala/dpe-submission/step2_results/pendulum/raw_results
 processed_results_dir: ex/semisynth/pendulum/processed_results
 figures_dir: ex/semisynth/pendulum/figures

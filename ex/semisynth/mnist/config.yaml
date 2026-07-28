@@ -35,7 +35,7 @@ log_prob_steps: 200
 # Directory Configuration
 ckpt_dir: "${DPE_CKPT_ROOT}/mnist_eldr_cond_flow/ckpt"
 data_dir: "${DPE_DATA_ROOT}/mnist_eldr_cond_flow/data"
-raw_results_dir: "ex/semisynth/mnist/raw_results"
+raw_results_dir: "/data/user_data/aviamala/dpe-submission/step2_results/mnist/raw_results"
 processed_results_dir: "ex/semisynth/mnist/processed_results"
 figures_dir: "ex/semisynth/mnist/figures"
 
