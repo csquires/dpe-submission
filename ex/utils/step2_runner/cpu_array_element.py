@@ -98,13 +98,17 @@ def pop_lines_back_atomic(queue_file: Path, lock_file: Path, k: int,
     return claimed
 
 
+# values exclude `"` so the wrap's closing quote never lands in a captured
+# value. the last flag inside --wrap="..." has no trailing space before that
+# quote, so a bare \S+ swallows it (only bites when dispatch emits a non-empty
+# --config, i.e. per-variant runs like the dokls ablation).
 _FLAG_PATTERNS = {
-    "experiment":   re.compile(r"--experiment\s+(\S+)"),
-    "method":       re.compile(r"--method\s+(\S+)"),
-    "cell_indices": re.compile(r"--cell-indices\s+'([^']+)'|--cell-indices\s+(\S+)"),
-    "winners":      re.compile(r"--winners\s+(\S+)"),
-    "output_dir":   re.compile(r"--output-dir\s+(\S+)"),
-    "config":       re.compile(r"--config\s+(\S+)"),
+    "experiment":   re.compile(r'--experiment\s+([^\s"]+)'),
+    "method":       re.compile(r'--method\s+([^\s"]+)'),
+    "cell_indices": re.compile(r"--cell-indices\s+'([^']+)'|--cell-indices\s+([^\s\"]+)"),
+    "winners":      re.compile(r'--winners\s+([^\s"]+)'),
+    "output_dir":   re.compile(r'--output-dir\s+([^\s"]+)'),
+    "config":       re.compile(r'--config\s+([^\s"]+)'),
 }
 
 

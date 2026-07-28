@@ -101,7 +101,14 @@ def main() -> None:
     adapter = importlib.import_module(f"ex.{mod_path}.step2_adapter")
     config_path = args.config or f"ex/{args.experiment}/config.yaml"
     config = adapter.load_config(config_path)
-    n_cells_total = len(list(adapter.list_cells(config)))
+    # experiments whose list_cells is a sparse SUBSET of the full grid (e.g. elbo,
+    # where step2 runs only on the 1536 non-HPO cells of a 2048-row grid) must
+    # gather into the FULL grid so step3 aligns est with true by row index; the
+    # held-out HPO rows are NaN-filled. such adapters expose gather_grid_size.
+    if hasattr(adapter, "gather_grid_size"):
+        n_cells_total = adapter.gather_grid_size(config)
+    else:
+        n_cells_total = len(list(adapter.list_cells(config)))
 
     fragments_dir = Path(args.fragments_dir) if args.fragments_dir else (_data_root() / args.experiment / "step2_results")
     if not fragments_dir.exists():
