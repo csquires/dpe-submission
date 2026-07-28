@@ -32,15 +32,15 @@ plans/
 ~/
 test_*
 *.h5
+*.h5.bak*
 *.pdf
 *.pt
 data/*
 experiments/mnist_eldr_estimation/hpo_configs/
 **/submit_*.sh
-# launcher dependencies — must be tracked so other accounts can run hpo campaigns.
-!experiments/utils/submit_watchdog.sh
-!experiments/utils/submit_watchdog_lite.sh
-!experiments/utils/step2_runner/submit_dual.sh
+!ex/utils/hpo/optuna/submit_holdout.sh
+!ex/utils/hpo/optuna/submit_keeper.sh
+!ex/utils/step2_runner/submit_step2.sh
 **/trial_*.json
 experiments/smodice_eldr_estimation/build_task_manifest.py
 experiments/utils/check_smodice_feasibility.py
@@ -73,3 +73,6 @@ ex/utils/hpo/optuna/configs/eig_*.py
 ex/utils/hpo/optuna/configs/occupancy_*.py
 ex/utils/hpo/optuna/configs/pendulum_*.py
 ex/utils/drain_queue.sh
+
+# transient pre-regen figure backups (backup-before-regen protocol)
+**/figures_bak_*/
