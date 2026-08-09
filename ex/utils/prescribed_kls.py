@@ -11,6 +11,9 @@ each flavor follows the same workflow:
   - invert prescribed target KL values to recover the parameters.
 """
 
+# occ only; pendulum no longer uses these
+# see ex/semisynth/pendulum/step0a-step0d + ex/utils/realized_kl_table.py.
+
 import numpy as np
 import torch
 from torch import logdet, trace
@@ -199,7 +202,8 @@ def prescribe(
 
 
 def prescribe_k1(KL1: np.ndarray, alphas: np.ndarray, K1: float) -> Dict[str, Any]:
-    """invert a single prescribed K1 target to alpha* (step 6a of prescribe()).
+    """used by occupancy step1 (active); legacy pendulum path.
+    invert a single prescribed K1 target to alpha* (step 6a of prescribe()).
 
     used when the mixture weight beta is fixed by config rather than inverted
     from a prescribed K2 (occupancy Option-A: beta is a swept knob, not a KL
@@ -540,7 +544,7 @@ def load_or_build_grid(
 # === trajectory (pendulum) ===
 
 def hash_pendulum_cfg(cfg: Dict[str, Any]) -> str:
-    """canonical sha256 over pendulum config for cache keying.
+    """deprecated (pendulum gaussian-era): canonical sha256 over pendulum config for cache keying.
 
     plan:
       1. extract env constants into dict with canonical field order.
@@ -607,7 +611,7 @@ def build_traj_kl_grid(
     gen: np.random.Generator,
     kl_se_warn_threshold: float = 0.1,
 ) -> Dict[str, Any]:
-    """build 2-D KL grid via MC rollouts; return dict with KL1, KL2, SEs, and residuals.
+    """deprecated (pendulum gaussian-era): build 2-D KL grid via MC rollouts; return dict with KL1, KL2, SEs, and residuals.
 
     plan:
       1. load expert q-function and construct expert policy pi_E.
@@ -739,7 +743,7 @@ def build_traj_kl_grid(
 
 
 def prescribe_traj(grid: Dict[str, Any], K1: float, K2: float) -> Dict[str, Any]:
-    """invert prescribed (K1, K2) targets via monotone bisection or grid-argmin fallback.
+    """deprecated (pendulum gaussian-era): invert prescribed (K1, K2) targets via monotone bisection or grid-argmin fallback.
 
     plan:
       1. check monotonicity flags.
@@ -831,7 +835,7 @@ def load_or_build_traj_grid(
     cache_dir: str,
     rebuild: bool = False
 ) -> Dict[str, Any]:
-    """high-level orchestrator: load or build trajectory KL grid; cache to HDF5.
+    """deprecated (pendulum gaussian-era): high-level orchestrator: load or build trajectory KL grid; cache to HDF5.
 
     plan:
       1. ensure cache_dir exists.
