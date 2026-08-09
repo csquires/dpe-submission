@@ -13,6 +13,18 @@ from ex.utils.hpo.adapters.base import ExperimentAdapter
 _CONFIG_PATH = Path(__file__).resolve().parents[4] / "ex/synth/elbo/config1.yaml"
 
 
+def _gauss_logpdf(x: torch.Tensor, mu: torch.Tensor, cov: torch.Tensor) -> torch.Tensor:
+    """batched MVN log-density logN(x; mu, cov). symmetrizes + jitters cov so the
+    float32 round-trip from h5 cannot break the cholesky (exact symmetry / PD)."""
+    d = cov.shape[-1]
+    cov = 0.5 * (cov + cov.transpose(-1, -2)) + 1e-5 * torch.eye(
+        d, device=cov.device, dtype=cov.dtype
+    )
+    return torch.distributions.MultivariateNormal(
+        mu, covariance_matrix=cov, validate_args=False
+    ).log_prob(x)
+
+
 class ELBOAdapter(ExperimentAdapter):
     """ELBO estimation experiment adapter.
 
@@ -82,32 +94,33 @@ class ELBOAdapter(ExperimentAdapter):
         return list(itertools.product(range(self._num_alphas), range(n_flat)))
 
     def load_cell_data(self, cell: tuple[int, int], device: str) -> dict[str, torch.Tensor]:
-        """load one (alpha_idx, flat_idx) cell from dataset + processed_results h5.
+        """load one (alpha_idx, flat_idx) cell; return {p0, p1, pstar, true_ldrs}.
 
         args:
           cell: (alpha_idx, flat_idx). row_idx = flat_idx * num_alphas + alpha_idx
             indexes into all h5 arrays along axis=0.
           device: torch device string.
 
-        opens {data_dir}/{dataset_filename} (from config).
-          extracts theta0/y0/theta1/y1/theta_star/y_star at row_idx.
-          concatenates theta+y along dim=-1 to form p0, p1, pstar.
-        opens {processed_results_dir}/summary.h5.
-          extracts true_eldrs[row_idx] as scalar tensor.
+        opens {data_dir}/{dataset_filename}: theta0/y0/theta1/y1/theta_star/y_star
+          + the per-cell Gaussian params (prior mu_pi/Sigma_pi, fractional-posterior
+          mu_q/Sigma_q). theta+y concatenate to p0 (prior joint), p1 (q joint),
+          pstar (q target).
+
+        true_ldrs is PER-SAMPLE -- the analytic log density ratio predict_ldr
+        targets, log p0(x) - log p1(x). the shared p(y|theta) noise cancels between
+        the two joints, leaving the theta-marginal Gaussian log-ratio
+          true_ldrs[i] = logN(theta*_i; mu_pi, Sigma_pi) - logN(theta*_i; mu_q, Sigma_q)
+        at the pstar theta samples. this is the pointwise-MAE target and is
+        self-contained (no dependency on step3's summary.h5).
 
         returns: {"pstar": (N, D+1), "p0": (N, D+1), "p1": (N, D+1),
-                  "true_ldrs": scalar tensor}.
+                  "true_ldrs": (N,) tensor}.
 
         raises FileNotFoundError if h5 path missing.
         """
         alpha_idx, flat_idx = cell
         row_idx = flat_idx * self._num_alphas + alpha_idx
-
-        # dataset path resolved once in __init__ (mirrors step2_adapter::_dataset_path)
         dpath = self.data_dir() / self._dataset_filename
-
-        # processed results file (step3 writes here)
-        ppath = Path(self._processed_results_dir) / "summary.h5"
 
         with h5py.File(dpath, "r") as f:
             t0 = torch.from_numpy(np.array(f["theta0_samples_arr"][row_idx])).float().to(device)  # (N, D)
@@ -116,19 +129,30 @@ class ELBOAdapter(ExperimentAdapter):
             y1 = torch.from_numpy(np.array(f["y1_samples_arr"][row_idx])).float().to(device)      # (N, 1)
             ts = torch.from_numpy(np.array(f["theta_star_samples_arr"][row_idx])).float().to(device)  # (N, D)
             ys = torch.from_numpy(np.array(f["y_star_samples_arr"][row_idx])).float().to(device)      # (N, 1)
+            mu_pi = torch.from_numpy(np.array(f["prior_mean_arr"][row_idx])).float().to(device)         # (D,)
+            S_pi  = torch.from_numpy(np.array(f["prior_covariance_arr"][row_idx])).float().to(device)   # (D, D)
+            mu_q  = torch.from_numpy(np.array(f["mu_q_arr"][row_idx])).float().to(device)               # (D,)
+            S_q   = torch.from_numpy(np.array(f["Sigma_q_arr"][row_idx])).float().to(device)            # (D, D)
 
-        with h5py.File(ppath, "r") as f:
-            true_ldr = torch.tensor(float(f["true_eldrs"][row_idx])).to(device)  # scalar
+        # per-sample true log-ratio = theta-marginal Gaussian log-ratio at pstar
+        true_ldrs = _gauss_logpdf(ts, mu_pi, S_pi) - _gauss_logpdf(ts, mu_q, S_q)  # (N,)
 
         return {
             "p0": torch.cat([t0, y0], dim=-1),      # (N, D+1)
             "p1": torch.cat([t1, y1], dim=-1),      # (N, D+1)
             "pstar": torch.cat([ts, ys], dim=-1),   # (N, D+1)
-            "true_ldrs": true_ldr,                  # scalar
+            "true_ldrs": true_ldrs,                 # (N,) per-sample true log-ratio
         }
 
     def device(self) -> str:
-        """return config["device"] (default "cuda")."""
+        """config["device"], but fall back to cpu when no gpu is visible.
+
+        cpu-lane (array) workers have no gpu, so the classifier methods routed
+        there must run on cpu rather than faulting on .to("cuda"). gpu-lane
+        workers still see cuda and use it.
+        """
+        if self._device == "cpu" or not torch.cuda.is_available():
+            return "cpu"
         return self._device
 
     def latent_dim(self) -> int:
@@ -140,50 +164,13 @@ class ELBOAdapter(ExperimentAdapter):
         return self._num_waypoints
 
     def metric_key(self) -> str:
-        """return "per_cell_eldr_abs_err"."""
-        return "per_cell_eldr_abs_err"
+        """return "per_cell_ldr_mae" -- pointwise LDR MAE like the other estimation
+        experiments (switched from scalar per_cell_eldr_abs_err 2026-08-09)."""
+        return "per_cell_ldr_mae"
 
-    def eval_cell(
-        self,
-        cell,
-        method,
-        builder,
-        hyperparams,
-        requires_pstar,
-        device,
-        *,
-        step_cb=None,
-        trial_number=None,
-        step_cb_interval=50,
-        data=None,
-    ):
-        """elbo metric: |mean(predict_ldr(pstar)) - true_eldr_scalar|.
-
-        true_ldrs is a SCALAR (the true expected ldr for this cell), so we
-        compare against the mean of predicted ldrs over pstar samples.
-
-        step_cb, trial_number, and step_cb_interval are accepted for signature
-        compatibility with the base adapter contract but are not used. ELBO
-        does not support eval splits or step callbacks because true_ldrs is
-        a scalar, not per-sample.
-        """
-        if data is None:
-            data = self.load_cell_data(cell, device=device)
-        nwp = hyperparams.get("num_waypoints", self.num_waypoints())
-        flat = {k: v for k, v in hyperparams.items() if k != "num_waypoints"}
-        est = builder(
-            input_dim=self.latent_dim(),
-            device=device,
-            num_waypoints=nwp,
-            **flat,
-        )
-        if requires_pstar:
-            est.fit(data["p0"], data["p1"], data["pstar"])
-        else:
-            est.fit(data["p0"], data["p1"])
-        with torch.no_grad():
-            est_eldr = float(torch.mean(est.predict_ldr(data["pstar"])).item())
-        return abs(est_eldr - float(data["true_ldrs"].cpu().item()))
+    # eval_cell override REMOVED 2026-08-09: elbo now uses the base pointwise-MAE
+    # eval (mae(predict_ldr(pstar), true_ldrs) with per-sample true_ldrs). the old
+    # override returned the scalar |mean(predict_ldr(pstar)) - true_eldr| ELDR error.
 
     def stratify_key(self, cell: tuple[int, int]) -> tuple[int, int, int]:
         """return (alpha_idx, prior_idx, beta_idx) for fine-grained stratification.
