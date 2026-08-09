@@ -15,11 +15,13 @@ import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 
 from ex.utils.plot_style import apply as apply_style, style_for
+from ex.utils.plot_style import display_name
 from ex.utils.faceted_lines import order_methods, MARKER_SIZE
-from ex.utils.tables import fmt_pm, write_tables
+from ex.utils.tables import fmt_pm, fmt_iqr, write_tables
 from ex.synth.model_selection.variants import resolve
 
 
@@ -41,17 +43,20 @@ def plot_pstar_grid(x, mean, se, *, ylabel, out_dir, prefix, yscale='linear',
     """
     apply_style()
     band_alpha = 0.12   # 18 overlapping bands per panel; lighter than default
-    line_w = 0.85       # thinner + translucent traces so overlaps stay visible
+    line_w = 1.1        # thick enough to survive the ~0.5x print scale
     line_alpha = 0.75
+    # print-size fonts: canvas 11in wide prints at \linewidth (5.5in), so canvas
+    # pt sizes land at ~half size on the page (ticks 17 -> ~8.5pt).
+    tick_fs, lab_fs, leg_fs = 17, 19, 15
     methods = [m for m in order_methods(mean.keys()) if np.isfinite(mean[m]).any()]
     n_test = next(iter(mean.values())).shape[1]
 
     ncol_leg = 6
     n_rows_leg = int(np.ceil(len(methods) / ncol_leg))
-    panel_h = 4.6
-    legend_h = 0.34 * n_rows_leg + 0.2
+    panel_h = 2.6
+    legend_h = 0.27 * (leg_fs / 12.0) * n_rows_leg + 0.06
     fig_h = panel_h + legend_h
-    fig, axes = plt.subplots(1, n_test, figsize=(4.9 * n_test, fig_h),
+    fig, axes = plt.subplots(1, n_test, figsize=(2.75 * n_test, fig_h),
                              sharex=True, sharey=True)
     axes = np.atleast_1d(axes)
     for t, ax in enumerate(axes):
@@ -61,7 +66,8 @@ def plot_pstar_grid(x, mean, se, *, ylabel, out_dir, prefix, yscale='linear',
                 continue
             e = np.nan_to_num(se[m][:, t])
             kw = _style(m)
-            ax.plot(x, y, label=m, linewidth=line_w, markersize=MARKER_SIZE,
+            lab = display_name(m).replace('Triangular', 'Tri').replace('_', ' ')
+            ax.plot(x, y, label=lab, linewidth=line_w, markersize=MARKER_SIZE,
                     alpha=line_alpha, **kw)
             lo, hi = y - e, y + e
             if yscale == 'log':
@@ -73,17 +79,22 @@ def plot_pstar_grid(x, mean, se, *, ylabel, out_dir, prefix, yscale='linear',
                             alpha=band_alpha, linewidth=0)
         ax.set_xscale('log')
         ax.set_yscale(yscale)
+        if yscale == 'log':
+            ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0, numticks=6))
         if ylim is not None:
             ax.set_ylim(*ylim)
-        ax.set_title(TEST_SET_TITLES[t] if t < len(TEST_SET_TITLES) else f'test {t}')
+        ax.set_title(TEST_SET_TITLES[t] if t < len(TEST_SET_TITLES) else f'test {t}',
+                     fontsize=lab_fs, pad=4)
         ax.grid(True, alpha=0.3)
-        ax.set_xlabel(r'KL$(p_0 \| p_1)$')
-    axes[0].set_ylabel(ylabel)
+        ax.tick_params(labelsize=tick_fs)
+        ax.set_xlabel(r'KL$(p_0 \| p_1)$', fontsize=lab_fs)
+    axes[0].set_ylabel(ylabel, fontsize=lab_fs)
 
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower center', ncol=ncol_leg, fontsize=12,
-               framealpha=0.9, handlelength=1.6, columnspacing=1.2)
-    fig.tight_layout(pad=0.5, w_pad=0.8, rect=(0, legend_h / fig_h, 1, 1))
+    fig.legend(handles, labels, loc='lower center', ncol=ncol_leg, fontsize=leg_fs,
+               framealpha=0.9, handlelength=1.2, columnspacing=1.0,
+               labelspacing=0.3, borderpad=0.4, handletextpad=0.4)
+    fig.tight_layout(pad=0.3, w_pad=0.35, rect=(0, legend_h / fig_h, 1, 1))
 
     os.makedirs(out_dir, exist_ok=True)
     for ext in ('pdf', 'png'):
@@ -93,16 +104,25 @@ def plot_pstar_grid(x, mean, se, *, ylabel, out_dir, prefix, yscale='linear',
     return methods
 
 
-def emit_tables(x, mean, se, methods, *, title, stem, n_test):
-    """one table file; a section per p* with rows = methods, cols = KL values."""
+def emit_tables(x, mean, se, methods, *, title, stem, n_test, iqr=None):
+    """one table file; a section per p* with rows = methods, cols = KL values.
+
+    iqr: optional (med, q1, q3) dict triple; when present a median [q1, q3]
+    companion section is appended per p* alongside the mean +/- SE primary.
+    """
     header = ['Method'] + [f'KL={k:g}' for k in x]
     sections = []
     for t in range(n_test):
-        rows = [[m] + [fmt_pm(mean[m][ki, t], se[m][ki, t]) for ki in range(len(x))]
-                for m in methods]
         label = TEST_SET_TITLES[t].replace('$', '').replace(r'\_', '_') \
             if t < len(TEST_SET_TITLES) else f'test {t}'
+        rows = [[display_name(m)] + [fmt_pm(mean[m][ki, t], se[m][ki, t]) for ki in range(len(x))]
+                for m in methods]
         sections.append((f'{title} -- {label}', header, rows))
+        if iqr is not None:
+            med, q1, q3 = iqr
+            irows = [[display_name(m)] + [fmt_iqr(med[m][ki, t], q1[m][ki, t], q3[m][ki, t])
+                            for ki in range(len(x))] for m in methods]
+            sections.append((f'{title} (median [q1, q3]) -- {label}', header, irows))
     write_tables(stem, sections)
 
 
@@ -131,9 +151,15 @@ def main(variant: str | None = None):
     with h5py.File(summary, 'r') as f:
         reg_mean, reg_se = load_pair(f, 'regret_{m}_mean', 'regret_{m}_se')
         err_mean, err_se = load_pair(f, 'eldr_err_{m}_mean', 'eldr_err_{m}_se')
+        # optional IQR companions (older summary files may lack them).
+        reg_q1, reg_q3 = load_pair(f, 'regret_{m}_q1', 'regret_{m}_q3')
+        err_med = {m: f[f'eldr_err_{m}_med'][:] for m in err_mean
+                   if f'eldr_err_{m}_med' in f}
+        err_q1 = {m: f[f'eldr_err_{m}_q1'][:] for m in err_mean if f'eldr_err_{m}_q1' in f}
+        err_q3 = {m: f[f'eldr_err_{m}_q3'][:] for m in err_mean if f'eldr_err_{m}_q3' in f}
         # pointwise mae is stored raw as maes_by_kl_{m} (n_kl, n_inst, n_test);
-        # aggregate over instances to mean +/- SE here.
-        mae_mean, mae_se = {}, {}
+        # aggregate over instances to mean +/- SE and median [q1, q3] here.
+        mae_mean, mae_se, mae_med, mae_q1, mae_q3 = {}, {}, {}, {}, {}
         for k in f.keys():
             if not k.startswith('maes_by_kl_'):
                 continue
@@ -142,17 +168,25 @@ def main(variant: str | None = None):
             n_inst = arr.shape[1]
             mae_mean[m] = np.nanmean(arr, axis=1)
             mae_se[m] = np.nanstd(arr, axis=1, ddof=1) / np.sqrt(n_inst)
+            mae_med[m] = np.nanmedian(arr, axis=1)
+            mae_q1[m] = np.nanpercentile(arr, 25, axis=1)
+            mae_q3[m] = np.nanpercentile(arr, 75, axis=1)
 
+    # per job the optional iqr companion: regret point is the median (reg_mean),
+    # so its triple is (reg_mean, reg_q1, reg_q3).
+    reg_iqr = (reg_mean, reg_q1, reg_q3) if reg_q1 else None
+    err_iqr = (err_med, err_q1, err_q3) if err_med else None
+    mae_iqr = (mae_med, mae_q1, mae_q3) if mae_med else None
     jobs = [
         (reg_mean, reg_se, 'Rel. ELDR regret', 'model_selection_regret_grid',
          'linear', 'ELDR regret (median +/- bootstrap SE)',
-         {'band_clip': (0.0, 1.0), 'ylim': (-0.02, 1.02)}),
+         {'band_clip': (0.0, 1.0), 'ylim': (-0.02, 1.02)}, reg_iqr),
         (err_mean, err_se, 'ELDR error (abs)', 'model_selection_eldr_err_grid',
-         'log', 'Absolute ELDR error, mean +/- SE', {}),
+         'log', 'Absolute ELDR error, mean +/- SE', {}, err_iqr),
         (mae_mean, mae_se, 'Pointwise LDR MAE', 'model_selection_pointwise_mae_grid',
-         'log', 'Pointwise LDR MAE, mean +/- SE', {}),
+         'log', 'Pointwise LDR MAE, mean +/- SE', {}, mae_iqr),
     ]
-    for mean, se, ylabel, prefix, yscale, title, extra in jobs:
+    for mean, se, ylabel, prefix, yscale, title, extra, iqr in jobs:
         if not mean:
             print(f'  skip {prefix}: no data')
             continue
@@ -161,7 +195,7 @@ def main(variant: str | None = None):
                                   **extra)
         emit_tables(kl_distances, mean, se, methods, title=title,
                     stem=os.path.join(figures_dir, f'{prefix.removesuffix("_grid")}_table'),
-                    n_test=n_test)
+                    n_test=n_test, iqr=iqr)
 
     print(f'\nDone. Figures in: {figures_dir}')
 

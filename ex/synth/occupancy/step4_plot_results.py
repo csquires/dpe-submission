@@ -32,8 +32,8 @@ FAMILIES = [
 # metric -> (ylabel, yscale). regret is cross-method normalized in [0,1] -> linear.
 METRICS = {
     'pointwise_mae': ('Pointwise LDR MAE', 'log'),
-    'eldr_err':      ('ELDR Error',        'log'),
-    'regret':        ('ELDR regret',       'linear'),
+    'eldr_err':      ('Abs. ELDR err.',        'log'),
+    'regret':        ('Rel. ELDR regret',       'linear'),
 }
 
 

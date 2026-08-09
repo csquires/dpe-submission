@@ -17,7 +17,7 @@ import seaborn as sns
 
 
 config = yaml.load(
-    open("ex/pstar_sample_complexity/config.yaml", "r"),
+    open("ex/ablations/pstar_sample_complexity/config.yaml", "r"),
     Loader=yaml.FullLoader,
 )
 
@@ -43,7 +43,7 @@ def build_style_maps(algorithms: list[str]) -> tuple[dict[str, tuple], dict[str,
 def display_name(alg: str) -> str:
     """Compact, plot-friendly method names."""
     labels = {
-        "MultiHeadTriangularTDRE": "MH-TDRE",
+        "MultiHeadTriangularTDRE": "TDRE",
         "TriangularCTSM": "CTSM",
         "TriangularCTSM2D": "CTSM-2D",
         "TriangularFMDRE": "FMDRE",

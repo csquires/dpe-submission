@@ -17,9 +17,9 @@ CONFIG_PATH = 'ex/semisynth/mnist/config.yaml'
 
 # metric -> (ylabel, yscale). regret is normalized in [0,1] -> linear.
 METRICS = {
-    'eldr_abs_err': ('ELDR abs error', 'log'),
-    'mae_train':    ('MAE (held-out test p*)', 'log'),
-    'regret':       ('ELDR regret', 'linear'),
+    'eldr_abs_err': ('Abs. ELDR err.', 'log'),
+    'mae_train':    ('Pointwise LDR MAE', 'log'),
+    'regret':       ('Rel. ELDR regret', 'linear'),
 }
 
 
