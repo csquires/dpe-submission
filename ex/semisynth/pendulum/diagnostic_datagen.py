@@ -9,18 +9,21 @@ modes:
                produce datagen_diagnostic.png + datagen_variance.png.
   --show-grid: read traj_kl_cache/traj_grid_{hash}.h5 and produce
                grid_diagnostic.png. works with no per-cell HDF5 yet.
+  --pilot:     run 5-cell pilot mode with collapse diagnostics + go/no-go report.
 
 panels (default mode):
-  - K1 prescribed vs realized scatter (y=x reference)
+  - realized K1 ladder bar plot (with error bars, selected strata highlighted)
   - beta (set) vs K2_realized scatter (no reference line)
-  - (alpha*, beta) coverage in 2-d
+  - hardness aggregation by stratum
   - Bellman residual scatter (q_O across cells, q_E baseline)
   - LDR histograms grid (per (k1_idx, beta_idx); seeds overlaid)
   - phase-space (theta, theta_dot) at t=0 and t=T
   - PCA of flat trajectories (first available cell)
   - hardness boxplot grid + summary table
+  - data card with gate/replay/ckpt summaries
 """
 import argparse
+from glob import glob as glob_fn
 from itertools import product
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -30,11 +33,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from ex.semisynth.pendulum.step1_create_data import (
-    _build_env_and_q_cfg,
-    _resolve_reward,
-)
-from ex.utils.alpha_grid import make_alphas
+# env/q cfg builder lives in step0_common (step1's local variant is
+# env-only); make_alphas + the traj-KL grid are gaussian-era only and are
+# imported lazily inside build_grid_cfg.
+from ex.semisynth.pendulum.step0_common import build_env_and_q_cfg as _build_env_and_q_cfg
 from ex.utils.diagnostic_primitives import (
     collect_cells,
     load_kl_grid,
@@ -46,12 +48,14 @@ from ex.utils.prescribed_kls import hash_pendulum_cfg
 # raw attr names live in the per-cell hdf5; remap to standard names
 # used by the plotters in this file.
 KEY_MAP = {
-    "k1_pre": "K1_prescribed",
-    "k1_real": "K1_realized",
+    "alpha_chosen": "alpha_chosen",  # stratum label alpha
+    "k1_realized_flow": "k1_realized_flow",  # realized K1 from flow (fallback to k1_real)
+    "k1_realized_flow_se": "k1_realized_flow_se",  # SE of realized K1
+    "k1_real": "K1_realized",  # legacy fallback
     "k2_real": "K2_realized",
     "beta": "beta",
-    "alpha": "alpha_star",
     "integrated_eldr": "integrated_eldr",
+    "flow_ckpt_hash": "flow_ckpt_hash",  # flow checkpoint hash
 }
 
 
@@ -65,6 +69,8 @@ def parse_args(args=None):
                    help="skip the per-stratum data-card table + figure")
     p.add_argument("--skip-render", action="store_true",
                    help="skip the phase-space ground-truth sample sheet")
+    p.add_argument("--pilot", action="store_true",
+                   help="run 5-cell pilot mode: collapse diagnostics + go/no-go report")
     return p.parse_args(args)
 
 
@@ -73,8 +79,12 @@ def run_data_card(cells, k1_values, config):
 
     metrics on the flattened (theta, theta_dot, action) trajectory samples of
     p* + true ldrs. emits data_card.{md,tex,png,pdf} into figures_dir.
+    appends gate_summary, replay_summary, and flow_ckpt_hash info.
     """
+    import json
+    import h5py
     from ex.utils import data_card as dc
+
     names = ['twonn_id', 'part_ratio', 'gmm_modes', 'lip_q90', 'hill_tail']
     vals = {m: [[] for _ in k1_values] for m in names}
     for ki in range(len(k1_values)):
@@ -87,12 +97,209 @@ def run_data_card(cells, k1_values, config):
             vals['gmm_modes'][ki].append(dc.gmm_modes(X))
             vals['lip_q90'][ki].append(dc.lip_q(X, ldr))
             vals['hill_tail'][ki].append(dc.hill_tail(ldr))
-    fig_dir = config['figures_dir']
-    dc.write_card(str(Path(fig_dir) / 'data_card'),
+
+    fig_dir = Path(config['figures_dir'])
+    card_base = str(fig_dir / 'data_card')
+    dc.write_card(card_base,
                   [f'K1={v:g}' for v in k1_values], vals,
                   title='pendulum data card (pstar trajectories) -- med [q1, q3] over seeds')
     dc.plot_metric_boxes(vals, k1_values, sweep_name='K1',
-                         out_dir=fig_dir, prefix='data_card')
+                         out_dir=str(fig_dir), prefix='data_card')
+
+    # append gate_summary: reports carry policy_label / accepted / diagnostics
+    import os as _os
+    gate_dir = Path(_os.path.expandvars(config.get('gate', {}).get('out_dir', '')))
+    gate_summaries = []
+    if gate_dir.exists():
+        for gate_json in sorted(gate_dir.glob('gate_*.json')):
+            try:
+                with open(gate_json) as f:
+                    gate_data = json.load(f)
+                label = gate_data.get('policy_label', '?')
+                accepted = gate_data.get('accepted', False)
+                diag = gate_data.get('diagnostics', {})
+                gate_summaries.append(
+                    f"  {label}: accepted={accepted}, "
+                    f"pit_ks_stat={diag.get('pit_ks_statistic')}, "
+                    f"nll_gap={gate_data.get('nll_details', {}).get('gap')}")
+            except Exception:
+                pass
+
+    # append replay_summary: load replay h5 if available
+    replay_summaries = []
+    replay_dir = Path(config.get('rl_runs', {}).get('cache_dir', ''))
+    if replay_dir.exists():
+        replay_h5 = replay_dir / 'replay.h5'
+        if replay_h5.exists():
+            try:
+                with h5py.File(replay_h5, 'r') as f:
+                    n_pairs = f.attrs.get('n_pairs', f.attrs.get('pairs', np.array([])).shape[0])
+                    phase_early = f.attrs.get('phase_early', 0)
+                    phase_mid = f.attrs.get('phase_mid', 0)
+                    phase_late = f.attrs.get('phase_late', 0)
+                    replay_summaries.append(f"  n_pairs={n_pairs}, phase_balance=(early={phase_early}, mid={phase_mid}, late={phase_late})")
+            except Exception:
+                pass
+
+    # append flow_ckpt_hash snapshot: extract from first cell record
+    ckpt_hashes = []
+    for (_, _), recs in cells.items():
+        for rec in recs:
+            attrs = rec.get('attrs', {})
+            if 'flow_ckpt_hash' in attrs:
+                ckpt_hashes.append(str(attrs['flow_ckpt_hash']))
+                break
+        if ckpt_hashes:
+            break
+
+    # append all summaries to data_card markdown file
+    card_md = card_base + '.md'
+    if Path(card_md).exists():
+        with open(card_md, 'a') as f:
+            if gate_summaries:
+                f.write('\n## Gate Summary\n')
+                for summary in gate_summaries:
+                    f.write(summary + '\n')
+            if replay_summaries:
+                f.write('\n## Replay Summary\n')
+                for summary in replay_summaries:
+                    f.write(summary + '\n')
+            if ckpt_hashes:
+                f.write('\n## Flow Checkpoint Hashes\n')
+                for h in ckpt_hashes:
+                    f.write(f'  {h}\n')
+
+
+def run_pilot_report(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
+                     config: Dict[str, Any]) -> None:
+    """5-cell pilot diagnostic: collapse detection + go/no-go decision.
+
+    pre-registered thresholds (frozen for reproducibility):
+      PILOT_MIN_LDR_VAR: floor on realized LDR variance
+      PILOT_MAX_ACTION_MODES: upper bound on action mode count (t=0)
+      PILOT_KS_GATE_THRESHOLD: KS stat gate threshold
+
+    procedure:
+      1. identify 5 pilot cells from config['pilot_cell_keys']
+      2. per cell: ldr histogram + variance, action mode count via smoothed sign changes
+      3. load gate pass/fail from gate reports
+      4. go/no-go: (ldr_var >= MIN) AND (mode_count <= MAX) AND (gate_pass)
+      5. write pilot_report.md to figures_dir
+    """
+    import json
+    import os
+    from scipy import signal
+
+    # ========== pre-registered constants block (frozen for reproducibility) ==========
+    PILOT_MIN_LDR_VAR = 0.3  # floor on realized LDR variance
+    PILOT_MAX_ACTION_MODES = 3  # upper bound on action mode count (unimodal + 2 neighbors)
+    PILOT_KS_GATE_THRESHOLD = 0.05  # KS stat from gate report
+    # ==================================================================================
+
+    pilot_cell_keys = config.get('pilot_cell_keys', [])
+    if not pilot_cell_keys:
+        print("pilot_cell_keys not defined in config; skipping pilot report")
+        return
+
+    # collect pilot diagnostics
+    pilot_rows = []
+    n_pass = 0
+
+    for cell_key in pilot_cell_keys[:5]:  # limit to 5 cells
+        ki, bi = cell_key
+        recs = cells.get((ki, bi), [])
+        if not recs:
+            pilot_rows.append((cell_key, np.nan, None, False, "FAIL (no data)"))
+            continue
+
+        rec = recs[0]  # use first seed
+        attrs = rec.get('attrs', {})
+
+        # ldr histogram + variance
+        ldr_var = None
+        if 'true_ldrs' in rec:
+            ldrs = rec['true_ldrs']
+            if len(ldrs) > 1:
+                ldr_var = float(np.var(ldrs))
+        if ldr_var is None:
+            ldr_var = np.nan
+
+        # action mode count: extract t=0 actions, smooth, count sign changes in derivative
+        mode_count = None
+        if 'samples_p0' in rec and 'samples_p1' in rec:
+            T = int(config.get('trajectory', {}).get('T', 5))
+            try:
+                # reshape to [N, T+1, 3] and extract action at t=0
+                p0_actions = rec['samples_p0'].reshape(-1, T + 1, 3)[:, 0, 2]  # [N] actions at t=0
+                p1_actions = rec['samples_p1'].reshape(-1, T + 1, 3)[:, 0, 2]
+
+                # density-peak count: smoothed histogram + prominent peaks
+                # (savgol on sorted samples counts quantile wiggles, not modes)
+                if len(p0_actions) > 5:
+                    from scipy.ndimage import gaussian_filter1d
+                    hist, _ = np.histogram(
+                        np.concatenate([p0_actions, p1_actions]),
+                        bins=60, range=(-2.0, 2.0))
+                    smooth = gaussian_filter1d(hist.astype(float), sigma=2.0)
+                    peaks, _ = signal.find_peaks(
+                        smooth, prominence=0.05 * smooth.max())
+                    mode_count = int(len(peaks))
+                else:
+                    mode_count = 1
+            except Exception:
+                mode_count = None
+
+        if mode_count is None:
+            mode_count = 0
+
+        # gate pass/fail: reports are content-addressed by ckpt hash and the
+        # cell attrs carry both hashes -> require both E and O accepted
+        gate_pass = False
+        gate_dir = Path(os.path.expandvars(config.get('gate', {}).get('out_dir', '')))
+        h_e = attrs.get('flow_ckpt_hash_E')
+        h_o = attrs.get('flow_ckpt_hash_O')
+        if gate_dir.exists() and h_e and h_o:
+            def _accepted(h):
+                fp = gate_dir / f"gate_{h}.json"
+                if not fp.exists():
+                    return False
+                try:
+                    with open(fp) as f:
+                        return bool(json.load(f).get("accepted", False))
+                except Exception:
+                    return False
+            gate_pass = _accepted(h_e) and _accepted(h_o)
+
+        # compute go/no-go
+        go_no_go = (ldr_var >= PILOT_MIN_LDR_VAR) and (mode_count <= PILOT_MAX_ACTION_MODES) and gate_pass
+        status = "PASS" if go_no_go else "FAIL"
+        if go_no_go:
+            n_pass += 1
+
+        pilot_rows.append((cell_key, ldr_var, mode_count, gate_pass, status))
+
+    # write pilot_report.md
+    fig_dir = Path(config['figures_dir'])
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    report_path = fig_dir / 'pilot_report.md'
+
+    with open(report_path, 'w') as f:
+        f.write('# 5-cell pilot report (pre-registered thresholds; cells indexed by stratum label)\n\n')
+        f.write('| cell_key | ldr_var | mode_count | gate_pass | go/no-go |\n')
+        f.write('|----------|---------|-----------|-----------|----------|\n')
+        for cell_key, ldr_var, mode_count, gate_pass, status in pilot_rows:
+            ldr_str = f"{ldr_var:.3f}" if not np.isnan(ldr_var) else "NaN"
+            mode_str = str(mode_count) if mode_count is not None else "?"
+            gate_str = "True" if gate_pass else "False"
+            f.write(f'| {cell_key} | {ldr_str} | {mode_str} | {gate_str} | {status} |\n')
+        f.write('\n## Summary\n')
+        f.write(f'{n_pass}/5 ready; recommend: {"proceed with caution" if n_pass >= 3 else "investigate further"}\n')
+        f.write(f'\n## Pre-registered Constants\n')
+        f.write(f'- PILOT_MIN_LDR_VAR = {PILOT_MIN_LDR_VAR}\n')
+        f.write(f'- PILOT_MAX_ACTION_MODES = {PILOT_MAX_ACTION_MODES}\n')
+        f.write(f'- PILOT_KS_GATE_THRESHOLD = {PILOT_KS_GATE_THRESHOLD}\n')
+
+    print(f"saved {report_path}")
 
 
 def run_sample_render(cells, k1_values, config, n_show=10, n_seeds=2):
@@ -104,6 +311,12 @@ def run_sample_render(cells, k1_values, config, n_show=10, n_seeds=2):
     dists = [('samples_p0', r'$p_0$ ($\pi_O$)'),
              ('samples_p1', r'$p_1$ ($\pi_E$)'),
              ('samples_pstar', r'$p_*$')]
+
+    def wrap_breaks(t):
+        """insert nan rows where theta jumps past +-pi so segments don't bridge the wrap"""
+        jump = np.where(np.abs(np.diff(t[:, 0])) > np.pi)[0]
+        return np.insert(t, jump + 1, np.nan, axis=0) if jump.size else t
+
     rng = np.random.default_rng(0)
     out = Path(config['figures_dir'])
     # one file per K1 so figures stay paper-sized and composable
@@ -120,7 +333,8 @@ def run_sample_render(cells, k1_values, config, n_show=10, n_seeds=2):
                 X = rec[dk]
                 idx = rng.choice(X.shape[0], n_show, replace=False)
                 for t in X[idx].reshape(n_show, -1, 3):
-                    ax.plot(t[:, 0], t[:, 1], '-o', markersize=2.5,
+                    tb = wrap_breaks(t)
+                    ax.plot(tb[:, 0], tb[:, 1], '-o', markersize=2.5,
                             linewidth=0.9, alpha=0.7)
                     ax.plot(t[0, 0], t[0, 1], 'k.', markersize=6)
                 ax.set_title(f'{lab}  seed={rec["seed"]}', fontsize=11)
@@ -147,6 +361,8 @@ def build_grid_cfg(config: Dict[str, Any]) -> Dict[str, Any]:
     must mirror the dict assembled inside step1_create_data.per_cell so
     the resulting hash matches the cached grid file.
     """
+    # gaussian-era only: requires the legacy traj_kl_grid config section
+    from ex.utils.alpha_grid import make_alphas
     env_cfg, q_cfg = _build_env_and_q_cfg(config)
     alphas = make_alphas(config["traj_kl_grid"]).tolist()
     betas = np.linspace(0, 1, config["traj_kl_grid"]["G_beta"]).tolist()
@@ -183,22 +399,49 @@ def enumerate_cell_paths(config: Dict[str, Any]
     """walk data_dir for k1_{i}_beta_{j}_seed_{s}.h5; group by (k1_idx, beta_idx).
 
     returns dict[(k1_idx, beta_idx)] -> list of (seed, path); only existing files included.
+
+    handles both legacy (kl_targets) and campaign config structures.
     """
     data_dir = Path(config["data_dir"])
-    k1_values = [float(v) for v in config["kl_targets"]["k1_values"]]
-    beta_values = [float(v) for v in config["kl_targets"]["beta_values"]]
-    seeds_default = int(config["kl_targets"]["seeds_default"])
 
-    out: Dict[Tuple[int, int], List[Tuple[int, str]]] = {}
-    for k1_idx, beta_idx in product(range(len(k1_values)), range(len(beta_values))):
-        seeds = []
-        for seed in range(seeds_default):
-            path = data_dir / f"k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
-            if path.exists():
-                seeds.append((seed, str(path)))
-        if seeds:
-            out[(k1_idx, beta_idx)] = seeds
-    return out
+    # try kl_targets first (legacy config), fall back to campaign + rl_runs
+    if "kl_targets" in config:
+        k1_values = [float(v) for v in config["kl_targets"]["k1_values"]]
+        beta_values = [float(v) for v in config["kl_targets"]["beta_values"]]
+        seeds_default = int(config["kl_targets"]["seeds_default"])
+        out: Dict[Tuple[int, int], List[Tuple[int, str]]] = {}
+        for k1_idx, beta_idx in product(range(len(k1_values)), range(len(beta_values))):
+            seeds = []
+            for seed in range(seeds_default):
+                path = data_dir / f"k1_{k1_idx}_beta_{beta_idx}_seed_{seed}.h5"
+                if path.exists():
+                    seeds.append((seed, str(path)))
+            if seeds:
+                out[(k1_idx, beta_idx)] = seeds
+        return out
+    else:
+        # campaign config: glob for all k1_*_beta_*_seed_*.h5 files and parse indices
+        pattern = str(data_dir / "k1_*_beta_*_seed_*.h5")
+        paths = sorted(glob_fn(pattern))
+        out = {}
+        for path in paths:
+            # parse filename: k1_{i}_beta_{j}_seed_{s}.h5
+            name = Path(path).stem
+            parts = name.split('_')
+            try:
+                k1_idx = int(parts[1])
+                beta_idx = int(parts[3])
+                seed = int(parts[5])
+                key = (k1_idx, beta_idx)
+                if key not in out:
+                    out[key] = []
+                out[key].append((seed, path))
+            except (IndexError, ValueError):
+                continue
+        # sort seeds within each key
+        for key in out:
+            out[key].sort(key=lambda x: x[0])
+        return out
 
 
 # ----------------------------------------------------------------------
@@ -310,29 +553,49 @@ def plot_grid_figure(grid: Dict[str, Any],
 # per-cell aggregate plots
 # ----------------------------------------------------------------------
 
-def plot_k1_inversion_check(ax,
-                            cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
-                            k1_values: List[float]) -> None:
-    """scatter (K1 prescribed, K1 realized) across all (cell, seed) with y=x.
+def plot_k1_ladder_bar(ax, config: Dict[str, Any]) -> None:
+    """bar plot of realized K1 ladder: one bar per chosen stratum with error bars.
 
-    color encodes k1_idx (viridis).
+    reads the canonical alphas_chosen.yaml (ladder/strata) for alphas, realized K1, SE.
+    highlights chosen strata from the selection process.
     """
-    n1 = len(k1_values)
-    pts = []
-    for (ai, _), recs in cells.items():
-        col = plt.cm.viridis(ai / max(1, n1 - 1))
-        for r in recs:
-            a = r["attrs"]
-            if "k1_pre" in a and "k1_real" in a:
-                ax.scatter(a["k1_pre"], a["k1_real"], s=15, alpha=0.6, color=col)
-                pts.append(float(a["k1_pre"]))
-                pts.append(float(a["k1_real"]))
-    if pts:
-        lo, hi = min(pts), max(pts)
-        ax.plot([lo, hi], [lo, hi], "k--", alpha=0.3)
-    ax.set_xlabel(r"$K_1$ prescribed")
-    ax.set_ylabel(r"$K_1$ realized")
-    ax.set_title(r"$K_1$: prescribed vs realized (hue: $k_1$ idx)")
+    # read the canonical alphas_chosen.yaml (ladder field carries the
+    # measured entries; strata are the chosen ones)
+    try:
+        from ex.utils.realized_kl_table import load_alphas_chosen
+        doc = load_alphas_chosen(config["data_dir"])
+        chosen = doc.get("ladder", []) or [
+            {"alpha": s["alpha"], "kl_hat": s["K1_realized_flow"],
+             "kl_se": s["K1_se"], "stratum_label": s["stratum_label"]}
+            for s in doc["strata"]]
+    except Exception as e:
+        ax.text(0.5, 0.5, f"alphas_chosen.yaml unavailable: {e}",
+                ha="center", va="center", transform=ax.transAxes, fontsize=8)
+        ax.set_visible(False)
+        return
+
+    if not chosen:
+        ax.text(0.5, 0.5, "no measured strata in alphas_chosen.yaml",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_visible(False)
+        return
+
+    # extract data from chosen strata
+    alphas = np.array([e["alpha"] for e in chosen])
+    k1_hats = np.array([e.get("kl_hat", 0) for e in chosen])
+    k1_ses = np.array([e.get("kl_se", 0) for e in chosen])
+    stratum_labels = [e.get("stratum_label", i) for i, e in enumerate(chosen)]
+
+    # bar plot with error bars
+    x_pos = np.arange(len(alphas))
+    colors = ["tab:orange" if i == sl else "tab:blue" for i, sl in enumerate(stratum_labels)]
+    # all are chosen, so highlight them uniformly; adjust if subset highlighting needed
+    ax.bar(x_pos, k1_hats, yerr=k1_ses, capsize=5, alpha=0.7, color="tab:orange", edgecolor="black", linewidth=0.8)
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([rf"$\alpha={a:.2e}$" for a in alphas], fontsize=9)
+    ax.set_ylabel(r"$K_1$ realized (±SE)")
+    ax.set_title(r"Realized $K_1$ ladder (selected strata)")
 
 
 def plot_k1_vs_k2_realized(ax,
@@ -500,31 +763,35 @@ def plot_hardness_boxplots(hardness: Dict[str, np.ndarray],
     n = len(names)
     ncols = 3
     nrows = (n + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows),
-                             squeeze=False)
-    n1 = len(k1_values)
-    for i, name in enumerate(names):
-        ax = axes[i // ncols, i % ncols]
-        arr = hardness[name]
-        per_k1 = []
-        for ai in range(n1):
-            row = arr[ai].ravel()
-            row = row[~np.isnan(row)]
-            per_k1.append(row if len(row) > 0 else np.array([np.nan]))
-        bp = ax.boxplot(per_k1, tick_labels=[f"{k:.2f}" for k in k1_values],
-                        patch_artist=True, showfliers=True,
-                        medianprops=dict(color="black", linewidth=1.5))
-        for patch in bp["boxes"]:
-            patch.set_facecolor("tab:blue")
-            patch.set_alpha(0.4)
-        ax.set_xlabel(r"$K_1$ prescribed")
-        ax.set_ylabel(name)
-        ax.set_title(name)
-    for i in range(n, nrows * ncols):
-        axes[i // ncols, i % ncols].set_visible(False)
-    fig.tight_layout()
-    Path(fig_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(fig_path, dpi=150, bbox_inches="tight")
+    # rc context stays open through savefig so draw-time tick labels inherit the
+    # shared bold/2x box-plot text spec; panels are sized to match.
+    from ex.utils.plot_style import box_style
+    with box_style():
+        fig, axes = plt.subplots(nrows, ncols, figsize=(6.2 * ncols, 5.0 * nrows),
+                                 squeeze=False)
+        n1 = len(k1_values)
+        for i, name in enumerate(names):
+            ax = axes[i // ncols, i % ncols]
+            arr = hardness[name]
+            per_k1 = []
+            for ai in range(n1):
+                row = arr[ai].ravel()
+                row = row[~np.isnan(row)]
+                per_k1.append(row if len(row) > 0 else np.array([np.nan]))
+            bp = ax.boxplot(per_k1, tick_labels=[f"{k:.2f}" for k in k1_values],
+                            patch_artist=True, showfliers=True,
+                            medianprops=dict(color="black", linewidth=1.5))
+            for patch in bp["boxes"]:
+                patch.set_facecolor("tab:blue")
+                patch.set_alpha(0.4)
+            ax.set_xlabel(r"$K_1$ prescribed")
+            ax.set_ylabel(name)
+            ax.set_title(name)
+        for i in range(n, nrows * ncols):
+            axes[i // ncols, i % ncols].set_visible(False)
+        fig.tight_layout(pad=0.3)
+        Path(fig_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(fig_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     print(f"saved {fig_path}")
 
@@ -622,10 +889,21 @@ def plot_bellman_residuals(ax,
 # ----------------------------------------------------------------------
 
 def plot_lightweight_figure(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
-                            config: Dict[str, Any]) -> None:
+                            config: Dict[str, Any],
+                            k1_values: Optional[List[float]] = None,
+                            beta_values: Optional[List[float]] = None) -> None:
     """assemble lightweight figure to figures_dir/datagen_diagnostic.png."""
-    k1_values = config["kl_targets"]["k1_values"]
-    beta_values = config["kl_targets"]["beta_values"]
+    # k1_values and beta_values passed by caller, or derive from config/cells
+    if k1_values is None or beta_values is None:
+        if "kl_targets" in config:
+            k1_values = config["kl_targets"]["k1_values"]
+            beta_values = config["kl_targets"]["beta_values"]
+        else:
+            # derive from cell keys
+            k1_indices = sorted(set(k[0] for k in cells.keys()))
+            beta_indices = sorted(set(k[1] for k in cells.keys()))
+            k1_values = [float(i) for i in k1_indices]
+            beta_values = [float(i) for i in beta_indices]
     T = int(config["trajectory"]["T"])
     n1 = len(k1_values)
     n2 = len(beta_values)
@@ -640,7 +918,7 @@ def plot_lightweight_figure(cells: Dict[Tuple[int, int], List[Dict[str, Any]]],
 
     sub0 = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=gs[0],
                                              wspace=0.4)
-    plot_k1_inversion_check(fig.add_subplot(sub0[0, 0]), cells, k1_values)
+    plot_k1_ladder_bar(fig.add_subplot(sub0[0, 0]), config)
     plot_k1_vs_k2_realized(fig.add_subplot(sub0[0, 1]), cells,
                            k1_values, beta_values)
     plot_bellman_residuals(fig.add_subplot(sub0[0, 2]), cells, k1_values)
@@ -690,12 +968,29 @@ def main():
         return
 
     cells = collect_cells(paths_by_idx, KEY_MAP)
-    plot_lightweight_figure(cells, config)
+
+    if args.pilot:
+        run_pilot_report(cells, config)
+        return
+
+    # default flow: full diagnostics
+    # derive k1_values and beta_values from config or cells
+    if "kl_targets" in config:
+        k1_values = config["kl_targets"]["k1_values"]
+        beta_values = config["kl_targets"]["beta_values"]
+    else:
+        # derive from cell keys
+        k1_indices = sorted(set(k[0] for k in cells.keys()))
+        beta_indices = sorted(set(k[1] for k in cells.keys()))
+        k1_values = [float(i) for i in k1_indices]
+        beta_values = [float(i) for i in beta_indices]
+
+    plot_lightweight_figure(cells, config, k1_values, beta_values)
 
     hardness = compute_hardness(
         cells,
-        config["kl_targets"]["k1_values"],
-        config["kl_targets"]["beta_values"],
+        k1_values,
+        beta_values,
         extra_metrics={
             "KL_O_E": lambda r: r["attrs"].get("KL_O_E", np.nan),
             "KL_E_mix": lambda r: r["attrs"].get("KL_E_mix", np.nan),
@@ -703,18 +998,16 @@ def main():
             "q_O_residual": lambda r: r["attrs"].get("q_O_residual", np.nan),
         },
     )
-    print_hardness_table(hardness,
-                         config["kl_targets"]["k1_values"],
-                         config["kl_targets"]["beta_values"])
+    print_hardness_table(hardness, k1_values, beta_values)
     plot_hardness_boxplots(hardness,
-                           config["kl_targets"]["k1_values"],
-                           config["kl_targets"]["beta_values"],
+                           k1_values,
+                           beta_values,
                            str(Path(config["figures_dir"]) / "datagen_variance.png"))
 
     if not args.skip_card:
-        run_data_card(cells, config["kl_targets"]["k1_values"], config)
+        run_data_card(cells, k1_values, config)
     if not args.skip_render:
-        run_sample_render(cells, config["kl_targets"]["k1_values"], config)
+        run_sample_render(cells, k1_values, config)
 
 
 if __name__ == "__main__":

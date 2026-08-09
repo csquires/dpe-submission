@@ -1,4 +1,8 @@
-# === Pendulum Environment Constants ===
+# SCOUT CONFIG for alpha selection
+# alphas_chosen empty + extra_diag_alphas = candidate set; n_seeds_gate 1;
+# flow steps 15000. replays use PRODUCTION trainer settings (reusable).
+# usage: python -m ex.semisynth.pendulum.step0a_rl_runs --config ex/semisynth/pendulum/config_scout.yaml   (then step0b, step0_scout)
+
 pendulum:
   g: 10.0                # float > 0; gravitational acceleration (m/s^2)
   ell: 1.0               # float > 0; pendulum length (m)
@@ -24,13 +28,13 @@ q_grid:
 
 # === Trajectory Horizon ===
 trajectory:
-  T: 20                    # int > 0; horizon length (T+1 timesteps total). RATIFIED 2026-08: raised from 5 so trajectory KL reaches the >=10 ceiling under the RL-replay GT (K1 ~linear in T; attractors need ~1s to separate)
+  T: 5                     # int > 0; horizon length (T+1 timesteps total)
 
 # === RL Behavior Source: Online Soft Q-Learning ===
 rl_runs:
-  alphas_chosen: [3.2e-1, 6.4e-1, 9.6e-1]  # FINAL strata (scout campaign 2026-08): production-flow K1 at T=20 ~ {2.4, 5.5, 12.4}; step0d re-measures as labels; note: yaml 1.1 scientific notation
-  extra_diag_alphas: []    # list; optional extra alphas trained only for the diagnostic K1 sweep
-  n_seeds_gate: 3          # int > 0; training seeds for flow stability check (G4)
+  alphas_chosen: []        # SCOUT config: final strata not chosen yet; iterate via extra_diag_alphas
+  extra_diag_alphas: [1.0e-2, 2.0e-2, 4.0e-2, 8.0e-2, 1.6e-1, 3.2e-1, 4.0e-1, 4.8e-1, 5.6e-1, 6.4e-1, 7.2e-1, 8.0e-1, 8.8e-1, 9.6e-1]  # iter2: dense probe of the 0.32-0.96 transition (below 0.32 is noise floor); note: yaml 1.1 scientific notation
+  n_seeds_gate: 1          # SCOUT: single seed (production: 3)          # int > 0; training seeds for flow stability check (G4)
   trainer:
     n_steps: 200000        # int > 0; soft-Q trainer loop limit
     lr: 0.05               # float > 0; adam learning rate
@@ -50,7 +54,7 @@ flow:
   n_layers: 3              # int > 0; rational-quadratic spline layers
   n_bins: 32               # int > 0; spline bin count
   train:
-    steps: 100000          # int > 0; mle training loop limit
+    steps: 15000           # SCOUT scale (production: 100000); content-addressed ckpts never collide with production          # int > 0; mle training loop limit
     batch: 1024            # int > 0; minibatch size
     lr: 1.0e-3             # float > 0; adam learning rate
     weight_decay: 1.0e-4   # float > 0; l2 regularization
@@ -77,8 +81,6 @@ campaign:
   seeds_default: 100       # int > 0; peak seeds per (k1, stratum) cell (24 train + 8 holdout + 68 step2)
 
 # === Sampling and Runtime ===
-pilot_cell_keys: [[0, 0], [1, 0], [2, 0]]  # list of [k1_idx, beta_idx]; pre-campaign pilot cells (first seed per stratum)
-data_dim: 63               # int; estimator input dim = (T+1)*3; consumed by step2/hpo adapters
 num_samples: 5000          # int > 0; trajectory triplets per (stratum, seed) cell
 device: cpu                # str; "cpu" only (datagen is numpy end-to-end)
 seed: 1729                 # int; global reproducibility seed
