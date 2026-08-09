@@ -41,19 +41,16 @@ class PendulumAdapter(ExperimentAdapter):
             cfg = yaml.safe_load(f)
 
         self._data_dir = cfg["data_dir"]
-        # runtime device discovery: config.yaml pins device "cpu" for the main
-        # pendulum experiment, but HPO trials should follow whatever node they
-        # land on, so pendulum HPO can use the GPU on the preempt lane.
+        # runtime device discovery
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self._num_waypoints = cfg.get("num_waypoints")
         kl = cfg.get("kl_targets", {})
-        self._k1_values = kl.get("k1_values", [])
-        self._beta_values = kl.get("beta_values", [])
-        self._seeds = kl.get("seeds_default", 1)
-        # pendulum samples are flat T=5-step trajectories, 18-dim each
-        # (verified from h5 samples_p0.shape=(N, 18); the prior `= 4` was a
-        # stale hardcode from an earlier theta/theta_dot-only schema).
-        self._latent_dim = 18
+        self._k1_values = cfg.get("rl_runs", {}).get("alphas_chosen", kl.get("k1_values", []))
+        self._beta_values = kl.get("beta_values", [0.5])
+        self._seeds = cfg.get("campaign", {}).get("seeds_default", kl.get("seeds_default", 1))
+        # estimator input dim = (T+1)*3; config data_dim is authoritative
+        # (63 at T=20; the fallback default 18 corresponds to T=5).
+        self._latent_dim = int(cfg.get("data_dim", 18))
 
     def name(self) -> str:
         """return "pendulum"."""
@@ -115,7 +112,7 @@ class PendulumAdapter(ExperimentAdapter):
         return self._device
 
     def latent_dim(self) -> int:
-        """return 18 (flat T=5 pendulum trajectory: 6 features per timestep × 3)."""
+        """return config["data_dim"], the flat (T+1)*3 trajectory dim (63 at T=20; fallback 18)."""
         return self._latent_dim
 
     def num_waypoints(self) -> Optional[int]:
