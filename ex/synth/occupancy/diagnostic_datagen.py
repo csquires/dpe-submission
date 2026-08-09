@@ -519,31 +519,35 @@ def plot_hardness_boxplots(hardness: Dict[str, np.ndarray],
     n = len(names)
     ncols = 3
     nrows = (n + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows),
-                             squeeze=False)
-    n1 = len(k1_values)
-    for i, name in enumerate(names):
-        ax = axes[i // ncols, i % ncols]
-        arr = hardness[name]
-        per_k1 = []
-        for ai in range(n1):
-            row = arr[ai].ravel()
-            row = row[~np.isnan(row)]
-            per_k1.append(row if len(row) > 0 else np.array([np.nan]))
-        bp = ax.boxplot(per_k1, tick_labels=[f"{k:.2f}" for k in k1_values],
-                        patch_artist=True, showfliers=True,
-                        medianprops=dict(color="black", linewidth=1.5))
-        for patch in bp["boxes"]:
-            patch.set_facecolor("tab:blue")
-            patch.set_alpha(0.4)
-        ax.set_xlabel(r"$K_1$ prescribed")
-        ax.set_ylabel(name)
-        ax.set_title(name)
-    for i in range(n, nrows * ncols):
-        axes[i // ncols, i % ncols].set_visible(False)
-    fig.tight_layout()
-    Path(fig_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(fig_path, dpi=150, bbox_inches="tight")
+    # rc context stays open through savefig so draw-time tick labels inherit the
+    # shared bold/2x box-plot text spec; panels are sized to match.
+    from ex.utils.plot_style import box_style
+    with box_style():
+        fig, axes = plt.subplots(nrows, ncols, figsize=(6.2 * ncols, 5.0 * nrows),
+                                 squeeze=False)
+        n1 = len(k1_values)
+        for i, name in enumerate(names):
+            ax = axes[i // ncols, i % ncols]
+            arr = hardness[name]
+            per_k1 = []
+            for ai in range(n1):
+                row = arr[ai].ravel()
+                row = row[~np.isnan(row)]
+                per_k1.append(row if len(row) > 0 else np.array([np.nan]))
+            bp = ax.boxplot(per_k1, tick_labels=[f"{k:.2f}" for k in k1_values],
+                            patch_artist=True, showfliers=True,
+                            medianprops=dict(color="black", linewidth=1.5))
+            for patch in bp["boxes"]:
+                patch.set_facecolor("tab:blue")
+                patch.set_alpha(0.4)
+            ax.set_xlabel(r"$K_1$ prescribed")
+            ax.set_ylabel(name)
+            ax.set_title(name)
+        for i in range(n, nrows * ncols):
+            axes[i // ncols, i % ncols].set_visible(False)
+        fig.tight_layout(pad=0.3)
+        Path(fig_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(fig_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     print(f"saved {fig_path}")
 
