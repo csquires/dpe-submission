@@ -153,3 +153,37 @@ def group_of(method: str) -> str | None:
         if method in ms:
             return g
     return None
+
+
+# ---------------------------------------------------------------------------
+# label spelling helpers + the box_style rc_context entry point used by the
+# box-plot step4s.
+# ---------------------------------------------------------------------------
+
+# figure-label spelling for methods whose internal name carries a variant tag.
+DISPLAY_NAME: dict = {"MDRE_15": "MDRE"}
+
+
+def display_name(method: str) -> str:
+    """method name as it should appear in a figure label or table row.
+
+    DISPLAY_NAME spelling first (MDRE_15 -> MDRE), then the MultiHead prefix
+    is dropped (MultiHeadTDRE -> TDRE). presentation only.
+    """
+    return DISPLAY_NAME.get(method, method).replace("MultiHead", "")
+
+
+def short_label(method: str) -> str:
+    """compact legend spelling: display_name, MHT -> TDRE, Tri prefix, no underscores.
+
+    e.g. TriangularCTSM_V2 -> TriCTSM V2, MHT_DV -> TDRE DV.
+    """
+    lab = display_name(method)
+    if lab.startswith("MHT"):
+        lab = "TDRE" + lab[3:]
+    return lab.replace("Triangular", "Tri").replace("_", " ")
+
+
+def box_style():
+    """no-op rc_context; the thin/small schema of apply() stays in effect."""
+    return mpl.rc_context({})

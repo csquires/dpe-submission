@@ -20,9 +20,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 from matplotlib.patches import Patch
 
+from ex.utils.plot_style import display_name
 from ex.utils.tables import fmt_iqr, write_tables
 
 
@@ -33,6 +35,13 @@ BOX_ALPHA = 0.6                                  # translucent so nested overlap
 
 # base method -> sigma2 sibling, drawn as an extra nested box on the same column.
 S2_OF = {"FMDRE": "FMDRE_S2"}
+
+# print-size fonts: sized so a \linewidth-included figure lands near the 10pt
+# body text (printed pt = canvas pt * print_width / canvas_width).
+SIZES = dict(tickx=22, ticky=20, ylab=23, leg=18)
+
+# sweep axis display names for the lightness legend.
+SWEEP_DISP = {"alpha": r"$\alpha$", "K1": r"$K_1$"}
 
 # each family: (base_method_or_None, [triangular_variants]). uses MDRE_15 (the
 # classifier base name in the eldr-estimation experiments, cf. pendulum's "MDRE").
@@ -58,6 +67,10 @@ def plot_family_boxplot(data, sweep_values, *, sweep_name="K1",
                         families=DEFAULT_FAMILIES, s2_of=S2_OF, yscale="log") -> None:
     """family-grouped box plot; one box per sweep value within each family slot.
 
+    wide print-size layout: short horizontal family labels, fonts per SIZES,
+    two frameless legend rows (hue, then sweep lightness) under the axes, fixed
+    margins so the canvas is deterministic (saved without a tight bbox).
+
     Args:
       data: dict method -> array [n_sweep, n_seeds] (nan-padded ok). box at sweep
             index k = distribution of data[method][k].
@@ -79,7 +92,7 @@ def plot_family_boxplot(data, sweep_values, *, sweep_name="K1",
     offsets = np.linspace(-0.26, 0.26, n_sw) if n_sw > 1 else np.array([0.0])
     fracs = np.linspace(0.45, 1.0, n_sw) if n_sw > 1 else np.array([1.0])
 
-    fig, ax = plt.subplots(figsize=(max(11, n_fam * 1.6), 5))
+    fig, ax = plt.subplots(figsize=(max(12.5, n_fam * 1.8), 3.9))
 
     def _draw_box(values, pos, width, color, zorder):
         vals = np.asarray(values)
@@ -105,7 +118,7 @@ def plot_family_boxplot(data, sweep_values, *, sweep_name="K1",
     for fam_idx, (base, variants) in enumerate(valid):
         pos = fam_idx + 1
         xticks.append(pos)
-        xlabels.append((base or variants[0]).replace('Triangular', 'Tri').replace('MultiHead', 'MH'))
+        xlabels.append(display_name(base or variants[0]))
         overlays = [(v, TRI_COLORS[vi % len(TRI_COLORS)])
                     for vi, v in enumerate(variants) if v in data]
         s2 = s2_of.get(base)
@@ -120,11 +133,13 @@ def plot_family_boxplot(data, sweep_values, *, sweep_name="K1",
                           _shade(c, fracs[ki]), zorder=3 + oi)
 
     ax.set_xticks(xticks)
-    ax.set_xticklabels(xlabels, rotation=40, ha='right', fontsize=15)
+    ax.set_xticklabels(xlabels, fontsize=SIZES['tickx'])
     ax.set_xlim(0.4, n_fam + 0.6)
-    ax.set_ylabel(ylabel, fontsize=17)
+    ax.set_ylabel(ylabel, fontsize=SIZES['ylab'])
     ax.set_yscale(yscale)
-    ax.tick_params(axis='y', labelsize=14)
+    ax.tick_params(axis='y', labelsize=SIZES['ticky'])
+    if yscale == 'log':
+        ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0, numticks=6))
     ax.grid(True, axis='y', alpha=0.3)
 
     hue_handles = [
@@ -134,20 +149,20 @@ def plot_family_boxplot(data, sweep_values, *, sweep_name="K1",
         Patch(facecolor=TRI_COLORS[2], alpha=BOX_ALPHA, label='Tri V3'),
         Patch(facecolor=S2_COLOR, alpha=BOX_ALPHA, label='FMDRE S2'),
     ]
+    sweep_disp = SWEEP_DISP.get(sweep_name, sweep_name)
     sw_handles = [Patch(facecolor=_shade(COLOR_NON_TRI, fracs[ki]), alpha=BOX_ALPHA,
-                        label=f'{sweep_name} = {sweep_values[ki]:g}') for ki in range(n_sw)]
-    leg1 = ax.legend(handles=hue_handles, title='Method (hue)', fontsize=13,
-                     title_fontsize=14, loc='upper left', bbox_to_anchor=(1.005, 1.0),
-                     borderaxespad=0, framealpha=0.9)
-    ax.add_artist(leg1)
-    ax.legend(handles=sw_handles, title=f'{sweep_name} (lightness)', fontsize=13,
-              title_fontsize=14, loc='upper left', bbox_to_anchor=(1.005, 0.42),
-              borderaxespad=0, framealpha=0.9)
-    fig.tight_layout()
+                        label=f'{sweep_disp} = {sweep_values[ki]:g}') for ki in range(n_sw)]
+    fig.subplots_adjust(left=0.085, right=0.995, top=0.96, bottom=0.34)
+    fig.legend(handles=hue_handles, fontsize=SIZES['leg'], loc='lower center', ncol=5,
+               bbox_to_anchor=(0.54, 0.105), frameon=False,
+               columnspacing=1.2, handlelength=1.2, handletextpad=0.5)
+    fig.legend(handles=sw_handles, fontsize=SIZES['leg'], loc='lower center', ncol=n_sw,
+               bbox_to_anchor=(0.54, 0.0), frameon=False,
+               columnspacing=1.2, handlelength=1.2, handletextpad=0.5)
 
     os.makedirs(out_dir, exist_ok=True)
     for ext in ('pdf', 'png'):
-        fig.savefig(os.path.join(out_dir, f'{prefix}_boxplot.{ext}'), dpi=150, bbox_inches='tight')
+        fig.savefig(os.path.join(out_dir, f'{prefix}_boxplot.{ext}'), dpi=150)
     print(f"saved {prefix}_boxplot.{{pdf,png}}")
     plt.close(fig)
 
