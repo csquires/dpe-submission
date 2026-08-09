@@ -74,13 +74,20 @@ def stratified_mae_quartiles(est_ldrs, true_ldrs):
 
 
 def eldr_err_stats(est_by_alg, true_eldr, n_kl, n_inst, ntest):
-    """|mean_samples(est) - true_eldr|, aggregated to per-(kl, test) mean +/- se."""
-    means, ses = {}, {}
+    """|mean_samples(est) - true_eldr|, per-(kl, test) mean +/- se and median [q1, q3].
+
+    returns five dicts: means, ses, meds, q1s, q3s (all (n_kl, ntest) per alg),
+    aggregating over the n_inst instances within each (kl, test) stratum.
+    """
+    means, ses, meds, q1s, q3s = {}, {}, {}, {}, {}
     for alg, est in est_by_alg.items():
         err = np.abs(est.mean(axis=2) - true_eldr).reshape(n_kl, n_inst, ntest)
         means[alg] = err.mean(axis=1)
         ses[alg] = err.std(axis=1, ddof=1) / np.sqrt(n_inst)
-    return means, ses
+        meds[alg] = np.nanmedian(err, axis=1)
+        q1s[alg] = np.nanpercentile(err, 25, axis=1)
+        q3s[alg] = np.nanpercentile(err, 75, axis=1)
+    return means, ses, meds, q1s, q3s
 
 
 def regret_stats(est_by_alg, true_eldr, n_kl, n_inst, ntest, seed, n_boot=500):
@@ -108,13 +115,15 @@ def regret_stats(est_by_alg, true_eldr, n_kl, n_inst, ntest, seed, n_boot=500):
 
     rng = np.random.default_rng(seed)
     boot = rng.integers(0, n_inst, size=(n_boot, n_inst))
-    means, ses = {}, {}
+    means, ses, q1s, q3s = {}, {}, {}, {}
     for mi, a in enumerate(algs):
         r = reg[mi]                                     # (n_kl, n_inst, ntest)
         means[a] = np.nanmedian(r, axis=1)             # (n_kl, ntest)
         bmed = np.nanmedian(r[:, boot, :], axis=2)     # (n_kl, n_boot, ntest)
         ses[a] = np.nanstd(bmed, axis=1)               # (n_kl, ntest)
-    return means, ses
+        q1s[a] = np.nanpercentile(r, 25, axis=1)       # raw IQR over instances
+        q3s[a] = np.nanpercentile(r, 75, axis=1)
+    return means, ses, q1s, q3s
 
 
 def main(variant=None):
@@ -153,9 +162,11 @@ def main(variant=None):
                       for q, a in stratified_mae_quartiles(est, true_ldrs).items()}
 
     true_eldr_mc = true_ldrs.mean(axis=2)  # (nrows, ntest)
-    eldr_mean, eldr_se = eldr_err_stats(est_by_alg, true_eldr_analytic, n_kl, n_inst, ntest)
-    mc_mean, mc_se = eldr_err_stats(est_by_alg, true_eldr_mc, n_kl, n_inst, ntest)
-    reg_mean, reg_se = regret_stats(est_by_alg, true_eldr_analytic, n_kl, n_inst, ntest, config['seed'])
+    eldr_mean, eldr_se, eldr_med, eldr_q1, eldr_q3 = eldr_err_stats(
+        est_by_alg, true_eldr_analytic, n_kl, n_inst, ntest)
+    mc_mean, mc_se, *_ = eldr_err_stats(est_by_alg, true_eldr_mc, n_kl, n_inst, ntest)
+    reg_mean, reg_se, reg_q1, reg_q3 = regret_stats(
+        est_by_alg, true_eldr_analytic, n_kl, n_inst, ntest, config['seed'])
 
     os.makedirs(proc_dir, exist_ok=True)
     with h5py.File(f'{proc_dir}/new_pstar.h5', 'w') as f:
@@ -169,6 +180,9 @@ def main(variant=None):
             # primary metric (step4 plots these): eldr_err_* vs the ANALYTIC truth.
             f.create_dataset(f'eldr_err_{alg}_mean', data=eldr_mean[alg])
             f.create_dataset(f'eldr_err_{alg}_se', data=eldr_se[alg])
+            f.create_dataset(f'eldr_err_{alg}_med', data=eldr_med[alg])
+            f.create_dataset(f'eldr_err_{alg}_q1', data=eldr_q1[alg])
+            f.create_dataset(f'eldr_err_{alg}_q3', data=eldr_q3[alg])
             # comparison copy vs the MC sample-mean truth; the mc_ prefix keeps it
             # out of step4's 'eldr_err_*_mean' method discovery.
             f.create_dataset(f'mc_eldr_err_{alg}_mean', data=mc_mean[alg])
@@ -176,6 +190,8 @@ def main(variant=None):
             # per-cell normalized regret (0=best method on a cell, 1=worst) vs analytic truth.
             f.create_dataset(f'regret_{alg}_mean', data=reg_mean[alg])
             f.create_dataset(f'regret_{alg}_se', data=reg_se[alg])
+            f.create_dataset(f'regret_{alg}_q1', data=reg_q1[alg])
+            f.create_dataset(f'regret_{alg}_q3', data=reg_q3[alg])
 
     nsamp = config['nsamples_test']
     print('=' * 72)
