@@ -1,0 +1,62 @@
+# eig_boed ablation config. all output paths in-repo (tiny float outputs, no
+# offload). loaded by step1/2/3/4 + priors/design/sim/study. canonical keys only.
+
+# directories (in-repo)
+data_dir: "ex/ablations/eig_boed/data"
+raw_results_dir: "ex/ablations/eig_boed/raw_results"
+processed_results_dir: "ex/ablations/eig_boed/processed_results"
+figures_dir: "ex/ablations/eig_boed/figures"
+
+# data generation (synthetic, no external data loaded)
+data_dim: 3
+sigma2: 1.0
+eig_min: 0.5
+eig_max: 2.0
+nsamples: 10000
+
+# factor grid (cell = (arm, geometry, prior_idx, method, seed_rep))
+num_priors: 12
+n_seeds: 5
+geometries: [diag, rot]
+arms: [method, oracle]
+
+# oracle-family arms (arm=oracle): synthetic reference estimators, NO neural fit.
+# est = eig_true + frac * round_ceiling * <w, xi>, w a fixed per-prior unit tilt.
+# frac=0 is the exact oracle (reference control); frac>0 are design-dependent bias
+# arms -- a positive control that the metric detects known-magnitude ranking
+# distortion (a CONSTANT bias is excluded: argmax + z-scoring make it invisible).
+oracle_methods:
+  oracle_exact: 0.0
+  oracle_tilt_lo: 0.15
+  oracle_tilt_hi: 0.40
+
+# methods dropped from THIS campaign entirely (compute + gather + plots).
+# honored by enumerate_cells; excluded from config_hash so it does not
+# invalidate already-computed shards of the remaining methods.
+exclude_methods: [VFMOrthros]
+
+# this campaign's shards carry an older config_hash (cosmetic config drift after
+# they were written; shards verified valid -- priors reproduce + C15 startup
+# check passes). let gather WARN rather than hard-reject on config_hash mismatch.
+gather_ignore_config_hash: true
+
+# sequential loop (5 rounds x 20 trials/round x 10 sobol startup) -> 100 fits/study
+n_rounds: 5
+n_trials: 20
+n_startup: 10
+
+# eigengap ladder for prior spectrum stratification (log-spaced across num_priors)
+eigengap_min: 1.05
+eigengap_max: 16.0
+
+# hyperparameter winners (flat schema A, loaded per method)
+winners_path: "scratch/gold_winners/winners.eig.yaml"
+
+# reproducibility
+config_seed: 1729
+
+# node-local journal storage (expands ${TMPDIR} at runtime)
+journal_scratch: "${TMPDIR}/eig_boed_journals"
+
+# runtime
+device: "cuda"

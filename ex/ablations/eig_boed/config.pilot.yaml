@@ -1,0 +1,31 @@
+# pilot config: 3 methods (via run_pilot.py filter) x 2 priors x 2 geom x 1 seed.
+# outputs to /data (persistent, readable from login node w/o /home). all else
+# matches config.yaml (d=3, R=5, T=20, n_startup=10).
+
+data_dir: "/data/user_data/aviamala/eig_boed_pilot/data"
+raw_results_dir: "/data/user_data/aviamala/eig_boed_pilot/raw"
+processed_results_dir: "/data/user_data/aviamala/eig_boed_pilot/proc"
+figures_dir: "/data/user_data/aviamala/eig_boed_pilot/figures"
+
+data_dim: 3
+sigma2: 1.0
+eig_min: 0.5
+eig_max: 2.0
+nsamples: 10000
+
+num_priors: 2
+n_seeds: 1
+geometries: [diag, rot]
+arms: [method]
+
+n_rounds: 5
+n_trials: 20
+n_startup: 10
+
+eigengap_min: 1.05
+eigengap_max: 16.0
+
+winners_path: "scratch/gold_winners/winners.eig.yaml"
+config_seed: 1729
+journal_scratch: "${TMPDIR}/eig_boed_journals"
+device: "cuda"
