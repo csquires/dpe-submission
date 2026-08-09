@@ -14,7 +14,8 @@ import os
 import h5py
 import yaml
 
-from ex.utils.group_panels import plot_group_row
+from ex.utils.group_panels import plot_group_row, plot_group_singles
+from ex.utils.plot_style import display_name
 from ex.utils.tables import fmt_pm, fmt_iqr, write_tables
 
 
@@ -35,7 +36,7 @@ def load(f, prefix):
 
 
 def table_rows(methods, cols, cell_fn):
-    return [[m] + [cell_fn(m, i) for i in range(len(cols))] for m in methods]
+    return [[display_name(m)] + [cell_fn(m, i) for i in range(len(cols))] for m in methods]
 
 
 def main():
@@ -57,8 +58,15 @@ def main():
 
     drawn = plot_group_row(
         betas, reg, reg_lo, reg_hi,
-        xlabel=XLABEL, ylabel='Rel. EIG regret (MoM, IQR band)',
+        xlabel=XLABEL, ylabel='Rel. EIG regret',
         out_dir=FIGURES_DIR, prefix='eig_regret_mom', yscale='linear',
+    )
+    # main-paper three-up (fig:eig_regret): one standalone panel per group.
+    plot_group_singles(
+        betas, reg, reg_lo, reg_hi,
+        xlabel=r'$\beta = \mathrm{EIG}(\xi) / \mathrm{EIG}_{\max}$',
+        ylabel='Rel. EIG regret', out_dir=FIGURES_DIR,
+        prefix_fmt='eig_estimation_{group}', ylim=(-0.02, 1.05),
     )
     regret_sections = [(
         'EIG regret -- MoM [bootstrap IQR] per beta',
