@@ -168,10 +168,6 @@ class ELBOAdapter(ExperimentAdapter):
         experiments (switched from scalar per_cell_eldr_abs_err 2026-08-09)."""
         return "per_cell_ldr_mae"
 
-    # eval_cell override REMOVED 2026-08-09: elbo now uses the base pointwise-MAE
-    # eval (mae(predict_ldr(pstar), true_ldrs) with per-sample true_ldrs). the old
-    # override returned the scalar |mean(predict_ldr(pstar)) - true_eldr| ELDR error.
-
     def stratify_key(self, cell: tuple[int, int]) -> tuple[int, int, int]:
         """return (alpha_idx, prior_idx, beta_idx) for fine-grained stratification.
 
