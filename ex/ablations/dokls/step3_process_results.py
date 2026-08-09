@@ -16,6 +16,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import yaml
 
 from ex.ablations.dokls import variants
 
@@ -33,23 +34,33 @@ def load_winners(tag, route, dpe_data_root):
     holdout_dir = Path(dpe_data_root) / "holdout" / exp_name
     winners = {}
 
-    if not holdout_dir.exists():
-        log.info(f"no holdout dir for {exp_name}")
-        return winners
+    if holdout_dir.exists():
+        for method_dir in holdout_dir.iterdir():
+            if not method_dir.is_dir():
+                continue
+            method = method_dir.name
+            # unsliced dokls writes best_hp.json directly in the method dir; sliced
+            # experiments nest it under slice_<x>/. match both (assemble uses **).
+            hp_file = list(method_dir.glob("best_hp.json")) \
+                + list(method_dir.glob("*/best_hp.json"))
+            if hp_file:
+                with open(hp_file[0]) as f:
+                    winners[method] = json.load(f)
+            else:
+                log.info(f"skipped {route} {method}: no winner")
+        if winners:
+            return winners
 
-    for method_dir in holdout_dir.iterdir():
-        if not method_dir.is_dir():
-            continue
-        method = method_dir.name
-        # unsliced dokls writes best_hp.json directly in the method dir; sliced
-        # experiments nest it under slice_<x>/. match both (assemble_winners uses **).
-        hp_file = list(method_dir.glob("best_hp.json")) + list(method_dir.glob("*/best_hp.json"))
-        if hp_file:
-            with open(hp_file[0]) as f:
-                winners[method] = json.load(f)
-        else:
-            log.info(f"skipped {route} {method}: no winner")
+    # fallback: repo-committed winners yaml. the holdout dir lives only on the
+    # HPO account; step3 needs winners.keys() purely as the method filter over
+    # the already-computed raw est_ldrs, so the yaml's method set suffices.
+    yaml_path = Path(__file__).resolve().parent / "winners" / f"{exp_name}.yaml"
+    if yaml_path.exists():
+        methods = (yaml.safe_load(open(yaml_path)) or {}).get("methods", {})
+        log.info(f"loaded {len(methods)} winners from repo yaml {yaml_path.name}")
+        return dict(methods)
 
+    log.info(f"no holdout dir and no repo yaml for {exp_name}")
     return winners
 
 
@@ -93,8 +104,15 @@ def compute_metrics(est_ldrs, true_ldrs, true_eldr):
     unsigned_err = np.abs(est_eldr_kl - true_eldr_kl)  # (7, 10)
     eldr_err_mean = unsigned_err.mean(axis=1)  # (7,)
     eldr_err_se = unsigned_err.std(axis=1, ddof=1) / np.sqrt(10)  # (7,)
+    eldr_err_med = np.median(unsigned_err, axis=1)  # (7,)
+    eldr_err_q1 = np.percentile(unsigned_err, 25, axis=1)  # (7,)
+    eldr_err_q3 = np.percentile(unsigned_err, 75, axis=1)  # (7,)
 
     mae = per_sample_mae_kl.mean(axis=1)  # (7,)
+    mae_se = per_sample_mae_kl.std(axis=1, ddof=1) / np.sqrt(10)  # (7,)
+    mae_med = np.median(per_sample_mae_kl, axis=1)  # (7,)
+    mae_q1 = np.percentile(per_sample_mae_kl, 25, axis=1)  # (7,)
+    mae_q3 = np.percentile(per_sample_mae_kl, 75, axis=1)  # (7,)
 
     return {
         'bias_signed': bias_signed,
@@ -104,7 +122,14 @@ def compute_metrics(est_ldrs, true_ldrs, true_eldr):
         'bias_sq_var': bias_sq_var,
         'eldr_err_mean': eldr_err_mean,
         'eldr_err_se': eldr_err_se,
+        'eldr_err_med': eldr_err_med,
+        'eldr_err_q1': eldr_err_q1,
+        'eldr_err_q3': eldr_err_q3,
         'mae': mae,
+        'mae_se': mae_se,
+        'mae_med': mae_med,
+        'mae_q1': mae_q1,
+        'mae_q3': mae_q3,
     }
 
 
@@ -133,13 +158,15 @@ def regret_stats(est_by_method, true_eldr, seed, n_boot=500):
 
     rng = np.random.default_rng(seed)
     boot = rng.integers(0, 10, size=(n_boot, 10))
-    means, ses = {}, {}
+    means, ses, q1s, q3s = {}, {}, {}, {}
     for mi, m in enumerate(methods):
         r = reg[mi]                                          # (7, 10)
         means[m] = np.nanmedian(r, axis=1).astype(np.float32)          # (7,)
         bmed = np.nanmedian(r[:, boot], axis=2)              # (7, n_boot)
         ses[m] = np.nanstd(bmed, axis=1).astype(np.float32)            # (7,)
-    return means, ses
+        q1s[m] = np.nanpercentile(r, 25, axis=1).astype(np.float32)    # raw IQR over inst
+        q3s[m] = np.nanpercentile(r, 75, axis=1).astype(np.float32)
+    return means, ses, q1s, q3s
 
 
 def process_tag_route(tag, route, dpe_data_root):
@@ -199,11 +226,13 @@ def process_tag_route(tag, route, dpe_data_root):
             results[key] = arr.astype(np.float32)
 
     # cross-method regret (needs all methods' est together; computed once)
-    reg_mean, reg_se = regret_stats(est_by_method, true_eldr_eff,
-                                    config.get('seed', 1729))
+    reg_mean, reg_se, reg_q1, reg_q3 = regret_stats(est_by_method, true_eldr_eff,
+                                                     config.get('seed', 1729))
     for method in est_by_method:
         results[f'regret_mean_{resolved_route}_{method}_{p_star_idx}_{N}'] = reg_mean[method]
         results[f'regret_se_{resolved_route}_{method}_{p_star_idx}_{N}'] = reg_se[method]
+        results[f'regret_q1_{resolved_route}_{method}_{p_star_idx}_{N}'] = reg_q1[method]
+        results[f'regret_q3_{resolved_route}_{method}_{p_star_idx}_{N}'] = reg_q3[method]
 
     # guard: no pooling across p*_idx (every key must have p*_idx in it)
     for key in results.keys():

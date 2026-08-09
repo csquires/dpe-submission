@@ -21,11 +21,13 @@ import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 
 from ex.utils.plot_style import apply as apply_style, style_for
+from ex.utils.plot_style import display_name, short_label
 from ex.utils.faceted_lines import order_methods, MARKER_SIZE
-from ex.utils.tables import fmt_pm, write_tables
+from ex.utils.tables import fmt_pm, fmt_iqr, write_tables
 from ex.ablations.dokls.variants import resolve
 
 PSTARS = [0, 1]
@@ -90,6 +92,34 @@ def load_metric(processed_dir, mean_key, se_key):
     return data
 
 
+def load_iqr(processed_dir, med_key, q1_key, q3_key):
+    """{(pstar, N): {method: (med, q1, q3)}} for the median/quartile companion keys.
+
+    mirrors load_metric; a method appears only when all three keys are present
+    (so summaries written before the change simply yield an empty companion).
+    """
+    data = {}
+    for pstar in PSTARS:
+        for N in NVALS:
+            path = os.path.join(processed_dir, f'two_leg_q{pstar}_N{N}.h5')
+            if not os.path.exists(path):
+                continue
+            prefix, suffix = f'{med_key}_two_leg_', f'_{pstar}_{N}'
+            md = {}
+            with h5py.File(path, 'r') as f:
+                for k in f.keys():
+                    if not (k.startswith(prefix) and k.endswith(suffix)):
+                        continue
+                    m = k[len(prefix): len(k) - len(suffix)]
+                    q1k = f'{q1_key}_two_leg_{m}_{pstar}_{N}'
+                    q3k = f'{q3_key}_two_leg_{m}_{pstar}_{N}'
+                    if q1k in f and q3k in f:
+                        md[m] = (f[k][:], f[q1k][:], f[q3k][:])
+            if md:
+                data[(pstar, N)] = md
+    return data
+
+
 def _finite_methods(data):
     """methods with finite data in at least one panel, in canonical order."""
     seen = set()
@@ -100,18 +130,24 @@ def _finite_methods(data):
 
 
 def plot_grid(kl, data, *, ylabel, out_dir, prefix, yscale='linear'):
-    """2x4 (p* x N) grid, x=KL, all methods; shared legend below. returns methods."""
+    """2x4 (p* x N) grid, x=KL, all methods; shared legend below. returns methods.
+
+    print-size layout: canvas 10.8in wide prints at \\linewidth so canvas fonts
+    land near body text (ticks 17 -> ~8.7pt). the metric name sits once on the
+    figure edge (supylabel); rows carry only their p* label.
+    """
     apply_style()
-    band_alpha, line_w, line_alpha = 0.12, 0.9, 0.8
+    band_alpha, line_w, line_alpha = 0.12, 1.1, 0.8
+    tick_fs, lab_fs, leg_fs = 17, 18, 14
     methods = _finite_methods(data)
 
     nr, nc = len(PSTARS), len(NVALS)
     ncol_leg = 5
     n_rows_leg = int(np.ceil(len(methods) / ncol_leg))
-    panel_h = 3.4
-    legend_h = 0.34 * n_rows_leg + 0.25
+    panel_h = 2.3
+    legend_h = 0.27 * (leg_fs / 12.0) * n_rows_leg + 0.06
     fig_h = panel_h * nr + legend_h
-    fig, axes = plt.subplots(nr, nc, figsize=(4.3 * nc, fig_h),
+    fig, axes = plt.subplots(nr, nc, figsize=(2.7 * nc, fig_h),
                              sharex=True, sharey=True, squeeze=False)
     for i, pstar in enumerate(PSTARS):
         for j, N in enumerate(NVALS):
@@ -124,7 +160,7 @@ def plot_grid(kl, data, *, ylabel, out_dir, prefix, yscale='linear'):
                 if not np.isfinite(mean).any():
                     continue
                 kw = dokls_style(m)
-                ax.plot(kl, mean, label=m, linewidth=line_w, alpha=line_alpha,
+                ax.plot(kl, mean, label=short_label(m), linewidth=line_w, alpha=line_alpha,
                         markersize=MARKER_SIZE, **kw)
                 if se is not None:
                     e = np.nan_to_num(se)
@@ -135,18 +171,23 @@ def plot_grid(kl, data, *, ylabel, out_dir, prefix, yscale='linear'):
                                     alpha=band_alpha, linewidth=0)
             ax.set_xscale('log')
             ax.set_yscale(yscale)
+            if yscale == 'log':
+                ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0, numticks=6))
             ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=tick_fs)
             if i == 0:
-                ax.set_title(rf'$N={N}$')
+                ax.set_title(rf'$N={N}$', fontsize=lab_fs, pad=4)
             if i == nr - 1:
-                ax.set_xlabel(r'KL$(p_0 \| p_1)$')
+                ax.set_xlabel(r'KL$(p_0 \| p_1)$', fontsize=lab_fs)
             if j == 0:
-                ax.set_ylabel(rf'$p_* = {PNAME[pstar]}$' + '\n' + ylabel)
+                ax.set_ylabel(rf'$p_* = {PNAME[pstar]}$', fontsize=lab_fs)
 
+    fig.supylabel(ylabel, fontsize=lab_fs, x=0.006)
     handles, labels = axes[0][0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower center', ncol=ncol_leg, fontsize=11,
-               framealpha=0.9, handlelength=2.0, columnspacing=1.2)
-    fig.tight_layout(pad=0.5, w_pad=0.6, h_pad=0.8, rect=(0, legend_h / fig_h, 1, 1))
+    fig.legend(handles, labels, loc='lower center', ncol=ncol_leg, fontsize=leg_fs,
+               framealpha=0.9, handlelength=1.6, columnspacing=1.0,
+               labelspacing=0.3, borderpad=0.4, handletextpad=0.4)
+    fig.tight_layout(pad=0.3, w_pad=0.35, h_pad=0.5, rect=(0.035, legend_h / fig_h, 1, 1))
 
     os.makedirs(out_dir, exist_ok=True)
     for ext in ('pdf', 'png'):
@@ -156,8 +197,12 @@ def plot_grid(kl, data, *, ylabel, out_dir, prefix, yscale='linear'):
     return methods
 
 
-def emit_tables(kl, data, methods, *, title, stem):
-    """one table file; a section per (p*, N), rows=methods, cols=KL values."""
+def emit_tables(kl, data, methods, *, title, stem, iqr_data=None):
+    """one table file; a section per (p*, N), rows=methods, cols=KL values.
+
+    iqr_data: optional {(pstar, N): {m: (med, q1, q3)}}; when present a median
+    [q1, q3] companion section is appended per (p*, N) after the mean +/- SE one.
+    """
     header = ['Method'] + [f'KL={k:g}' for k in kl]
     sections = []
     for pstar in PSTARS:
@@ -169,9 +214,21 @@ def emit_tables(kl, data, methods, *, title, stem):
                     continue
                 mean, se = md[m]
                 se = se if se is not None else np.full_like(mean, np.nan)
-                rows.append([m] + [fmt_pm(mean[ki], se[ki]) for ki in range(len(kl))])
+                rows.append([display_name(m)] + [fmt_pm(mean[ki], se[ki]) for ki in range(len(kl))])
             if rows:
                 sections.append((f'{title} -- p*={PNAME[pstar]}, N={N}', header, rows))
+            if iqr_data is not None:
+                imd = iqr_data.get((pstar, N), {})
+                irows = []
+                for m in methods:
+                    if m not in imd:
+                        continue
+                    med, q1, q3 = imd[m]
+                    irows.append([display_name(m)] + [fmt_iqr(med[ki], q1[ki], q3[ki])
+                                        for ki in range(len(kl))])
+                if irows:
+                    sections.append((f'{title} (median [q1, q3]) -- p*={PNAME[pstar]}, N={N}',
+                                     header, irows))
     if sections:
         write_tables(stem, sections)
 
@@ -183,27 +240,34 @@ def main(variant=None):
     os.makedirs(figures_dir, exist_ok=True)
     kl = np.array(config['kl_distances'], dtype=float)
 
+    # each job carries an optional (med_key, q1_key, q3_key) triple for the table
+    # IQR companion; the regret "point" is itself the median (regret_mean).
     jobs = [
         ('eldr_err_mean', 'eldr_err_se', 'ELDR error (abs)', 'log',
-         'dokls_eldr_err_grid', 'Absolute ELDR error, mean +/- SE'),
-        ('mae', None, 'Pointwise LDR MAE', 'log',
-         'dokls_pointwise_mae_grid', 'Pointwise LDR MAE'),
+         'dokls_eldr_err_grid', 'Absolute ELDR error, mean +/- SE',
+         ('eldr_err_med', 'eldr_err_q1', 'eldr_err_q3')),
+        ('mae', 'mae_se', 'Pointwise LDR MAE', 'log',
+         'dokls_pointwise_mae_grid', 'Pointwise LDR MAE, mean +/- SE',
+         ('mae_med', 'mae_q1', 'mae_q3')),
         ('regret_mean', 'regret_se', 'Rel. ELDR regret', 'linear',
-         'dokls_regret_grid', 'Per-cell normalized ELDR regret, median +/- boot SE'),
+         'dokls_regret_grid', 'Per-cell normalized ELDR regret, median +/- boot SE',
+         ('regret_mean', 'regret_q1', 'regret_q3')),
         ('variance', 'variance_se', 'Variance', 'log',
-         'dokls_variance_grid', 'Estimator variance, mean +/- SE'),
+         'dokls_variance_grid', 'Estimator variance, mean +/- SE', None),
         ('bias_signed', 'bias_signed_se', 'Signed bias', 'linear',
-         'dokls_bias_grid', 'Signed ELDR bias, mean +/- SE'),
+         'dokls_bias_grid', 'Signed ELDR bias, mean +/- SE', None),
     ]
-    for mean_key, se_key, ylabel, yscale, prefix, title in jobs:
+    for mean_key, se_key, ylabel, yscale, prefix, title, iqr_keys in jobs:
         data = load_metric(processed_dir, mean_key, se_key)
         if not any(data.values()):
             print(f'  skip {prefix}: no data')
             continue
         methods = plot_grid(kl, data, ylabel=ylabel, out_dir=figures_dir,
                             prefix=prefix, yscale=yscale)
+        iqr_data = load_iqr(processed_dir, *iqr_keys) if iqr_keys else None
         emit_tables(kl, data, methods, title=title,
-                    stem=os.path.join(figures_dir, prefix.removesuffix('_grid') + '_table'))
+                    stem=os.path.join(figures_dir, prefix.removesuffix('_grid') + '_table'),
+                    iqr_data=iqr_data)
     print(f'\nDone. Figures in: {figures_dir}')
 
 
