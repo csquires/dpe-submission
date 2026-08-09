@@ -85,6 +85,68 @@ def agg_metric(vals):
     return mean, se, n
 
 
+def mae_cols(errors_4d, cols):
+    """MAE stats per (design-eig-percentage, alpha column group).
+
+    Args:
+      errors_4d: (P, B, D, A) absolute ELDR errors, NaN where a cell failed.
+      cols: list of alpha-index lists, one per output column. [[a] for a in
+        range(A)] reproduces the per-alpha grid; [list(range(A))] pools every
+        alpha into a single column.
+    Returns:
+      dict of mean/se/med/q1/q3/n grids, each (B, len(cols)).
+    """
+    n_deps, n_cols = errors_4d.shape[1], len(cols)
+    out = {k: np.full((n_deps, n_cols), np.nan, dtype=np.float32)
+           for k in ("mean", "se", "med", "q1", "q3")}
+    out["n"] = np.zeros((n_deps, n_cols), dtype=np.int32)
+    for bi in range(n_deps):
+        for ci, ais in enumerate(cols):
+            vals = errors_4d[:, bi][:, :, ais].flatten()   # (P, D, |ais|) -> flat
+            mu, se, n = agg_metric(vals)
+            out["mean"][bi, ci], out["se"][bi, ci], out["n"][bi, ci] = mu, se, n
+            valid = vals[~np.isnan(vals)]
+            if valid.size:
+                out["q1"][bi, ci], out["med"][bi, ci], out["q3"][bi, ci] = \
+                    np.percentile(valid, [25, 50, 75])
+    return out
+
+
+def regret_cols(reg_m, cols, bp, bd):
+    """Regret median-of-medians + bootstrap band per (dep, alpha column group).
+
+    Args:
+      reg_m: (P, B, D, A) per-cell normalized regret for one method.
+      cols: alpha-index lists, as in mae_cols.
+      bp, bd: (n_boot, P) / (n_boot, D) resample index matrices.
+    Returns:
+      dict of mom/lo/hi/bstd grids, each (B, len(cols)).
+
+    point estimate: median over priors, then median over the column's pooled
+    (design, alpha) axis. the bootstrap resamples priors and designs only;
+    alpha is a fixed 4-level design factor, so each resample keeps every alpha
+    level the column covers.
+    """
+    n_deps, n_cols, n_boot = reg_m.shape[1], len(cols), bp.shape[0]
+    out = {k: np.full((n_deps, n_cols), np.nan, dtype=np.float32)
+           for k in ("mom", "lo", "hi", "bstd")}
+    for bi in range(n_deps):
+        for ci, ais in enumerate(cols):
+            mat = reg_m[:, bi][:, :, ais]                  # (P, D, |ais|)
+            if not np.isfinite(mat).any():
+                continue
+            out["mom"][bi, ci] = np.nanmedian(np.nanmedian(mat, axis=0))
+            res = mat[bp[:, :, None], bd[:, None, :]]      # (n_boot, P, D, |ais|)
+            bmom = np.nanmedian(np.nanmedian(res, axis=1).reshape(n_boot, -1), axis=1)
+            bmom = bmom[np.isfinite(bmom)]
+            if bmom.size:
+                out["lo"][bi, ci] = np.percentile(bmom, 25)
+                out["hi"][bi, ci] = np.percentile(bmom, 75)
+            if bmom.size >= 2:
+                out["bstd"][bi, ci] = bmom.std(ddof=1)
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config",  default="ex/synth/elbo/config1.yaml")
@@ -167,41 +229,29 @@ def main():
         missing_in_gather = methods  # mark all as missing
 
     # --- compute errors (conditional on gathered) ---
-    def _empty_grid():
-        return np.full((n_deps, n_alphas), np.nan, dtype=np.float32)
+    # two column layouts over the alpha axis: one column per alpha (the
+    # per-alpha grids) and one column pooling every alpha (the pooled variant).
+    per_alpha = [[a] for a in range(n_alphas)]
+    all_alpha = [list(range(n_alphas))]
 
-    mean_mae = {m: _empty_grid() for m in methods}
-    se_mae   = {m: _empty_grid() for m in methods}
-    n_mae    = {m: np.zeros((n_deps, n_alphas), dtype=np.int32) for m in methods}
-    seed_vals = {}
+    mae, mae_pool, seed_vals = {}, {}, {}
+    for m in methods:
+        if m not in est_by_method:
+            continue
+        est    = est_by_method[m]                   # (n_cells,), may have NaN
+        errors = np.abs(est - true_eldrs)           # NaN where est is NaN
+        # C-order reshape: prior is slowest, alpha is fastest
+        errors_4d = errors.reshape(n_priors, n_deps, n_designs, n_alphas)
+        mae[m]      = mae_cols(errors_4d, per_alpha)
+        mae_pool[m] = mae_cols(errors_4d, all_alpha)
 
-    # aggregate method estimates if available
-    if est_by_method:
-        for m in methods:
-            if m not in est_by_method:
-                continue
-            est    = est_by_method[m]                   # (n_cells,), may have NaN
-            errors = np.abs(est - true_eldrs)           # NaN where est is NaN
-            # C-order reshape: prior is slowest, alpha is fastest
-            errors_4d = errors.reshape(n_priors, n_deps, n_designs, n_alphas)
-
-            for dep_idx in range(n_deps):
-                for alpha_idx in range(n_alphas):
-                    vals = errors_4d[:, dep_idx, :, alpha_idx].flatten()
-                    mu, se, n = agg_metric(vals)
-                    mean_mae[m][dep_idx, alpha_idx] = mu
-                    se_mae[m][dep_idx, alpha_idx]   = se
-                    n_mae[m][dep_idx, alpha_idx]    = n
-
-            all_vals = errors_4d.flatten()
-            seed_vals[m] = all_vals[~np.isnan(all_vals)].astype(np.float32)
+        all_vals = errors_4d.flatten()
+        seed_vals[m] = all_vals[~np.isnan(all_vals)].astype(np.float32)
 
     # per-cell normalized regret across methods (eig-style: 0 = best method on a
-    # cell, 1 = worst), aggregated per (dep, alpha) as median over priors then
+    # cell, 1 = worst), aggregated per (dep, column) as median over priors then
     # designs (median-of-medians) with a bootstrap IQR band.
-    reg_mom = {m: _empty_grid() for m in methods}
-    reg_lo  = {m: _empty_grid() for m in methods}
-    reg_hi  = {m: _empty_grid() for m in methods}
+    reg_stats, reg_pool = {}, {}
     if est_by_method:
         algs = [m for m in methods if m in est_by_method]
         err5 = np.stack([
@@ -221,18 +271,8 @@ def main():
         bp = rng.integers(0, n_priors, size=(n_boot, n_priors))
         bd = rng.integers(0, n_designs, size=(n_boot, n_designs))
         for mi, m in enumerate(algs):
-            for b in range(n_deps):
-                for a in range(n_alphas):
-                    mat = reg[mi, :, b, :, a]                  # (P, D)
-                    if not np.isfinite(mat).any():
-                        continue
-                    reg_mom[m][b, a] = np.nanmedian(np.nanmedian(mat, axis=0))
-                    res = mat[bp[:, :, None], bd[:, None, :]]  # (n_boot, P, D)
-                    bmom = np.nanmedian(np.nanmedian(res, axis=1), axis=1)
-                    bmom = bmom[np.isfinite(bmom)]
-                    if bmom.size:
-                        reg_lo[m][b, a] = np.percentile(bmom, 25)
-                        reg_hi[m][b, a] = np.percentile(bmom, 75)
+            reg_stats[m] = regret_cols(reg[mi], per_alpha, bp, bd)
+            reg_pool[m]  = regret_cols(reg[mi], all_alpha, bp, bd)
 
     # --- save summary.h5 ---
     # always write true_eldrs and axes (HPO dependency).
@@ -246,19 +286,23 @@ def main():
         f.create_dataset("design_eig_percentages", data=np.array(deps, dtype=np.float32))
         f.create_dataset("true_eldrs", data=true_eldrs)
 
-        # optionally write method grids (only if gathered exists)
+        # optionally write method grids (only if gathered exists).
+        # each stat comes in two shapes: (n_deps, n_alphas) per-alpha columns
+        # and a (n_deps, 1) '_pooled_' variant aggregating across all alphas.
         if est_by_method:
             f.attrs["methods"] = methods
             for m in methods:
                 if m not in est_by_method:
                     continue
-                f.create_dataset(f"mae_{m}_mean",        data=mean_mae[m])
-                f.create_dataset(f"mae_{m}_se",          data=se_mae[m])
-                f.create_dataset(f"mae_{m}_n",           data=n_mae[m])
+                for k, v in mae[m].items():
+                    f.create_dataset(f"mae_{m}_{k}", data=v)
+                for k, v in mae_pool[m].items():
+                    f.create_dataset(f"mae_{m}_pooled_{k}", data=v)
                 f.create_dataset(f"mae_{m}_seed_values", data=seed_vals[m])
-                f.create_dataset(f"regret_{m}_mom",      data=reg_mom[m])
-                f.create_dataset(f"regret_{m}_lo",       data=reg_lo[m])
-                f.create_dataset(f"regret_{m}_hi",       data=reg_hi[m])
+                for k, v in reg_stats.get(m, {}).items():
+                    f.create_dataset(f"regret_{m}_{k}", data=v)
+                for k, v in reg_pool.get(m, {}).items():
+                    f.create_dataset(f"regret_{m}_pooled_{k}", data=v)
         else:
             f.attrs["methods"] = []  # mark that no methods are present yet
 
@@ -276,15 +320,36 @@ def main():
         print(hdr)
         print("-" * 130)
         for m in methods:
+            if m not in mae:
+                continue
             row = m.ljust(32)
             for dep_idx in range(n_deps):
                 for alpha_idx in range(n_alphas):
-                    n = int(n_mae[m][dep_idx, alpha_idx])
+                    n = int(mae[m]["n"][dep_idx, alpha_idx])
                     if n == 0:
                         cell = "NaN(0)"
                     else:
-                        cell = f"{mean_mae[m][dep_idx,alpha_idx]:.4f}±{se_mae[m][dep_idx,alpha_idx]:.4f}({n})"
+                        cell = f"{mae[m]['mean'][dep_idx,alpha_idx]:.4f}±{mae[m]['se'][dep_idx,alpha_idx]:.4f}({n})"
                     row += cell.rjust(col_w)
+            print(row)
+        print(f"{'='*130}")
+
+        # alpha-pooled companion: same rows, alphas aggregated into one column
+        print(f"\n{'='*130}")
+        print("ELBO Estimation — MAE, alphas pooled  (mean ± se, n cells)")
+        print(f"{'='*130}")
+        hdr = "Method".ljust(32) + "".join(f"dep={d:.3f}".rjust(col_w) for d in deps)
+        print(hdr)
+        print("-" * 130)
+        for m in methods:
+            if m not in mae_pool:
+                continue
+            row = m.ljust(32)
+            for dep_idx in range(n_deps):
+                n = int(mae_pool[m]["n"][dep_idx, 0])
+                cell = "NaN(0)" if n == 0 else \
+                    f"{mae_pool[m]['mean'][dep_idx,0]:.4f}±{mae_pool[m]['se'][dep_idx,0]:.4f}({n})"
+                row += cell.rjust(col_w)
             print(row)
         print(f"{'='*130}")
 
@@ -295,7 +360,7 @@ def main():
             1 for m in valid_methods
             for dep_idx in range(n_deps)
             for alpha_idx in range(n_alphas)
-            if n_mae[m][dep_idx, alpha_idx] > 0
+            if mae[m]["n"][dep_idx, alpha_idx] > 0
         )
         print(f"\nSaved: {out_path}")
         print(f"Grid: {n_deps} design-eig-percentages × {n_alphas} alphas, {n_priors*n_designs} prior-design pairs")

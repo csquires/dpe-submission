@@ -6,7 +6,7 @@ data_dim: 3
 eig_min: 0.1
 eig_max: 1.0
 num_priors: 8
-alphas: [0, 0.3, 0.6, 1]
+alphas: [0.1, 0.3, 0.9, 2.7]
 design_eig_percentages: [0.16, 0.19, 0.43, 0.97]
 num_designs_per_setting: 16
 # Grid: P*B*D*A = 8*4*16*4 = 2048 rows; alpha innermost.
