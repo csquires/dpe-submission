@@ -1,0 +1,58 @@
+# elbo_boed ablation config. analytic-design variant of eig_elbo_boed: the design
+# rule is method-independent (top eigenvector of the approx belief), so the ONLY
+# DRE-driven step is the ELBO-optimized posterior. see notes/elbo_boed_mid_level.md.
+# all output paths in-repo. reuses eig_elbo_boed's channel-agnostic run_study.
+
+# directories (in-repo)
+data_dir: "ex/ablations/elbo_boed/data"
+raw_results_dir: "ex/ablations/elbo_boed/raw_results"
+processed_results_dir: "ex/ablations/elbo_boed/processed_results"
+figures_dir: "ex/ablations/elbo_boed/figures"
+
+# data generation (synthetic linear-gaussian, d=3, scalar y)
+data_dim: 3
+sigma2: 1.0
+eig_min: 0.5
+eig_max: 2.0
+nsamples: 10000
+
+# factor grid (cell = (arm, geometry, prior_idx, method, seed_rep))
+num_priors: 12
+n_seeds: 5
+geometries: [diag, rot]
+arms: [method]
+
+# design-selection channel: analytic (top-eigenvector of the approx belief; no DRE-EIG)
+design_channel: analytic
+
+# sequential loop: 5 rounds. NO design search (analytic) -> n_trials/n_startup = 0.
+# the alpha-BO is the sole per-round optimization (T_alpha=20 per the mid-level plan).
+n_rounds: 5
+n_trials: 0
+n_startup: 0
+n_trials_alpha: 12      # 4 startup + 8 GP (alpha=1 is now an interior optimum)
+n_startup_alpha: 4      # grid startup for the alpha search; nearest point snapped to alpha=1.0
+alpha_lo: 0.03
+alpha_hi: 3.0           # > 1 permits over-tempering -> alpha=1 is interior, not a boundary
+
+# eigengap ladder for prior spectrum stratification (log-spaced across num_priors)
+eigengap_min: 1.05
+eigengap_max: 16.0
+
+# hyperparameter winners: builder-native ELBO winners (posterior channel). NOTE: the
+# flow-family ELBO winners are under-trained (see notes/flow_elbo_winners_decision.md,
+# DEFERRED) -- cls methods are fine; flow-method posteriors need that decision resolved.
+winners_path: "ex/synth/elbo/winners.yaml"
+# dropped: VFMOrthros + the trajectory family (CTSM/TSM + triangular variants). their
+# ELBO winners are under-trained -> partially-degenerate posteriors; killed off pending
+# the flow_elbo_winners_decision. excluded from config_hash (surviving shards stay valid).
+exclude_methods: [VFMOrthros, CTSM, TSM, TriangularCTSM_V1, TriangularCTSM_V2, TriangularCTSM_V3, TriangularTSM]
+
+# reproducibility
+config_seed: 1729
+
+# node-local journal storage (expands ${TMPDIR} at runtime)
+journal_scratch: "${TMPDIR}/elbo_boed_journals"
+
+# runtime
+device: "cuda"
