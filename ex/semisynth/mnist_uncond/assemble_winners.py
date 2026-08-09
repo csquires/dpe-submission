@@ -30,6 +30,10 @@ _CONFIG_MODULES = [
 ]
 _OUT = "ex/semisynth/mnist_uncond/winners.yaml"
 
+# holdout/study use the config method name (e.g. "MDRE"); step2 METHOD_SPECS
+# keys the same method as "MDRE_15". map the winners.yaml key so step2 resolves.
+_NAME_MAP = {"MDRE": "MDRE_15"}
+
 
 def main() -> None:
     root = os.environ["DPE_DATA_ROOT"]
@@ -47,7 +51,7 @@ def main() -> None:
             best = json.load(open(hits[0]))
             hp = dict(best["best_hp"])
             hp.update(cfg.fixed_hp or {})
-            methods_block[m] = {
+            methods_block[_NAME_MAP.get(m, m)] = {
                 "hyperparams": hp,
                 "score": {
                     "best_value_median": best.get("best_value_median"),
