@@ -39,14 +39,14 @@ alpha_hi: 3.0           # > 1 permits over-tempering -> alpha=1 is interior, not
 eigengap_min: 1.05
 eigengap_max: 16.0
 
-# hyperparameter winners: builder-native ELBO winners (posterior channel). NOTE: the
-# flow-family ELBO winners are under-trained (see notes/flow_elbo_winners_decision.md,
-# DEFERRED) -- cls methods are fine; flow-method posteriors need that decision resolved.
+# hyperparameter winners: builder-native ELBO winners (posterior channel). the new
+# winners.yaml retunes the flow family (fixes the earlier condition-collapse); all 18
+# ELBO methods now build usable posteriors.
 winners_path: "ex/synth/elbo/winners.yaml"
-# dropped: VFMOrthros + the trajectory family (CTSM/TSM + triangular variants). their
-# ELBO winners are under-trained -> partially-degenerate posteriors; killed off pending
-# the flow_elbo_winners_decision. excluded from config_hash (surviving shards stay valid).
-exclude_methods: [VFMOrthros, CTSM, TSM, TriangularCTSM_V1, TriangularCTSM_V2, TriangularCTSM_V3, TriangularTSM]
+# full-roster redo: all 18 ELBO methods run (classifier + trajectory + flow). VFMOrthros
+# stays out as a defensive guard (absent from winners -> no-op). excluded from config_hash
+# so it does not invalidate shards.
+exclude_methods: [VFMOrthros]
 
 # reproducibility
 config_seed: 1729

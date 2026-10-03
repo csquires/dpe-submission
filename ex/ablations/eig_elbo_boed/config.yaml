@@ -42,18 +42,18 @@ eigengap_max: 16.0
 # hyperparameter winners: builder-native ELBO winners (the file the elbo experiment
 # actually fits from). the gold scratch/gold_winners/winners.elbo.yaml is a friendly
 # reporting summary with stale/missing keys (num_epochs, no vertex_band) that does NOT
-# build -- do not use it here. this file has 19 methods incl VFMOrthros (excluded below).
+# build -- do not use it here. this file has 18 methods (all ELBO methods incl the flow
+# family; VFMOrthros absent -> exclude_methods below is a documented no-op guard).
 winners_path: "ex/synth/elbo/winners.yaml"                 # ELBO winners -> DRE-ELBO posterior channel
 # winners-per-channel: EIG-tuned winners drive the DRE-EIG design search (the design task
 # is EIG estimation; ELBO winners under-train the flow methods for it -> use EIG winners).
 eig_winners_path: "scratch/gold_winners/winners.eig.yaml"  # EIG winners -> DRE-EIG design channel
 
-# dropped from this campaign (compute + gather + plots): VFMOrthros, plus the whole
-# trajectory family (CTSM/TSM + triangular variants) -- their ELBO winners are
-# under-trained, giving partially-degenerate posteriors (alpha pinned to alpha_lo,
-# post_kl spikes; see the babysit finding). honored by enumerate_cells; excluded from
-# config_hash so it does not invalidate the surviving classifier shards.
-exclude_methods: [VFMOrthros, CTSM, TSM, TriangularCTSM_V1, TriangularCTSM_V2, TriangularCTSM_V3, TriangularTSM]
+# full-roster redo: all 18 ELBO methods run (classifier + trajectory + flow). the new
+# winners.yaml retunes the flow family (fixes the earlier condition-collapse). VFMOrthros
+# stays out as a defensive guard (absent from winners -> no-op). honored by enumerate_cells;
+# excluded from config_hash so it does not invalidate shards.
+exclude_methods: [VFMOrthros]
 
 # reproducibility
 config_seed: 1729
