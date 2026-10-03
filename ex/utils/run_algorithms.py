@@ -6,6 +6,8 @@ import warnings
 import yaml
 from pathlib import Path
 
+from ex.utils.step2_runner.load_winners import detect_schema, resolve_hp
+
 
 def load_winners(path):
     """
@@ -51,6 +53,35 @@ def load_existing_results(results_filename):
     return existing_results
 
 
+def winner_hp(winners, method, alpha_idx):
+    """
+    return the winner hyperparams for (method, alpha_idx), or {} if no entry.
+
+    schema A (top-level 'methods' key): use the step2_runner resolver with
+    bucket "alpha_idx_<alpha_idx>". a per_bucket entry overrides the method default.
+    schema B (method names at top level): use winners[method][alpha_idx].
+    a list gives its rank-0 entry. a dict is the old single-winner format (warns).
+    """
+    if detect_schema(winners) == "A":
+        try:
+            return resolve_hp(winners, method, f"alpha_idx_{alpha_idx}")
+        except KeyError:
+            return {}
+
+    entry = winners.get(method, {}).get(alpha_idx, {})
+    if isinstance(entry, list):
+        return entry[0].get("hyperparams", {}) if entry else {}
+    if isinstance(entry, dict):
+        warnings.warn(
+            f"winners.yaml uses old single-winner dict format; "
+            f"re-run pick_winners with top-K logic",
+            DeprecationWarning,
+            stacklevel=4
+        )
+        return entry.get("hyperparams", {})
+    return {}
+
+
 def create_estimator(method, config, device, search_spaces, alpha_idx=0, winners=None,
                      input_dim_fn=lambda c: c['latent_dim']):
     """
@@ -72,21 +103,7 @@ def create_estimator(method, config, device, search_spaces, alpha_idx=0, winners
 
     if method in search_spaces:
         # hpo method: retrieve winner hyperparams, pass to builder
-        entry = winners.get(method, {}).get(alpha_idx, {})
-
-        # extract rank-0 from top-3 list format; fallback to dict format with warning
-        if isinstance(entry, list):
-            hp = entry[0].get("hyperparams", {}) if entry else {}
-        elif isinstance(entry, dict):
-            warnings.warn(
-                f"winners.yaml uses old single-winner dict format; "
-                f"re-run pick_winners with top-K logic",
-                DeprecationWarning,
-                stacklevel=3
-            )
-            hp = entry.get("hyperparams", {})
-        else:
-            hp = {}
+        hp = winner_hp(winners, method, alpha_idx)
 
         if not hp:
             print(

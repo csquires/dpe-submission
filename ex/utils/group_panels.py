@@ -123,8 +123,13 @@ def plot_group_row(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix,
             ax.set_yscale(yscale)
         if yscale == "log":
             ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0, numticks=6))
+        elif yscale != "symlog":                       # linear: denser major + minor ticks
+            ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=8))
+            ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(2))
         ax.set_ylim(*ylim)
-        ax.grid(True, alpha=0.3)
+        ax.grid(True, which="major", alpha=0.3)
+        if yscale not in ("log", "symlog"):
+            ax.grid(True, which="minor", alpha=0.12)
         ax.tick_params(labelsize=SIZES["tick"])
     axes[0].set_ylabel(ylabel, fontsize=SIZES["axlab"])
 
@@ -146,35 +151,147 @@ def plot_group_row(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix,
     return drawn
 
 
-def plot_group_singles(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix_fmt,
-                       yscale="linear", ylim=None) -> list[str]:
-    """one standalone panel per method group, legend below its own panel.
+def plot_alpha_group_row(x, mean, lo, hi, col_labels, ylim, *, xlabel, ylabel,
+                         out_dir, prefix, xscale="linear", yscale="linear",
+                         linthresh=None, panel_w=1.7, panel_h=2.6,
+                         font_scale=1.0) -> list[str]:
+    """wide companion: one block of METHOD_GROUPS panels per column label, blocks
+    left to right. ALL panels are flush (no horizontal gap) and share ONE global
+    y-range (ylim), so the y axis is drawn once on the leftmost panel. a title
+    over each block's centre names it (e.g. "alpha = 0.1").
 
-    sized for a 0.32\\linewidth subfigure (three-up figure*): 3.5in canvas so
-    canvas fonts print near body text at that width. emits
-    {out_dir}/{prefix_fmt.format(group=g)}.{pdf,png} per non-empty group;
+    Args:
+      mean/lo/hi: dict method -> (L, n_col) grid (per-column, e.g. per-alpha).
+      col_labels: block title per column index.
+      ylim: single (lo, hi) shared by every panel.
+    one pooled legend below, x label once as supxlabel. emits {prefix}.{pdf,png};
     returns the methods drawn.
     """
     apply_style()
     os.makedirs(out_dir, exist_ok=True)
     x = np.asarray(x)
+
+    groups = []
+    for g, members in METHOD_GROUPS.items():
+        ms = [m for m in _resolve(members, mean) if np.isfinite(mean[m]).any()]
+        if ms:
+            groups.append((g, ms))
+    if not groups:
+        print(f"  skip {prefix}: no finite data")
+        return []
+    n_col, n_g = len(col_labels), len(groups)
+
+    # font sizes (scaled by font_scale); vertical allowances scale with them.
+    fs = font_scale
+    tick_fs, title_fs = (SIZES["tick"] - 2) * fs, (SIZES["axlab"] - 2) * fs
+    lab_fs, leg_fs = SIZES["axlab"] * fs, SIZES["leg"] * fs
+
+    ph = panel_h * (1 + 0.7 * (fs - 1))                   # taller panels so scaled y label fits
+    n_meth = sum(len(ms) for _, ms in groups)
+    rows_leg = int(np.ceil(n_meth / 9))
+    legend_h = 0.25 * (leg_fs / 12.0) * rows_leg + 0.04
+    supx_h, title_h = 0.30 * fs, 0.30 * fs
+    fig_h = ph + supx_h + legend_h + title_h
+    fig, axes = plt.subplots(1, n_col * n_g, figsize=(panel_w * n_col * n_g, fig_h),
+                             sharey=True, gridspec_kw={"wspace": 0.0})
+    axes = np.atleast_1d(axes)
     drawn = []
+    for ci in range(n_col):
+        for gi, (g, ms) in enumerate(groups):
+            idx = ci * n_g + gi
+            ax = axes[idx]
+            for m in ms:
+                kw = style_for(ALIAS.get(m, m))
+                ax.plot(x, mean[m][:, ci], label=short_label(m), linewidth=1.0,
+                        markersize=2.5, alpha=0.75, **kw)
+                band_lo = np.asarray(lo[m][:, ci], dtype=float)
+                if yscale == "log":
+                    band_lo = np.maximum(band_lo, ylim[0])
+                ax.fill_between(x, band_lo, hi[m][:, ci], color=kw["color"],
+                                alpha=ERROR_BAND_ALPHA, linewidth=0)
+                if m not in drawn:
+                    drawn.append(m)
+            ax.set_xscale(xscale)
+            if yscale == "symlog":
+                ax.set_yscale("symlog", linthresh=(linthresh or 1e-3), linscale=0.5)
+            else:
+                ax.set_yscale(yscale)
+            ax.set_ylim(*ylim)
+            # strictly-interior x ticks so no label lands on a flush boundary;
+            # fewer of them when fonts are scaled up (else big labels collide);
+            # minor ticks add density without labels.
+            nb = 3 if fs > 1.2 else 5
+            xt = [t for t in mticker.MaxNLocator(nbins=nb).tick_values(x.min(), x.max())
+                  if x.min() < t < x.max()]
+            ax.set_xticks(xt)
+            ax.xaxis.set_minor_locator(mticker.AutoMinorLocator(2))
+            ax.grid(True, which="major", alpha=0.3)
+            ax.tick_params(labelsize=tick_fs)
+            if idx != 0:                                   # y axis drawn once (leftmost)
+                ax.tick_params(left=False, labelleft=False)
+        axes[ci * n_g + n_g // 2].set_title(col_labels[ci], fontsize=title_fs)
+
+    ax0 = axes[0]                                          # denser y ticks, once
+    if yscale == "log":
+        ax0.yaxis.set_major_locator(mticker.LogLocator(base=10.0, numticks=12))
+        ax0.yaxis.set_minor_locator(
+            mticker.LogLocator(base=10.0, subs=tuple(np.arange(2, 10) * 0.1), numticks=12))
+    elif yscale != "symlog":
+        ax0.yaxis.set_major_locator(mticker.MaxNLocator(nbins=10))
+        ax0.yaxis.set_minor_locator(mticker.AutoMinorLocator(2))
+    ax0.set_ylabel(ylabel, fontsize=lab_fs)
+
+    handles, labels, seen = [], [], set()
+    for ax in axes:
+        for h, l in zip(*ax.get_legend_handles_labels()):
+            if l not in seen:
+                handles.append(h); labels.append(l); seen.add(l)
+    fig.legend(handles, labels, loc="lower center", ncol=min(9, len(labels)),
+               fontsize=leg_fs, framealpha=0.9, handlelength=1.2,
+               columnspacing=1.0, labelspacing=0.25, borderpad=0.3, handletextpad=0.4)
+    fig.tight_layout(pad=0.3, rect=(0, (legend_h + supx_h) / fig_h, 1, 1))
+    fig.subplots_adjust(wspace=0.0)                        # keep panels flush after tight_layout
+    # place the x label just under the tick row (close the gap to the panels)
+    fig.supxlabel(xlabel, fontsize=lab_fs, y=(legend_h + supx_h - 0.20 * fs) / fig_h)
+
+    for ext in ("pdf", "png"):
+        fig.savefig(os.path.join(out_dir, f"{prefix}.{ext}"), dpi=150)
+    plt.close(fig)
+    print(f"  saved {prefix}.{{pdf,png}}")
+    return drawn
+
+
+def plot_group_singles(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix_fmt,
+                       yscale="linear", ylim=None, legend_ncol=9,
+                       legend_groups=("cls", "tsm_ctsm", "vfm_fmdre")) -> list[str]:
+    """one standalone panel per method group plus one shared legend strip.
+
+    sized for a 0.32\\linewidth subfigure (three-up figure*): 3.5in canvas so
+    canvas fonts print near body text at that width. the panels carry no
+    legend; a separate wide strip lists every drawn method row-major over
+    legend_ncol columns, groups in legend_groups order, so it can sit under
+    the row at full width. emits {out_dir}/{prefix_fmt.format(group=g)}.{pdf,png}
+    per non-empty group and once more with group="legend"; returns the methods
+    drawn.
+    """
+    apply_style()
+    os.makedirs(out_dir, exist_ok=True)
+    x = np.asarray(x)
+    drawn = []
+    handles = {}
     for g, members in METHOD_GROUPS.items():
         ms = [m for m in _resolve(members, mean) if np.isfinite(mean[m]).any()]
         if not ms:
             continue
-        rows_leg = int(np.ceil(len(ms) / 2))
-        legend_h = 0.30 * (13.5 / 12.0) * rows_leg + 0.05
-        panel_h = 2.9
-        fig_h = panel_h + legend_h
-        fig, ax = plt.subplots(figsize=(3.5, fig_h))
+        fig, ax = plt.subplots(figsize=(3.5, 2.9))
         for m in ms:
             kw = style_for(ALIAS.get(m, m))
-            ax.plot(x, mean[m], label=short_label(m), linewidth=1.3, markersize=4,
-                    alpha=0.85, **kw)
+            (line,) = ax.plot(x, mean[m], label=short_label(m), linewidth=1.3,
+                              markersize=4, alpha=0.85, **kw)
             ax.fill_between(x, lo[m], hi[m], color=kw["color"],
                             alpha=ERROR_BAND_ALPHA, linewidth=0)
             drawn.append(m)
+            handles.setdefault(g, []).append(line)
         ax.set_yscale(yscale)
         if ylim is not None:
             ax.set_ylim(*ylim)
@@ -182,13 +299,42 @@ def plot_group_singles(x, mean, lo, hi, *, xlabel, ylabel, out_dir, prefix_fmt,
         ax.tick_params(labelsize=16)
         ax.set_xlabel(xlabel, fontsize=18)
         ax.set_ylabel(ylabel, fontsize=18)
-        fig.legend(loc="lower center", ncol=2, fontsize=13.5, framealpha=0.9,
-                   handlelength=1.2, columnspacing=0.8, labelspacing=0.25,
-                   borderpad=0.3, handletextpad=0.4)
-        fig.tight_layout(pad=0.35, rect=(0, legend_h / fig_h, 1, 1))
-        prefix = prefix_fmt.format(group=g)
-        for ext in ("pdf", "png"):
-            fig.savefig(os.path.join(out_dir, f"{prefix}.{ext}"), dpi=150)
-        plt.close(fig)
-        print(f"  saved {prefix}.{{pdf,png}}")
+        fig.tight_layout(pad=0.35)
+        _save(fig, out_dir, prefix_fmt.format(group=g))
+
+    ordered = [h for g in legend_groups for h in handles.get(g, [])]
+    ordered += [h for g in handles if g not in legend_groups for h in handles[g]]
+    _save(_legend_strip(ordered, legend_ncol), out_dir,
+          prefix_fmt.format(group="legend"))
     return drawn
+
+
+def _legend_strip(handles, ncol):
+    """axes-free figure holding one legend, entries laid out row-major.
+
+    matplotlib fills legend columns top-down, so the handles are permuted
+    such that reading across a row follows the given order. the canvas is
+    7.5in wide (near a two-column text width, so fonts print at canvas size)
+    and only as tall as the legend rows need.
+    """
+    n = len(handles)
+    nrow = int(np.ceil(n / ncol))
+    grid = [None] * (nrow * ncol)
+    for i, h in enumerate(handles):
+        grid[(i % ncol) * nrow + i // ncol] = h
+    ordered = [h for h in grid if h is not None]
+    fig = plt.figure(figsize=(7.5, 0.28 * nrow + 0.12))
+    fig.legend(handles=ordered, labels=[h.get_label() for h in ordered],
+               loc="center", ncol=ncol, fontsize=10.5, framealpha=0.9,
+               handlelength=1.0, columnspacing=0.6, labelspacing=0.2,
+               borderpad=0.25, handletextpad=0.3)
+    return fig
+
+
+def _save(fig, out_dir, prefix):
+    """write {prefix}.{pdf,png} into out_dir and close the figure."""
+    for ext in ("pdf", "png"):
+        fig.savefig(os.path.join(out_dir, f"{prefix}.{ext}"), dpi=150,
+                    bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+    print(f"  saved {prefix}.{{pdf,png}}")
