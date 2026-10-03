@@ -111,7 +111,11 @@ LANES: dict[str, LaneProfile] = {
         cpus_per_task=8,
         mem="64G",
         batch_size=8,
-        worker_walltime="18:00:00",
+        # 4h: a holdout element is B=8 parallel trials ~= one full-budget
+        # training, well under 4h; the short walltime lets elements backfill into
+        # the holes between higher-priority array jobs (e.g. a busy eig campaign)
+        # instead of sitting PD "Priority" behind a long reservation.
+        worker_walltime="04:00:00",
         max_concurrent=96,
         cores_per_trial=1,
     ),
@@ -139,15 +143,20 @@ LANES: dict[str, LaneProfile] = {
         mem="32G",
         batch_size=1,
         worker_walltime="18:00:00",
-        max_concurrent=6,
+        # 8 = full normal-qos gpu budget (MaxTRESPU gres/gpu=8); with preempt(24)
+        # + array_gpu(8) this gives ~40 concurrent gpu workers.
+        max_concurrent=8,
     ),
     "preempt": LaneProfile(
         partition="preempt",
         qos="preempt_qos",
         gpus=1,
         cpus_per_task=4,
+        # B=8: 32 loky flow trainings on one 64G worker OOM-killed the
+        # cgroup for the larger flow configs (e.g. TriangularVFM_V2), losing
+        # holdout cells silently (worker killed before writing). 8 keeps ~8G/trial.
         mem="64G",
-        batch_size=32,
+        batch_size=8,
         worker_walltime="09:00:00",
         max_concurrent=24,
         # pin to newer high-vram gpu classes only. older/smaller cards (A6000,
@@ -191,6 +200,21 @@ LANES: dict[str, LaneProfile] = {
         worker_walltime="18:00:00",
         max_concurrent=8,
         constraint="RTX_PRO_6000",
+    ),
+    # array_gpu_broad: like array_gpu_wide but any gpu type (not RTX_PRO_6000-
+    # pinned) so it taps the array partition's idle gpu nodes instead of the
+    # scarce RTX ones. B=8 -> n_chunks=ceil(n/8) small; array_qos MaxSubmit is
+    # ample. used to drain gpu holdouts fast when preempt is contended.
+    "array_gpu_broad": LaneProfile(
+        partition="array",
+        qos="",
+        gpus=1,
+        cpus_per_task=8,
+        mem="32G",
+        batch_size=8,
+        worker_walltime="18:00:00",
+        max_concurrent=32,
+        constraint="L40S|A6000|L40|6000Ada|RTX_PRO_6000|A100_40GB|A100_80GB",
     ),
 }
 

@@ -48,7 +48,7 @@ def _env_export() -> str:
     endpoint + data tree as the keeper. no-op when they already match bashrc.
     """
     parts = []
-    for var in ("DPE_DATA_ROOT", "DPE_CKPT_ROOT"):
+    for var in ("DPE_DATA_ROOT", "DPE_CKPT_ROOT", "DPE_REDIS_ENDPOINT_FILE"):
         val = os.environ.get(var)
         if val:
             parts.append(f"export {var}={val} && ")
@@ -322,6 +322,11 @@ def dispatch(config_module: str, combo_index: int, experiment: str,
     # include --constraint if pinned (e.g. preempt lane pinned to newer gpus).
     if lane.constraint:
         cmd += ["--constraint", lane.constraint]
+    # workaround: exclude bad gpu node babel-x5-32. its gpu throws
+    # cudaErrorDevicesUnavailable but SLURM sees it as free and keeps assigning it,
+    # churning failed trials. remove this block once the node recovers.
+    if lane.gpus > 0:
+        cmd += ["--exclude", "babel-x5-32"]
 
     if dry_run:
         logger.info("DRY-RUN dispatch %s: %s", name, " ".join(cmd))
@@ -443,6 +448,9 @@ def dispatch_array_gpu(config_module: str, combo_index: int, experiment: str,
         cmd += ["--constraint", lane.constraint]
     if lane.qos:
         cmd += ["--qos", lane.qos]
+    # workaround: exclude bad gpu node babel-x5-32 (cudaErrorDevicesUnavailable
+    # churn; see dispatch()). remove once the node recovers.
+    cmd += ["--exclude", "babel-x5-32"]
 
     if dry_run:
         logger.info("DRY-RUN dispatch_array_gpu %s: %s", name, " ".join(cmd))
