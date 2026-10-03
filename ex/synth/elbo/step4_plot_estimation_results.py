@@ -6,11 +6,12 @@ one figure per (metric, alpha): a single row of method-group panels
 with a shared y-range across alphas for comparability. sibling {stem}.md/.tex
 tables carry the plotted values (one section per alpha). each metric also gets an
 alpha-pooled figure ({prefix}_alpha_pooled) + {prefix}_pooled_table, aggregating
-every alpha into one column on the same y-range as the per-alpha set. metrics:
+every alpha into one column on its own y-range hugging the pooled traces. metrics:
   regret   -- per-cell normalized ELDR regret, MoM point + bootstrap IQR band
   eldr_err -- absolute ELDR error (mae_{m} from step3), mean +/- SE band
-pointwise LDR MAE is not available for elbo: the raw campaign stored only the
-integrated est_eldrs per cell, not per-sample LDR estimates.
+  ptmae    -- GLOBAL pointwise LDR MAE (ptmae_{m} from step3): sum|err|/sum(n)
+              pooled over all cells in each (dep, alpha) group, bootstrap IQR band
+              (present only for runs with the 2026-08-11 per-cell (sum_abs, n) schema).
 """
 import argparse
 import os
@@ -19,7 +20,7 @@ import h5py
 import numpy as np
 import yaml
 
-from ex.utils.group_panels import plot_group_row
+from ex.utils.group_panels import plot_group_row, plot_alpha_group_row
 from ex.utils.plot_style import display_name
 from ex.utils.tables import fmt_pm, fmt_iqr, write_tables
 
@@ -54,20 +55,33 @@ def load_variant(f, methods, infix=""):
         "mae_q3":  stat("mae", "q3"),
         "reg":     stat("regret", "mom"), "reg_lo":   stat("regret", "lo"),
         "reg_hi":  stat("regret", "hi"),  "reg_bstd": stat("regret", "bstd"),
+        "ptmae":     stat("ptmae", "mean"), "ptmae_lo": stat("ptmae", "lo"),
+        "ptmae_hi":  stat("ptmae", "hi"),   "ptmae_se": stat("ptmae", "se"),
     }
 
 
-def shared_ylim(lo, hi, yscale):
-    """global (lo, hi) across all methods/alphas so per-alpha figures compare."""
+def shared_ylim(lo, hi, yscale, linthresh=None):
+    """(lo, hi) hugging the given method bands. legend is external, so headroom
+    is tight. symlog keeps the 0 anchor only when the pack reaches toward it;
+    when every band sits well above 0 it uses a log-like tight bottom instead of
+    wasting decades down to the linthresh."""
     los = [np.nanmin(v) for v in lo.values() if np.isfinite(v).any()]
     his = [np.nanmax(v) for v in hi.values() if np.isfinite(v).any()]
+    if not los or not his:
+        return None
     y_lo, y_hi = min(los), max(his)
     if yscale == "log":
         return (max(y_lo, 1e-4) * 0.8, y_hi * 1.25)
     if yscale == "symlog":
-        # 0 at the bottom (linear region), headroom above the pack for the legend
-        return (0.0, y_hi * 3.0)
-    return (min(0.0, y_lo), y_hi * 1.08)
+        lt = linthresh or 1e-3
+        if y_lo > 10 * lt:                     # whole pack above 0 -> tight, no empty decades
+            return (y_lo * 0.8, y_hi * 1.3)
+        return (0.0, y_hi * 1.3)               # pack reaches toward 0 -> keep linear region
+    # linear: hug the pack with a small pad; a >=0 metric never drops below 0.
+    span = y_hi - y_lo
+    pad = 0.05 * (span if span > 0 else abs(y_hi) or 1.0)
+    lo_b = max(0.0, y_lo - pad) if y_lo >= 0 else y_lo - pad
+    return (lo_b, y_hi + pad)
 
 
 def plot_metric(deps, cols, mean, lo, hi, *, ylabel, prefix, yscale,
@@ -79,26 +93,29 @@ def plot_metric(deps, cols, mean, lo, hi, *, ylabel, prefix, yscale,
       cols: list of (tag, label), one per column of the (n_dep, n_col) grids.
         tag suffixes the figure filename, label names the table section; the
         per-alpha call passes one entry per alpha, the pooled call passes one.
-      ylim: shared y-range, computed from the data when None. pass the per-alpha
-        range into the pooled call so both figures read on the same scale.
+      ylim: y-range. when None, EACH column gets its own range hugging that
+        column's data (so every alpha, and the pooled column, is tightly framed);
+        pass an explicit (lo, hi) only to force one shared range.
       extra: optional list of (title, cell_fn) appending further table sections
         per column (e.g. a median [q1, q3] companion to a mean +/- SE primary).
     Returns:
-      the (lo, hi) y-range used.
+      the (lo, hi) y-range used for the last drawn column.
     """
-    if ylim is None:
-        ylim = shared_ylim(lo, hi, yscale)
     sections = []
+    used_ylim = ylim
     for ci, (tag, label) in enumerate(cols):
         col = lambda d, m: d[m][:, ci]
+        col_lo = {m: col(lo, m) for m in mean}
+        col_hi = {m: col(hi, m) for m in mean}
+        col_ylim = ylim if ylim is not None else shared_ylim(col_lo, col_hi, yscale, linthresh)
+        used_ylim = col_ylim
         drawn = plot_group_row(
             deps,
             {m: col(mean, m) for m in mean},
-            {m: col(lo, m) for m in mean},
-            {m: col(hi, m) for m in mean},
+            col_lo, col_hi,
             xlabel=r"$\beta$ (Design EIG %)", ylabel=ylabel,
             out_dir=figures_dir, prefix=f"{prefix}_{tag}",
-            yscale=yscale, ylim=ylim, linthresh=linthresh,
+            yscale=yscale, ylim=col_ylim, linthresh=linthresh,
         )
         if drawn:
             header = ["Method"] + [f"beta={d:g}" for d in deps]
@@ -109,7 +126,7 @@ def plot_metric(deps, cols, mean, lo, hi, *, ylabel, prefix, yscale,
                 sections.append((f"{etitle} -- {label}", header, mk(ecf)))
     if sections:
         write_tables(os.path.join(figures_dir, table_stem or f"{prefix}_table"), sections)
-    return ylim
+    return used_ylim
 
 
 def main():
@@ -153,7 +170,7 @@ def main():
             used["reg"] = plot_metric(
                 deps, cols, reg, reg_lo, reg_hi,
                 ylabel="Rel. ELDR regret", prefix="elbo_regret_mom",
-                yscale="symlog", linthresh=1e-3, ylim=ylim.get("reg"),
+                yscale="linear", ylim=ylim.get("reg"),
                 cell_fn=lambda m, di, ci: fmt_iqr(reg[m][di, ci], reg_lo[m][di, ci], reg_hi[m][di, ci]),
                 table_title="ELDR regret MoM [bootstrap IQR]", figures_dir=figures_dir,
                 table_stem=f"elbo_regret_mom{table_suffix}_table", extra=reg_extra,
@@ -178,16 +195,51 @@ def main():
                 table_title="Absolute ELDR error, mean +/- SE", figures_dir=figures_dir,
                 table_stem=f"elbo_eldr_err{table_suffix}_table", extra=mae_extra,
             )
+
+        ptm, ptm_lo, ptm_hi = v["ptmae"], v["ptmae_lo"], v["ptmae_hi"]
+        if ptm:
+            used["ptmae"] = plot_metric(
+                deps, cols, ptm, ptm_lo, ptm_hi,
+                ylabel="Pointwise LDR MAE", prefix="elbo_pointwise_mae",
+                yscale="log", ylim=ylim.get("ptmae"),
+                cell_fn=lambda m, di, ci: fmt_iqr(ptm[m][di, ci], ptm_lo[m][di, ci], ptm_hi[m][di, ci]),
+                table_title="Global pointwise LDR MAE [bootstrap IQR]", figures_dir=figures_dir,
+                table_stem=f"elbo_pointwise_mae{table_suffix}_table",
+            )
         return used
 
-    # per-alpha first, then the pooled variant on the same y-ranges so the two
-    # sets of figures are directly comparable.
+    # every figure hugs its own data: each alpha column and the pooled column get
+    # their own y-range (draw passes {} -> plot_metric computes per-column).
     cols_alpha = [(f"alpha_{a:.2g}".replace(".", "p"), f"alpha = {a:.2g}") for a in alphas]
-    ylim = draw(by_alpha, cols_alpha, "", {})
-    draw(pooled, [("alpha_pooled", "all alphas pooled")], "_pooled", ylim)
+    used = draw(by_alpha, cols_alpha, "", {})
+    draw(pooled, [("alpha_pooled", "all alphas pooled")], "_pooled", {})
 
-    print("note: pointwise LDR MAE unavailable for elbo (raw results hold integrated "
-          "est_eldrs only); plotted regret + eldr_err.")
+    # wide companion to the pooled figure: all alphas side by side, one block of
+    # method-group panels per alpha. flush panels on ONE global y-range (drawn
+    # once) so the alphas are directly comparable across the strip.
+    def companion(prefix, ylabel, yscale, mean, lo, hi):
+        col_labels = [f"alpha = {a:.2g}" for a in alphas]
+        gylim = shared_ylim(lo, hi, yscale)   # global across all alphas + methods
+        plot_alpha_group_row(deps, mean, lo, hi, col_labels, gylim,
+                             xlabel=r"$\beta$ (Design EIG %)", ylabel=ylabel,
+                             out_dir=figures_dir, prefix=prefix, yscale=yscale,
+                             font_scale=1.5)
+
+    if by_alpha["reg"]:
+        companion("elbo_regret_mom_by_alpha", "Rel. ELDR regret", "linear",
+                  by_alpha["reg"], by_alpha["reg_lo"], by_alpha["reg_hi"])
+    if by_alpha["mae"]:
+        mae, se = by_alpha["mae"], by_alpha["mae_se"]
+        companion("elbo_eldr_err_by_alpha", "ELDR error (abs)", "log",
+                  mae, {m: mae[m] - se[m] for m in mae}, {m: mae[m] + se[m] for m in mae})
+    if by_alpha["ptmae"]:
+        companion("elbo_pointwise_mae_by_alpha", "Pointwise LDR MAE", "log",
+                  by_alpha["ptmae"], by_alpha["ptmae_lo"], by_alpha["ptmae_hi"])
+
+    made = sorted(set(used))
+    print(f"plotted metrics: {made} (ptmae = global pointwise LDR MAE)"
+          if by_alpha["ptmae"] else
+          "note: no ptmae in summary.h5 (old scalar schema); plotted regret + eldr_err only.")
     print(f"\nDone. Figures in: {figures_dir}")
 
 

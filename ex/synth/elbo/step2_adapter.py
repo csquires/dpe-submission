@@ -7,9 +7,21 @@ cell axis: flat row index in dataset_d=3,n_p0p1=10000,n_pstar=5000.h5 (2048 rows
 
 bucket axis: none — single HP set per (method, exp); per_bucket override unused.
 
-per-cell output: scalar ELDR estimate (mean of est_ldrs over the ~5000 pstar samples).
-gather: stacks per-cell scalars into est_eldrs_arr_<method> of shape (nrows,) — matches
-the original step2 output dataset name.
+per-cell output: a compact 4-vector [est_eldr, mae, sum_abs, n] (2026-08-11):
+  est_eldr = mean(predict_ldr(pstar)) -- the ELDR scalar (drives eldr_err + regret).
+  mae      = mean_i |predict_ldr(x_i) - true_ldr(x_i)|  -- per-cell pointwise LDR MAE.
+  sum_abs  = sum_i |predict_ldr(x_i) - true_ldr(x_i)|   -- for EXACT global pooling.
+  n        = number of pstar samples.
+per-sample predictions are NOT stored (full array is ~740 MB on $HOME); step3 pools
+sum_abs/n across cells to report GLOBAL pointwise MAE (not mean-of-per-cell-MAE).
+gather stacks the 4-vectors into est_eldrs_arr_<method> of shape (nrows, 4).
+predict_eldr == mean(predict_ldr) (base.py, no overrides), so est_eldr from the
+per-sample mean is bit-identical to the old predict_eldr scalar.
+
+per-sample true LDR = theta-marginal Gaussian log-ratio at the pstar theta samples
+  true_ldr[i] = logN(theta*_i; mu_pi, Sigma_pi) - logN(theta*_i; mu_q, Sigma_q),
+the p(y|theta) noise term cancels between the prior joint and q joint (same identity
+the hpo holdout adapter uses).
 
 quirks:
 - input_dim is data_dim + 1 (theta has data_dim coords, y has 1 coord, concatenated).
@@ -31,6 +43,18 @@ from ex.utils.hpo.method_specs import METHOD_SPECS
 # methods that need pstar at fit time (forwarded from METHOD_SPECS.requires_pstar)
 def _requires_pstar(method: str) -> bool:
     return METHOD_SPECS.get(method, {}).get("requires_pstar", False)
+
+
+def _gauss_logpdf(x: torch.Tensor, mu: torch.Tensor, cov: torch.Tensor) -> torch.Tensor:
+    """batched MVN log-density logN(x; mu, cov). symmetrizes + jitters cov so the
+    float32 round-trip from h5 cannot break the cholesky (exact symmetry / PD)."""
+    d = cov.shape[-1]
+    cov = 0.5 * (cov + cov.transpose(-1, -2)) + 1e-5 * torch.eye(
+        d, device=cov.device, dtype=cov.dtype
+    )
+    return torch.distributions.MultivariateNormal(
+        mu, covariance_matrix=cov, validate_args=False
+    ).log_prob(x)
 
 
 # -----------------------------------------------------------------------------
@@ -97,11 +121,14 @@ def bucket_for_cell(cell_idx: int, config: dict) -> None:
 
 def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
                  device: str) -> dict:
-    """fit estimator with hp on row=cell_idx; predict on pstar samples; return scalar mean.
+    """fit estimator with hp on row=cell_idx; predict on pstar; return compact stats.
 
     output:
-        est_ldrs:  array (1,)            (the ELDR scalar wrapped for h5)
-        est_ldrs_full: array (nsamples,) (per-sample ldr predictions, optional)
+        est_ldrs: array (4,) = [est_eldr, mae, sum_abs, n]
+          est_eldr = mean(predict_ldr(pstar))         -- ELDR scalar (eldr_err/regret)
+          mae      = mean|predict_ldr - true_ldr|     -- per-cell pointwise LDR MAE
+          sum_abs  = sum|predict_ldr - true_ldr|      -- for exact global pooling in step3
+          n        = num pstar samples
     """
     if method not in METHOD_SPECS:
         raise KeyError(f"method {method!r} not registered in METHOD_SPECS")
@@ -137,18 +164,32 @@ def fit_and_eval(method: str, hp: dict, cell_idx: int, config: dict,
         y1 = torch.from_numpy(ds["y1_samples_arr"][cell_idx]).float().to(device)
         samples_p1 = torch.cat([theta1, y1], dim=1)
 
+        # per-cell Gaussian params for the per-sample true LDR (theta-marginal).
+        mu_pi = torch.from_numpy(ds["prior_mean_arr"][cell_idx]).float().to(device)
+        S_pi  = torch.from_numpy(ds["prior_covariance_arr"][cell_idx]).float().to(device)
+        mu_q  = torch.from_numpy(ds["mu_q_arr"][cell_idx]).float().to(device)
+        S_q   = torch.from_numpy(ds["Sigma_q_arr"][cell_idx]).float().to(device)
+
     if _requires_pstar(method):
         estimator.fit(samples_p0, samples_p1, samples_pstar)
     else:
         estimator.fit(samples_p0, samples_p1)
 
     with torch.no_grad():
-        eldr = float(estimator.predict_eldr(samples_pstar).item())
+        ldr = estimator.predict_ldr(samples_pstar).reshape(-1)   # (N,) per-sample
+    # est_eldr = mean(predict_ldr) == predict_eldr (base.py, no overrides).
+    est_eldr = float(ldr.mean().item())
+
+    # per-sample true LDR = theta-marginal Gaussian log-ratio at pstar theta samples.
+    true_ldr = _gauss_logpdf(theta_star, mu_pi, S_pi) - _gauss_logpdf(theta_star, mu_q, S_q)
+    abs_err = (ldr - true_ldr.to(ldr.device)).abs()
+    mae = float(abs_err.mean().item())
+    sum_abs = float(abs_err.sum().item())
+    n = int(abs_err.numel())
 
     return {
-        # gather expects 'est_ldrs' as the per-cell array; we wrap the scalar in shape (1,)
-        # so it stacks cleanly to (nrows, 1) and gather can squeeze if needed.
-        "est_ldrs": np.array([eldr], dtype=np.float32),
+        # gather stacks 'est_ldrs' to (nrows, 4); step3 unpacks [est_eldr, mae, sum_abs, n].
+        "est_ldrs": np.array([est_eldr, mae, sum_abs, n], dtype=np.float32),
     }
 
 

@@ -147,6 +147,49 @@ def regret_cols(reg_m, cols, bp, bd):
     return out
 
 
+def ptmae_cols(sumabs_4d, n_4d, cols, bp, bd):
+    """GLOBAL pointwise-LDR-MAE per (dep, alpha column group).
+
+    global (pooled) MAE = sum_i |err_i| / sum_i 1 over ALL (cell, sample) pairs in
+    the group -- NOT the mean of per-cell MAEs. with per-cell (sum_abs, n) this is
+    an exact pooled ratio and stays correct even if cells have unequal sample
+    counts. the bootstrap resamples priors + designs (alpha kept) and recomputes
+    the pooled ratio for an IQR band.
+
+    Args:
+      sumabs_4d, n_4d: (P, B, D, A) per-cell sum|err| and sample count, NaN where a
+        cell has no estimate (held-out rows gather-filled with NaN).
+      cols, bp, bd: as in mae_cols / regret_cols.
+    Returns:
+      dict of mean(=global pooled MAE)/lo/hi/se/n grids, each (B, len(cols)); n is
+      the total pooled sample count.
+    """
+    n_deps, n_cols, n_boot = sumabs_4d.shape[1], len(cols), bp.shape[0]
+    out = {k: np.full((n_deps, n_cols), np.nan, dtype=np.float32)
+           for k in ("mean", "lo", "hi", "se")}
+    out["n"] = np.zeros((n_deps, n_cols), dtype=np.int64)
+    for bi in range(n_deps):
+        for ci, ais in enumerate(cols):
+            s = sumabs_4d[:, bi][:, :, ais]              # (P, D, |ais|)
+            c = n_4d[:, bi][:, :, ais]
+            tot_n = np.nansum(c)
+            if tot_n <= 0:
+                continue
+            out["mean"][bi, ci] = np.nansum(s) / tot_n
+            out["n"][bi, ci] = int(tot_n)
+            rs = s[bp[:, :, None], bd[:, None, :]]       # (n_boot, P, D, |ais|)
+            rc = c[bp[:, :, None], bd[:, None, :]]
+            num = np.nansum(rs.reshape(n_boot, -1), axis=1)
+            den = np.nansum(rc.reshape(n_boot, -1), axis=1)
+            bmae = np.divide(num, den, out=np.full(n_boot, np.nan), where=den > 0)
+            bmae = bmae[np.isfinite(bmae)]
+            if bmae.size:
+                out["lo"][bi, ci], out["hi"][bi, ci] = np.percentile(bmae, [25, 75])
+            if bmae.size >= 2:
+                out["se"][bi, ci] = bmae.std(ddof=1)
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config",  default="ex/synth/elbo/config1.yaml")
@@ -208,6 +251,11 @@ def main():
     est_by_method = {}
     missing_in_gather = []
 
+    # new step2 schema (2026-08-11): est_eldrs_arr_<m> is (n_cells, 4) =
+    # [est_eldr, mae, sum_abs, n]. col0 drives eldr_err + regret (unchanged);
+    # cols 2-3 (sum_abs, n) drive the GLOBAL pointwise MAE. old runs stored
+    # (n_cells,) / (n_cells, 1) scalars -> ptmae skipped (sumabs_by_method empty).
+    sumabs_by_method, nps_by_method = {}, {}
     if os.path.exists(gathered):
         print(f"Reading gathered results: {gathered}")
         with h5py.File(gathered, "r") as f:
@@ -216,8 +264,12 @@ def main():
                 if key not in f:
                     missing_in_gather.append(m)
                     continue
-                arr = f[key][:]                               # (n_cells, 1) or (n_cells,)
-                est_by_method[m] = arr.reshape(n_cells_expected) # always (n_cells,)
+                arr = f[key][:]
+                arr2 = arr.reshape(n_cells_expected, -1) if arr.ndim > 1 else arr.reshape(n_cells_expected, 1)
+                est_by_method[m] = arr2[:, 0]                 # est_eldr, (n_cells,)
+                if arr2.shape[1] >= 4:                        # new schema -> ptmae inputs
+                    sumabs_by_method[m] = arr2[:, 2]
+                    nps_by_method[m]    = arr2[:, 3]
         if missing_in_gather:
             logging.warning(f"methods not in gathered file: {missing_in_gather}")
     else:
@@ -252,6 +304,7 @@ def main():
     # cell, 1 = worst), aggregated per (dep, column) as median over priors then
     # designs (median-of-medians) with a bootstrap IQR band.
     reg_stats, reg_pool = {}, {}
+    ptmae, ptmae_pool = {}, {}
     if est_by_method:
         algs = [m for m in methods if m in est_by_method]
         err5 = np.stack([
@@ -273,6 +326,16 @@ def main():
         for mi, m in enumerate(algs):
             reg_stats[m] = regret_cols(reg[mi], per_alpha, bp, bd)
             reg_pool[m]  = regret_cols(reg[mi], all_alpha, bp, bd)
+
+        # global pointwise LDR MAE (new step2 schema only): pool sum_abs / n over
+        # all cells in each (dep, alpha) group -> GLOBAL MAE, with a bootstrap band.
+        for m in algs:
+            if m not in sumabs_by_method:
+                continue
+            sumabs_4d = sumabs_by_method[m].reshape(n_priors, n_deps, n_designs, n_alphas)
+            nps_4d    = nps_by_method[m].reshape(n_priors, n_deps, n_designs, n_alphas)
+            ptmae[m]      = ptmae_cols(sumabs_4d, nps_4d, per_alpha, bp, bd)
+            ptmae_pool[m] = ptmae_cols(sumabs_4d, nps_4d, all_alpha, bp, bd)
 
     # --- save summary.h5 ---
     # always write true_eldrs and axes (HPO dependency).
@@ -303,6 +366,10 @@ def main():
                     f.create_dataset(f"regret_{m}_{k}", data=v)
                 for k, v in reg_pool.get(m, {}).items():
                     f.create_dataset(f"regret_{m}_pooled_{k}", data=v)
+                for k, v in ptmae.get(m, {}).items():
+                    f.create_dataset(f"ptmae_{m}_{k}", data=v)
+                for k, v in ptmae_pool.get(m, {}).items():
+                    f.create_dataset(f"ptmae_{m}_pooled_{k}", data=v)
         else:
             f.attrs["methods"] = []  # mark that no methods are present yet
 
