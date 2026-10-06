@@ -36,7 +36,7 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import NullLocator
 import numpy as np
 
-from ex.utils.plot_style import apply as apply_style
+from ex.utils.plot_style import apply as apply_style, short_label
 from ex.utils.faceted_lines import order_methods
 from ex.ablations.dokls.variants import resolve
 from ex.ablations.dokls.plot_compare import comp_style, regret_over_contenders
@@ -178,7 +178,7 @@ def plot_metric(kl, dokls_err, ms_err, dokls_val, ms_val, *, metric, ylabel,
 def _legend(fig, dokls_methods):
     handles = [Line2D([0], [0], **comp_style(m, 'dokls'), markersize=5)
                for m in dokls_methods]
-    labels = [f'{m} (2-leg)' for m in dokls_methods]
+    labels = [f'{short_label(m)} (2-leg)' for m in dokls_methods]
     src = [Line2D([0], [0], color='0.35', linestyle='-', marker='o',
                   markerfacecolor='none', label='MS direct')]
     leg1 = fig.legend(handles, labels, loc='lower center', ncol=5, fontsize=8,

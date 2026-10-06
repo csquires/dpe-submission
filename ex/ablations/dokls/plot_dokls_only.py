@@ -25,7 +25,7 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import NullLocator
 import numpy as np
 
-from ex.utils.plot_style import apply as apply_style
+from ex.utils.plot_style import apply as apply_style, short_label
 from ex.utils.faceted_lines import order_methods, MARKER_SIZE
 from ex.ablations.dokls.variants import resolve
 from ex.ablations.dokls.step4_plot_results import dokls_style, PSTARS, PNAME
@@ -43,7 +43,7 @@ def _methods(data):
 
 def _legend(fig, methods):
     handles = [Line2D([0], [0], **dokls_style(m), markersize=5) for m in methods]
-    fig.legend(handles, methods, loc='lower center', ncol=5, fontsize=9,
+    fig.legend(handles, [short_label(m) for m in methods], loc='lower center', ncol=5, fontsize=9,
                framealpha=0.9, bbox_to_anchor=(0.5, 0.01))
 
 
